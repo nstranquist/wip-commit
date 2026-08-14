@@ -11,5 +11,6 @@
 - Add a failure-boundary test for each safety change.
 - Run `go test ./...`, `go test -race -count=3 ./...`, `go vet ./...`, and
   `actionlint` before handoff.
-- The canonical user-facing agent skill remains in its owning repository until
-  an accepted extraction decision moves a portable version here.
+- Keep the portable public skill in `skills/wip-commit/` dependent only on the
+  public `wip` command and standard Git inspection. Internal integrations can
+  add policy around this contract, but they must not weaken it.

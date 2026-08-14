@@ -1,0 +1,4 @@
+interface:
+  display_name: "WIP Commit"
+  short_description: "Capture owned staged paths on an isolated ref."
+  default_prompt: "Use $wip-commit to capture this task as safe split commits without moving the source branch or index."
