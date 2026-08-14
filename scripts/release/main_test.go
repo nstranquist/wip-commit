@@ -5,10 +5,12 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -126,13 +128,7 @@ func TestWriteChecksumsUsesSortedArtifactInput(t *testing.T) {
 }
 
 func TestBuildHostBinary(t *testing.T) {
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
-		t.Fatalf("find module root: %v", err)
-	}
+	root := moduleRoot(t)
 	binary := filepath.Join(t.TempDir(), "wip")
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
@@ -146,6 +142,94 @@ func TestBuildHostBinary(t *testing.T) {
 	}
 	if info.Size() == 0 {
 		t.Fatal("built binary is empty")
+	}
+}
+
+func TestBuildReleaseIsAtomicAndDeterministic(t *testing.T) {
+	root := moduleRoot(t)
+	parent := t.TempDir()
+	first := filepath.Join(parent, "first")
+	second := filepath.Join(parent, "second")
+	version := "v0.1.0-test"
+	commit := strings.Repeat("a", 40)
+	epoch := int64(1_700_000_000)
+	targets := []target{{OS: runtime.GOOS, Arch: runtime.GOARCH}}
+
+	if err := buildRelease(root, first, version, commit, epoch, targets); err != nil {
+		t.Fatal(err)
+	}
+	if err := buildRelease(root, second, version, commit, epoch, targets); err != nil {
+		t.Fatal(err)
+	}
+	assertEqualDirectoryFiles(t, first, second)
+
+	receiptBody, err := os.ReadFile(filepath.Join(first, "release-receipt.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record receipt
+	if err := json.Unmarshal(receiptBody, &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.SchemaVersion != receiptSchemaVersion || record.Version != version || record.SourceCommit != commit || record.SourceEpoch != epoch || len(record.Artifacts) != 1 {
+		t.Fatalf("release receipt = %#v", record)
+	}
+	checksums, err := os.ReadFile(filepath.Join(first, "checksums.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(checksums), record.Artifacts[0].SHA256+"  "+record.Artifacts[0].Name) {
+		t.Fatalf("checksums do not contain artifact: %s", checksums)
+	}
+	if err := buildRelease(root, first, version, commit, epoch, targets); err == nil {
+		t.Fatal("release builder overwrote an existing output directory")
+	}
+
+	failed := filepath.Join(parent, "failed")
+	if err := buildRelease(root, failed, version, commit, epoch, []target{{OS: "invalid", Arch: "invalid"}}); err == nil {
+		t.Fatal("release builder accepted an invalid Go target")
+	}
+	if _, err := os.Lstat(failed); !os.IsNotExist(err) {
+		t.Fatalf("failed release left its output directory: %v", err)
+	}
+	if err := buildRelease(root, filepath.Join(parent, "empty"), version, commit, epoch, nil); err == nil {
+		t.Fatal("release builder accepted no targets")
+	}
+}
+
+func TestReleaseEnvironmentIsExplicit(t *testing.T) {
+	environment := releaseEnvironment([]string{
+		"PATH=/bin",
+		"CGO_ENABLED=1",
+		"GOARCH=old",
+		"GOFLAGS=-mod=mod",
+		"GOOS=old",
+		"GOWORK=/tmp/work",
+	}, target{OS: "linux", Arch: "arm64"})
+	want := []string{"PATH=/bin", "CGO_ENABLED=0", "GOARCH=arm64", "GOOS=linux", "GOWORK=off"}
+	if strings.Join(environment, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("release environment = %q, want %q", environment, want)
+	}
+}
+
+func TestSourceVersionAndExclusiveFileCreation(t *testing.T) {
+	version, err := sourceVersion(moduleRoot(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != "0.1.0-beta.1" {
+		t.Fatalf("source version = %q", version)
+	}
+	path := filepath.Join(t.TempDir(), "exclusive.txt")
+	if err := writeNewFile(path, []byte("first")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeNewFile(path, []byte("second")); err == nil {
+		t.Fatal("writeNewFile overwrote an existing file")
+	}
+	body, err := os.ReadFile(path)
+	if err != nil || string(body) != "first" {
+		t.Fatalf("exclusive file = %q, %v", body, err)
 	}
 }
 
@@ -164,5 +248,55 @@ func assertTarEntry(t *testing.T, reader *tar.Reader, name string, mode int64, b
 	}
 	if string(contents) != body {
 		t.Fatalf("tar entry %q body = %q", name, contents)
+	}
+}
+
+func moduleRoot(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
+		t.Fatalf("find module root: %v", err)
+	}
+	return root
+}
+
+func assertEqualDirectoryFiles(t *testing.T, left, right string) {
+	t.Helper()
+	leftEntries, err := os.ReadDir(left)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightEntries, err := os.ReadDir(right)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leftNames := make([]string, 0, len(leftEntries))
+	rightNames := make([]string, 0, len(rightEntries))
+	for _, entry := range leftEntries {
+		leftNames = append(leftNames, entry.Name())
+	}
+	for _, entry := range rightEntries {
+		rightNames = append(rightNames, entry.Name())
+	}
+	sort.Strings(leftNames)
+	sort.Strings(rightNames)
+	if strings.Join(leftNames, "\n") != strings.Join(rightNames, "\n") {
+		t.Fatalf("release file sets differ: %v != %v", leftNames, rightNames)
+	}
+	for _, name := range leftNames {
+		leftBody, err := os.ReadFile(filepath.Join(left, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		rightBody, err := os.ReadFile(filepath.Join(right, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(leftBody, rightBody) {
+			t.Errorf("release file %s differs", name)
+		}
 	}
 }
