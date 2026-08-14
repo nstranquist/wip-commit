@@ -95,12 +95,13 @@
       "id": "OSS-007",
       "gate": "public-beta",
       "title": "Add a portable agent skill",
-      "status": "planned",
+      "status": "verified",
       "owner": "maintainer",
       "human_gate": false,
       "acceptance": "The standalone skill uses public wip commands, defaults to split capture, and has no private helper dependency.",
       "evidence": [
-        {"kind": "gap", "value": "AGENTS.md records that the canonical skill still lives outside this repository.", "observed_on": "2026-08-14"}
+        {"kind": "artifact", "value": "skills/wip-commit/SKILL.md and skills/wip-commit/references/automation.md", "observed_on": "2026-08-14"},
+        {"kind": "test", "value": "TestPortableSkillContract", "observed_on": "2026-08-14"}
       ]
     },
     {
@@ -143,12 +144,15 @@
       "id": "OSS-011",
       "gate": "public-beta",
       "title": "Build checksummed and attested release archives",
-      "status": "planned",
+      "status": "prepared",
       "owner": "maintainer",
       "human_gate": false,
       "acceptance": "The tag workflow builds six target archives, SHA-256 checksums, and build provenance from the exact tag.",
       "evidence": [
-        {"kind": "gap", "value": "No release workflow exists.", "observed_on": "2026-08-14"}
+        {"kind": "artifact", "value": "scripts/release and .github/workflows/release-beta.yml", "observed_on": "2026-08-14"},
+        {"kind": "test", "value": "TestArchiveWritersAreDeterministic and TestBetaReleaseWorkflowContract", "observed_on": "2026-08-14"},
+        {"kind": "command", "value": "Two clean six-target builds, diff -rq, shasum -a 256 -c checksums.txt, and native archive smoke", "observed_on": "2026-08-14"},
+        {"kind": "gap", "value": "The tag workflow and hosted attestation have not run.", "observed_on": "2026-08-14"}
       ]
     },
     {
@@ -191,12 +195,13 @@
       "id": "OSS-015",
       "gate": "stable",
       "title": "Define state compatibility and migration",
-      "status": "planned",
+      "status": "verified",
       "owner": "maintainer",
       "human_gate": false,
       "acceptance": "The project documents schema support, upgrade behavior, downgrade behavior, and fail-closed migration errors.",
       "evidence": [
-        {"kind": "gap", "value": "State schema version 1 exists without a public migration policy.", "observed_on": "2026-08-14"}
+        {"kind": "artifact", "value": "docs/STATE-COMPATIBILITY.md and docs/ERRORS.md", "observed_on": "2026-08-14"},
+        {"kind": "test", "value": "TestFutureStateDirectoryFailsBeforeV1Creation, TestFutureLaneAndLeaseSchemasRequireMigration, TestFutureIntentSchemaRequiresMigration, and TestFutureProfileSchemaRequiresMigration", "observed_on": "2026-08-14"}
       ]
     },
     {

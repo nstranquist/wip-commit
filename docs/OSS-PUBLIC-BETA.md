@@ -12,6 +12,8 @@ Last review: 2026-08-14
 
 Approval: Not yet recorded
 
+Local preparation: Complete on 2026-08-14
+
 ## Decision request
 
 Approve a capture-only public beta with these boundaries:
@@ -49,6 +51,26 @@ Use these status values:
 
 Do not convert a human gate or external-evidence gate into a failed
 implementation claim.
+
+## Local preparation result
+
+The owner-controlled repository work is complete. The checkout now contains:
+
+- a portable public skill with a regression test for private dependencies and
+  unsafe commands.
+- a deterministic six-target builder with archive, checksum, receipt, and
+  host-binary tests.
+- a tag-only prerelease workflow with immutable action references and GitHub
+  artifact attestation.
+- an explicit state compatibility policy and typed fail-closed errors for
+  unsupported state.
+- failure-boundary tests for state-directory, lane, lease, intent, and profile
+  versions.
+
+Two clean six-target rehearsals produced equal directory trees. Every recorded
+archive checksum passed, and the native archive reported the target version.
+This local proof does not satisfy hosted CI, attestation, independent testing,
+public installation, owner approval, or publication gates.
 
 ## Product boundary
 
@@ -151,6 +173,9 @@ GOWORK=off go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 GOWORK=off go test -exec=/usr/bin/true ./...
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOWORK=off go test -exec=/usr/bin/true ./...
 actionlint
+GOWORK=off go run ./scripts/release --version v0.1.0-beta.1 --out <new-output-a>
+GOWORK=off go run ./scripts/release --version v0.1.0-beta.1 --out <new-output-b>
+diff -rq <new-output-a> <new-output-b>
 gitleaks git --redact --exit-code 1 .
 gitleaks dir --redact --exit-code 1 .
 git diff --check
@@ -177,7 +202,8 @@ The release must contain archives for these targets:
 
 Each archive must contain the binary, `LICENSE`, `README.md`, and
 `THREAT-MODEL.md`. The release must include SHA-256 checksums and build
-provenance.
+provenance. Follow [RELEASE.md](RELEASE.md) for the local rehearsal, approved
+tag, hosted attestation, and verification sequence.
 
 ## Primary references
 

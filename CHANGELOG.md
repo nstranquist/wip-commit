@@ -5,6 +5,18 @@ Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- Portable `wip-commit` agent skill with a public-only safety contract.
+- Deterministic six-target release builder, checksums, receipt, and attested
+  prerelease workflow.
+- State compatibility policy and explicit upgrade and downgrade procedures.
+
+### Changed
+
+- Unsupported state-directory, lane, lease, intent, and profile schemas now
+  fail with `MIGRATION_REQUIRED` before the command changes state.
+
 ## [0.1.0-beta.1] - 2026-08-14
 
 ### Added
