@@ -1,0 +1,19 @@
+schema_version: 1
+id: product.wip-commit
+name: wip-commit
+surface: products
+kind: product
+status: experimental
+launch: built
+tags:
+    - go
+    - git
+    - agents
+checks:
+    - name: test
+      command:
+        - go
+        - test
+        - ./...
+description: Guarded split-commit capture for parallel agents in shared checkouts and linked worktrees.
+portfolio_manifest: portfolio/manifest.yaml

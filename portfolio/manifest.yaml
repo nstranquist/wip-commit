@@ -1,0 +1,8 @@
+schema_version: 1
+product_id: product.wip-commit
+visibility: internal
+reviewed: false
+assets: []
+case_study:
+    enabled: false
+    evidence: []
