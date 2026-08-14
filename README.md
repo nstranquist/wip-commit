@@ -10,7 +10,7 @@ use. It is not yet a stable release, and this checkout has not been published.
 ## Why it exists
 
 A normal `git commit` consumes the complete shared index and moves the checked
-out branch. That operation is unsafe when several agents use one checkout.
+out branch. When several agents use one checkout, that operation is unsafe.
 `wip` uses three controls:
 
 - Path leases prevent active lanes from claiming overlapping paths.
@@ -23,9 +23,9 @@ operations.
 
 ## Requirements
 
-- Git 2.36 or newer
-- Go 1.25 or newer to build from source
-- A local filesystem with working advisory file locks
+- Git 2.36 or newer.
+- Go 1.25 or newer to build from source.
+- A local filesystem with working advisory file locks.
 
 ## Build locally
 
@@ -44,6 +44,19 @@ go install github.com/nstranquist/wip-commit/cmd/wip@v0.1.0-beta.1
 
 Do not use that command until the module exists at that public address.
 
+## Use the agent skill
+
+The portable skill is in [skills/wip-commit](skills/wip-commit). Install that
+complete directory through the skill mechanism for your agent runtime. Keep
+its `references` and `agents` directories with `SKILL.md`.
+
+Invoke `$wip-commit` for agent work. The skill uses only the public `wip`
+command and standard Git inspection. It defaults automation to reviewed split
+plans and treats typed JSON evidence as the capture result.
+
+An internal integration can add repository policy around this skill. It must
+not weaken the path-ownership, split-plan, result-check, or no-landing rules.
+
 ## Start with `wip init`
 
 Run the wizard in a Git checkout:
@@ -56,8 +69,9 @@ The wizard does the following work:
 
 1. It inspects the repository and recommends `shared` or `worktree` mode.
 2. It asks for the agent, session, lane, base ref, and path claims.
-3. It can create a detached linked worktree when you explicitly select one.
-4. It can copy the current binary to `~/.local/bin` when you explicitly agree.
+3. When you explicitly select one, it can create a detached linked worktree.
+4. When you explicitly agree, it can copy the current binary to
+   `~/.local/bin`.
 5. It creates the lane, claims the paths, writes a private profile, and checks
    the staged diff.
 
@@ -90,7 +104,7 @@ wip --repo-dir /repo init \
 ```
 
 The command uses `git worktree add --detach`. It refuses to replace an existing
-directory. If the directory already contains a matching linked worktree at the
+directory. If an existing directory contains a matching linked worktree at the
 requested base, the command reuses it.
 
 ## Capture work
@@ -111,7 +125,7 @@ wip commit
 
 Interactive capture proposes split groups by the first path component and asks
 for one Conventional Commit message per group. No ref moves until every group,
-hook, diff check, and verify command passes.
+hook, diff test, and command in `verify` passes.
 
 Automation must supply a split plan or explicitly opt out:
 
@@ -135,7 +149,7 @@ Automation must supply a split plan or explicitly opt out:
 wip commit --plan plan.json
 ```
 
-Use one commit only when that is intentional:
+When one commit is intentional, use this explicit command:
 
 ```text
 wip commit --single \
@@ -167,7 +181,7 @@ Inspect the lane with:
 wip status
 ```
 
-Release the coordination state when the task is complete:
+When the task is complete, release the coordination state:
 
 ```text
 wip release
@@ -181,7 +195,7 @@ commits, lands a branch, pushes a remote, or merges work.
 A successful capture leaves the source `HEAD`, worktree, and complete Git index
 unchanged. Captured entries therefore remain staged relative to the source
 branch. This is deliberate: `wip` cannot safely clear selected entries while an
-uncoordinated process might update the shared index.
+uncoordinated process can update the shared index.
 
 You can modify and stage a later version of the same leased path. The next
 capture compares that staged version with the current lane commit. Do not run a
@@ -189,8 +203,8 @@ broad reset, stash, or clean command to hide the staged state.
 
 ## Recover an interrupted capture
 
-The JSON error result includes `plan_id` and `plan_digest` when the agent ref
-moved but metadata did not finish. Use both immutable values:
+When the agent ref moved but metadata did not finish, the JSON error result
+includes `plan_id` and `plan_digest`. Use both immutable values:
 
 ```text
 wip reconcile \
@@ -198,7 +212,7 @@ wip reconcile \
   --plan-digest sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
-Reconciliation checks the target ref, every parent, tree, message, changed path,
+Reconciliation compares the target ref, every parent, tree, message, changed path,
 allowed scope, and final tree before it updates lane metadata. Exact retries are
 idempotent.
 
@@ -206,17 +220,21 @@ idempotent.
 
 `wip` protects coordination between cooperating local processes. It does not
 protect against a malicious process running as the same operating-system user.
-Hooks and verify commands are trusted repository code and can change files or
-use the network. Read [THREAT-MODEL.md](THREAT-MODEL.md) before broad adoption.
+Hooks and commands in `verify` are trusted repository code. They can change
+files or use the network. Read [THREAT-MODEL.md](THREAT-MODEL.md) before broad
+adoption.
 
 The `wip` binary does not send telemetry or contact a network service. Use
-`--json` for local structured evidence. A repository hook or an explicit verify
-command can still use the network.
+`--json` for local structured evidence. A repository hook or an explicit
+command in `verify` can still use the network.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the transaction model,
 [docs/ERRORS.md](docs/ERRORS.md) for recovery actions, and
-[docs/OSS-READINESS.md](docs/OSS-READINESS.md) for the publication summary. The
-detailed proposal and evidence tracker are in
+[docs/STATE-COMPATIBILITY.md](docs/STATE-COMPATIBILITY.md) for upgrade and
+downgrade rules. See [docs/RELEASE.md](docs/RELEASE.md) for deterministic beta
+archives and the human-gated tag procedure. The publication summary is in
+[docs/OSS-READINESS.md](docs/OSS-READINESS.md). The detailed proposal and
+evidence tracker are in
 [docs/OSS-PUBLIC-BETA.md](docs/OSS-PUBLIC-BETA.md).
 
 ## License

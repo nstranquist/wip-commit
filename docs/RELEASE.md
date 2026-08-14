@@ -12,9 +12,9 @@ ref, create a remote repository, or publish a release.
 The hosted workflow runs only for a tag name that contains a prerelease
 suffix, such as `v0.1.0-beta.1`. It builds six archives:
 
-- Linux on AMD64 and ARM64
-- macOS on AMD64 and ARM64
-- Windows on AMD64 and ARM64
+- Linux on AMD64 and ARM64.
+- macOS on AMD64 and ARM64.
+- Windows on AMD64 and ARM64.
 
 Each archive contains the `wip` binary, license, README, and threat model. The
 command also writes SHA-256 checksums and a JSON receipt. The receipt records
@@ -53,7 +53,7 @@ Check each digest from inside one output directory:
 shasum -a 256 -c checksums.txt
 ```
 
-Inspect `release-receipt.json`. Confirm the version, source commit, source
+Inspect `release-receipt.json`. Check the version, source commit, source
 timestamp, target names, sizes, and digests.
 
 ## Create the release
@@ -76,10 +76,10 @@ publishes a GitHub prerelease. All third-party actions use full commit hashes.
 Do not move, replace, or reuse a published tag. Increment the SemVer
 prerelease number after any release failure that requires a source change.
 
-## Verify hosted evidence
+## Check hosted evidence
 
 After the workflow succeeds, download the release files in a clean directory.
-Check `checksums.txt`, then verify the attestations:
+Check `checksums.txt`, then check the attestations:
 
 ```text
 gh attestation verify wip-commit_0.1.0-beta.1_linux_amd64.tar.gz \

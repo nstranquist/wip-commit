@@ -16,9 +16,10 @@ separate Git refs under `refs/heads/wip/`.
 
 ## Fail-closed rule
 
-The command returns `MIGRATION_REQUIRED` when it finds either of these items:
+When the command finds either of these items, it returns
+`MIGRATION_REQUIRED`:
 
-- a state directory with a version other than the exact name `v1`;
+- a state directory with a version other than the exact name `v1`.
 - a lane, lease, intent, or profile with a schema version other than 1.
 
 The command checks state-directory versions before it creates `v1`. This check
@@ -51,11 +52,11 @@ partial state directory between repositories.
 
 ## Downgrade procedure
 
-A downgrade is supported only when the target release lists the current state
-version as readable. Otherwise, use the release that owns the current state.
+When the target release lists the current state version as readable, a
+downgrade is supported. Otherwise, use the release that owns the current state.
 Finish or release its lanes before you change versions.
 
-An older command stops when it detects a newer state directory or record. This
+When an older command detects a newer state directory or record, it stops. This
 failure preserves lane refs and commits. It also prevents the older command
 from creating new leases in a separate state version.
 
@@ -64,11 +65,11 @@ from creating new leases in a separate state version.
 Each release note must list the state directories and record schemas that the
 release can read and write. A state-version change requires all of these items:
 
-- a reviewed compatibility design;
-- an explicit migration and recovery command;
-- fixtures for the old and new state;
-- interruption and retry tests at every durable boundary;
-- a machine-readable migration receipt;
+- a reviewed compatibility design.
+- an explicit migration and recovery command.
+- fixtures for the old and new state.
+- interruption and retry tests at every durable boundary.
+- a machine-readable migration receipt.
 - upgrade and downgrade instructions.
 
 No state migration can be a hidden side effect of `wip init`, `wip status`, or
