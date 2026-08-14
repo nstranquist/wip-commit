@@ -77,11 +77,20 @@ func TestArchiveContentsAndModes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tarFile.Close()
+	defer func() {
+		if err := tarFile.Close(); err != nil {
+			t.Errorf("close tar file: %v", err)
+		}
+	}()
 	gzipReader, err := gzip.NewReader(tarFile)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() {
+		if err := gzipReader.Close(); err != nil {
+			t.Errorf("close gzip reader: %v", err)
+		}
+	}()
 	tarReader := tar.NewReader(gzipReader)
 	assertTarEntry(t, tarReader, "root/README.md", 0o644, "read me\n")
 	assertTarEntry(t, tarReader, "root/wip", 0o755, "binary")
@@ -97,7 +106,11 @@ func TestArchiveContentsAndModes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer zipReader.Close()
+	defer func() {
+		if err := zipReader.Close(); err != nil {
+			t.Errorf("close zip reader: %v", err)
+		}
+	}()
 	if len(zipReader.File) != 2 {
 		t.Fatalf("zip entries = %d", len(zipReader.File))
 	}

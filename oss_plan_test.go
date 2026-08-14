@@ -44,7 +44,11 @@ func TestOSSPublicBetaRequirements(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			t.Errorf("close requirements file: %v", err)
+		}
+	}()
 
 	var plan ossPlan
 	decoder := json.NewDecoder(file)
