@@ -61,3 +61,17 @@ func TestBetaReleaseWorkflowContract(t *testing.T) {
 		}
 	}
 }
+
+func TestCIWorkflowPinsTheLintToolchain(t *testing.T) {
+	body := readOSSTestFile(t, filepath.Join(".github", "workflows", "ci.yml"))
+	for _, required := range []string{
+		"lint:",
+		"golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a",
+		"version: v2.12.2",
+		"args: --timeout=5m",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("CI workflow is missing %q", required)
+		}
+	}
+}
