@@ -38,6 +38,15 @@
 | `INTENT_DIGEST_MISMATCH` | The record or supplied digest differs | Stop. Do not edit the receipt or guess a digest |
 | `CAPTURE_RECEIPT_MISMATCH` | Git objects do not match immutable evidence | Stop and inspect the repository. Do not force reconciliation |
 
+## State compatibility errors
+
+| Code | Meaning | Action |
+| --- | --- | --- |
+| `MIGRATION_REQUIRED` | A state directory or record uses an unsupported schema | Stop. Use the compatible `wip` release and follow [STATE-COMPATIBILITY.md](STATE-COMPATIBILITY.md) |
+| `STORE_FAILED` | Version 1 lane or lease state is malformed or unsafe to read | Stop. Preserve the state and inspect the reported file condition |
+| `PROFILE_READ_FAILED` | A version 1 profile is malformed or has the wrong identity | Pass the full identity only after you confirm the lane owner |
+| `INTENT_READ_FAILED` | A version 1 intent is malformed or unsafe to read | Stop. Preserve the intent and lane ref; do not guess recovery data |
+
 If a failed `commit` result says `ref_updated: true`, preserve its `plan_id` and
 `plan_digest`, then run `wip reconcile` with both values. Do not rerun the plan
 until reconciliation says that the ref was not applied.

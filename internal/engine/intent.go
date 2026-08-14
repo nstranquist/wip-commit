@@ -140,8 +140,11 @@ func LoadIntent(repo gitx.Repo, planID, expectedDigest string) (Intent, string, 
 	if err := strictjson.Decode(body, &intent); err != nil {
 		return intent, path, fail.Wrap("INTENT_READ_FAILED", err)
 	}
-	if intent.SchemaVersion != intentSchemaVersion || intent.PlanID != planID || !planIDPattern.MatchString(intent.PlanID) {
-		return intent, path, fail.New("INVALID_INTENT", "plan intent identity or schema is invalid")
+	if intent.SchemaVersion != intentSchemaVersion {
+		return intent, path, fail.Errorf("MIGRATION_REQUIRED", "intent schema version %d is unsupported; this wip release supports version %d", intent.SchemaVersion, intentSchemaVersion)
+	}
+	if intent.PlanID != planID || !planIDPattern.MatchString(intent.PlanID) {
+		return intent, path, fail.New("INVALID_INTENT", "plan intent identity is invalid")
 	}
 	digest, err := digestIntent(intent)
 	if err != nil {

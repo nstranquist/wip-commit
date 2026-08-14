@@ -281,7 +281,7 @@ func executeInit(ctx context.Context, source gitx.Repo, options initOptions, pro
 			_, diffErr := target.Text(ctx, nil, "diff", "--cached", "--check")
 			result.DiffCheckPassed = diffErr == nil
 		}
-		result.Environment = shellEnvironment(profile{SchemaVersion: 1, Lane: options.lane, Agent: options.agent, Session: options.session, Mode: store.Mode(options.mode), Worktree: result.Worktree})
+		result.Environment = shellEnvironment(profile{SchemaVersion: profileSchemaVersion, Lane: options.lane, Agent: options.agent, Session: options.session, Mode: store.Mode(options.mode), Worktree: result.Worktree})
 		return result, nil
 	}
 	target := source
@@ -324,7 +324,7 @@ func executeInit(ctx context.Context, source gitx.Repo, options initOptions, pro
 	if err != nil {
 		return result, err
 	}
-	saved := profile{SchemaVersion: 1, Lane: lane.ID, Agent: lane.Agent, Session: lane.Session, Mode: lane.Mode, Worktree: lane.Worktree}
+	saved := profile{SchemaVersion: profileSchemaVersion, Lane: lane.ID, Agent: lane.Agent, Session: lane.Session, Mode: lane.Mode, Worktree: lane.Worktree}
 	result.Environment = shellEnvironment(saved)
 	result.StagedPaths, _ = target.NULPaths(ctx, nil, "diff", "--cached", "--no-renames", "--name-only", "-z")
 	sort.Strings(result.StagedPaths)

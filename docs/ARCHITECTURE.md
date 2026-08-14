@@ -17,6 +17,10 @@ All coordination state is below the repository's Git common directory:
 Each checkout has its own Git index. All linked worktrees share the coordination
 store and refs through the Git common directory.
 
+The store checks for another version directory before it creates `v1`. It
+returns `MIGRATION_REQUIRED` for any other version directory or record schema.
+See [STATE-COMPATIBILITY.md](STATE-COMPATIBILITY.md).
+
 Lane refs have this form:
 
 ```text

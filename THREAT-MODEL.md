@@ -107,6 +107,10 @@ during reads, reject unknown JSON fields, and validate stored identities and
 canonical paths. Atomic replacement is used for state transitions. Windows uses
 `MoveFileEx` with replace and write-through flags.
 
+The store rejects unsupported state-directory and record-schema versions. It
+checks the directory version before it creates local state. This rule prevents
+an older binary from silently coordinating through a separate state version.
+
 `wip init --install` creates a new binary with exclusive file creation. It
 accepts an existing target only when the bytes match and the file is executable.
 It never replaces a different target.

@@ -250,6 +250,38 @@ func TestIntentDigestAndCompletedRefAreRevalidated(t *testing.T) {
 	}
 }
 
+func TestFutureIntentSchemaRequiresMigration(t *testing.T) {
+	repo := engineTestRepo(t)
+	write(t, repo.Root, "core.txt", "new core\n")
+	engineGit(t, repo.Root, "add", "core.txt")
+	head := engineGit(t, repo.Root, "rev-parse", "HEAD")
+	target := "refs/heads/wip/agent/future-intent"
+	engineGit(t, repo.Root, "update-ref", target, head, "")
+	result, err := Run(context.Background(), Options{
+		Repo: repo, TargetRef: target, ExpectedRef: head, ExpectedSourceHead: head,
+		AllowedPaths: []string{"core.txt"},
+		Groups:       []Group{{Message: "fix(intent): require an explicit migration", Files: []string{"core.txt"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, path, err := LoadIntent(repo, result.PlanID, result.PlanDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent.SchemaVersion = intentSchemaVersion + 1
+	body, err := json.MarshalIndent(intent, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(body, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadIntent(repo, result.PlanID, result.PlanDigest); fail.Code(err) != "MIGRATION_REQUIRED" {
+		t.Fatalf("future intent error = %v (%s)", err, fail.Code(err))
+	}
+}
+
 func TestHookSnapshotMovementFailsBeforeRefUpdate(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fixture uses a POSIX hook")

@@ -2,10 +2,13 @@ package store
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -172,6 +175,78 @@ func TestMalformedOrSymlinkedManifestFailsClosed(t *testing.T) {
 	}
 	if _, err := laneStore.Load(lane.ID); fail.Code(err) != "STORE_FAILED" {
 		t.Fatalf("symlink manifest error = %v (%s)", err, fail.Code(err))
+	}
+}
+
+func TestFutureStateDirectoryFailsBeforeV1Creation(t *testing.T) {
+	for _, version := range []string{"v2", "v01"} {
+		t.Run(version, func(t *testing.T) {
+			repo := testRepo(t)
+			stateRoot := filepath.Join(repo.CommonDir, "wip")
+			if err := os.MkdirAll(filepath.Join(stateRoot, version), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Open(repo); fail.Code(err) != "MIGRATION_REQUIRED" {
+				t.Fatalf("unsupported state error = %v (%s)", err, fail.Code(err))
+			}
+			if _, err := os.Lstat(filepath.Join(stateRoot, "v1")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("Open created v1 beside unsupported state: %v", err)
+			}
+		})
+	}
+}
+
+func TestFutureLaneAndLeaseSchemasRequireMigration(t *testing.T) {
+	t.Run("lane", func(t *testing.T) {
+		repo := testRepo(t)
+		laneStore, err := Open(repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lane, err := laneStore.Create(context.Background(), CreateOptions{ID: "future-lane", Agent: "agent", Session: "session", Mode: ModeShared})
+		if err != nil {
+			t.Fatal(err)
+		}
+		replaceStoreSchema(t, laneStore.lanePath(lane.ID), SchemaVersion+1)
+		if _, err := laneStore.Load(lane.ID); fail.Code(err) != "MIGRATION_REQUIRED" {
+			t.Fatalf("future lane error = %v (%s)", err, fail.Code(err))
+		}
+	})
+
+	t.Run("lease", func(t *testing.T) {
+		repo := testRepo(t)
+		laneStore, err := Open(repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lane, err := laneStore.Create(context.Background(), CreateOptions{ID: "future-lease", Agent: "agent", Session: "session", Mode: ModeShared})
+		if err != nil {
+			t.Fatal(err)
+		}
+		lease, err := laneStore.Claim(lane.ID, lane.Agent, lane.Session, []string{"base.txt"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		replaceStoreSchema(t, filepath.Join(laneStore.Root, "leases", lease.ID+".json"), SchemaVersion+1)
+		if _, err := laneStore.ActivePaths(lane.ID); fail.Code(err) != "MIGRATION_REQUIRED" {
+			t.Fatalf("future lease error = %v (%s)", err, fail.Code(err))
+		}
+	})
+}
+
+func replaceStoreSchema(t *testing.T, path string, version int) {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := `"schema_version": 1`
+	if strings.Count(string(body), old) != 1 {
+		t.Fatalf("schema field count in %s is not one", path)
+	}
+	updated := strings.Replace(string(body), old, fmt.Sprintf(`"schema_version": %d`, version), 1)
+	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

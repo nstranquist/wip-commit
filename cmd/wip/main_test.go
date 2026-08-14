@@ -356,6 +356,35 @@ func TestLaneLifecycleCommandsPreserveRef(t *testing.T) {
 	}
 }
 
+func TestFutureProfileSchemaRequiresMigration(t *testing.T) {
+	directory := cliTestRepo(t)
+	initializeCLI(t, directory, "future-profile", "core.txt")
+	repo, err := gitx.Discover(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laneStore, err := store.Open(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := loadProfile(laneStore, "future-profile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved.SchemaVersion = profileSchemaVersion + 1
+	body, err := json.MarshalIndent(saved, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(profilePath(laneStore, saved.Lane), append(body, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result := runCLI(t, []string{"--json", "--repo-dir", directory, "status", "--lane", saved.Lane}, "")
+	if result.code == 0 || result.envelope.Error == nil || result.envelope.Error.Code != "MIGRATION_REQUIRED" {
+		t.Fatalf("future profile result = %#v stderr=%s", result.envelope, result.stderr)
+	}
+}
+
 type cliRun struct {
 	code           int
 	stdout, stderr string

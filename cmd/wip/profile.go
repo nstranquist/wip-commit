@@ -23,6 +23,8 @@ type profile struct {
 	Worktree      string     `json:"worktree"`
 }
 
+const profileSchemaVersion = 1
+
 type identityFlags struct {
 	lane, agent, session string
 }
@@ -42,7 +44,7 @@ func profilePath(laneStore store.Store, lane string) string {
 }
 
 func writeProfile(laneStore store.Store, lane store.Lane) (string, error) {
-	wanted := profile{SchemaVersion: 1, Lane: lane.ID, Agent: lane.Agent, Session: lane.Session, Mode: lane.Mode, Worktree: lane.Worktree}
+	wanted := profile{SchemaVersion: profileSchemaVersion, Lane: lane.ID, Agent: lane.Agent, Session: lane.Session, Mode: lane.Mode, Worktree: lane.Worktree}
 	body, err := json.MarshalIndent(wanted, "", "  ")
 	if err != nil {
 		return "", fail.Wrap("PROFILE_WRITE_FAILED", err)
@@ -74,8 +76,14 @@ func loadProfile(laneStore store.Store, lane string) (profile, error) {
 	if err != nil {
 		return value, fail.Wrap("PROFILE_READ_FAILED", err)
 	}
-	if err := strictjson.Decode(body, &value); err != nil || value.SchemaVersion != 1 || value.Lane != lane {
-		return profile{}, fail.New("PROFILE_READ_FAILED", "lane profile is invalid or unsupported")
+	if err := strictjson.Decode(body, &value); err != nil {
+		return profile{}, fail.Wrap("PROFILE_READ_FAILED", err)
+	}
+	if value.SchemaVersion != profileSchemaVersion {
+		return profile{}, fail.Errorf("MIGRATION_REQUIRED", "profile schema version %d is unsupported; this wip release supports version %d", value.SchemaVersion, profileSchemaVersion)
+	}
+	if value.Lane != lane {
+		return profile{}, fail.New("PROFILE_READ_FAILED", "lane profile identity is invalid")
 	}
 	return value, nil
 }
@@ -89,6 +97,8 @@ func resolveStatus(laneStore store.Store, identity identityFlags) (store.Status,
 			if identity.session == "" {
 				identity.session = saved.Session
 			}
+		} else if fail.Code(err) == "MIGRATION_REQUIRED" {
+			return store.Status{}, err
 		}
 	}
 	status, err := laneStore.Current(identity.agent, identity.session, identity.lane)

@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,9 +27,13 @@ const (
 	SchemaVersion   = 1
 	DefaultLeaseTTL = 15 * time.Minute
 	maxRecordBytes  = 1 << 20
+	maxStateEntries = 32
 )
 
-var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+var (
+	identifierPattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+	stateDirectoryPattern = regexp.MustCompile(`^v([0-9]+)$`)
+)
 
 func ValidateID(value, label string) error { return validateID(value, label) }
 
@@ -86,7 +92,11 @@ type Store struct {
 }
 
 func Open(repo gitx.Repo) (Store, error) {
-	root := filepath.Join(repo.CommonDir, "wip", "v1")
+	stateRoot := filepath.Join(repo.CommonDir, "wip")
+	if err := validateStateDirectories(stateRoot); err != nil {
+		return Store{}, err
+	}
+	root := filepath.Join(stateRoot, "v1")
 	for _, directory := range []string{"lanes", "leases", "locks", "intents", "profiles"} {
 		path := filepath.Join(root, directory)
 		if err := os.MkdirAll(path, 0o700); err != nil {
@@ -97,6 +107,42 @@ func Open(repo gitx.Repo) (Store, error) {
 		}
 	}
 	return Store{Repo: repo, Root: root}, nil
+}
+
+func validateStateDirectories(root string) error {
+	info, err := os.Lstat(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fail.Wrap("STORE_FAILED", err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fail.New("STORE_FAILED", "wip state root is not a regular directory")
+	}
+	directory, err := os.Open(root)
+	if err != nil {
+		return fail.Wrap("STORE_FAILED", err)
+	}
+	defer directory.Close()
+	entries, err := directory.ReadDir(maxStateEntries + 1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fail.Wrap("STORE_FAILED", err)
+	}
+	if len(entries) > maxStateEntries {
+		return fail.Errorf("STORE_FAILED", "wip state root exceeds %d entries", maxStateEntries)
+	}
+	for _, entry := range entries {
+		match := stateDirectoryPattern.FindStringSubmatch(entry.Name())
+		if len(match) != 2 {
+			continue
+		}
+		version, parseErr := strconv.ParseUint(match[1], 10, 31)
+		if parseErr != nil || version != SchemaVersion || entry.Name() != fmt.Sprintf("v%d", SchemaVersion) {
+			return fail.Errorf("MIGRATION_REQUIRED", "state directory %s is unsupported; this wip release supports v%d", entry.Name(), SchemaVersion)
+		}
+	}
+	return nil
 }
 
 func LaneRef(agent, lane string) string { return "refs/heads/wip/" + agent + "/" + lane }
@@ -600,8 +646,11 @@ func validateID(value, label string) error {
 }
 
 func (store Store) validateLane(lane Lane, id string) error {
-	if lane.SchemaVersion != SchemaVersion || lane.ID != id {
-		return fail.New("STORE_FAILED", "lane manifest identity or schema is invalid")
+	if lane.SchemaVersion != SchemaVersion {
+		return fail.Errorf("MIGRATION_REQUIRED", "lane schema version %d is unsupported; this wip release supports version %d", lane.SchemaVersion, SchemaVersion)
+	}
+	if lane.ID != id {
+		return fail.New("STORE_FAILED", "lane manifest identity is invalid")
 	}
 	for label, value := range map[string]string{"lane": lane.ID, "agent": lane.Agent, "session": lane.Session} {
 		if err := validateID(value, label); err != nil {
@@ -631,8 +680,11 @@ func (store Store) validateLane(lane Lane, id string) error {
 }
 
 func (store Store) validateLease(lease Lease, id string) error {
-	if lease.SchemaVersion != SchemaVersion || lease.ID != id {
-		return fail.New("STORE_FAILED", "lease identity or schema is invalid")
+	if lease.SchemaVersion != SchemaVersion {
+		return fail.Errorf("MIGRATION_REQUIRED", "lease schema version %d is unsupported; this wip release supports version %d", lease.SchemaVersion, SchemaVersion)
+	}
+	if lease.ID != id {
+		return fail.New("STORE_FAILED", "lease identity is invalid")
 	}
 	for label, value := range map[string]string{"lease": lease.ID, "lane": lease.LaneID, "agent": lease.Agent, "session": lease.Session} {
 		if err := validateID(value, label); err != nil {
