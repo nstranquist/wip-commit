@@ -196,6 +196,43 @@ func TestFutureStateDirectoryFailsBeforeV1Creation(t *testing.T) {
 	}
 }
 
+func TestStateRootReaderIsBoundedAndRejectsSymlink(t *testing.T) {
+	t.Run("bounded", func(t *testing.T) {
+		repo := testRepo(t)
+		stateRoot := filepath.Join(repo.CommonDir, "wip")
+		for index := 0; index <= maxStateEntries; index++ {
+			path := filepath.Join(stateRoot, fmt.Sprintf("entry-%02d", index))
+			if err := os.MkdirAll(path, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := Open(repo); fail.Code(err) != "STORE_FAILED" {
+			t.Fatalf("oversized state root error = %v (%s)", err, fail.Code(err))
+		}
+		if _, err := os.Lstat(filepath.Join(stateRoot, "v1")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("Open created v1 after a bound failure: %v", err)
+		}
+	})
+
+	t.Run("symlink", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("symlink creation needs optional Windows privileges")
+		}
+		repo := testRepo(t)
+		stateRoot := filepath.Join(repo.CommonDir, "wip")
+		external := t.TempDir()
+		if err := os.Symlink(external, stateRoot); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Open(repo); fail.Code(err) != "STORE_FAILED" {
+			t.Fatalf("symlinked state root error = %v (%s)", err, fail.Code(err))
+		}
+		if _, err := os.Lstat(filepath.Join(external, "v1")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("Open wrote through a state-root symlink: %v", err)
+		}
+	})
+}
+
 func TestFutureLaneAndLeaseSchemasRequireMigration(t *testing.T) {
 	t.Run("lane", func(t *testing.T) {
 		repo := testRepo(t)
