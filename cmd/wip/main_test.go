@@ -61,6 +61,70 @@ func TestNonInteractiveInitIsIdempotentAndSingleCaptureIsExact(t *testing.T) {
 	}
 }
 
+func TestConcurrentSharedLanesCaptureDisjointPaths(t *testing.T) {
+	directory := cliTestRepo(t)
+	writeCLI(t, directory, "core.txt", "new core\n")
+	writeCLI(t, directory, "docs.txt", "new docs\n")
+	writeCLI(t, directory, "foreign.txt", "foreign staged\n")
+	cliGit(t, directory, "add", "core.txt", "docs.txt", "foreign.txt")
+	head := cliGit(t, directory, "rev-parse", "HEAD")
+	index := cliGitRaw(t, directory, "ls-files", "-s", "-z")
+	initializeCLI(t, directory, "core-lane", "core.txt")
+	initializeCLI(t, directory, "docs-lane", "docs.txt")
+
+	type concurrentResult struct {
+		lane   string
+		code   int
+		stdout string
+		stderr string
+	}
+	start := make(chan struct{})
+	results := make(chan concurrentResult, 2)
+	runLane := func(lane, message, path string) {
+		<-start
+		var stdout, stderr bytes.Buffer
+		code := run(context.Background(), []string{
+			"--json", "--repo-dir", directory, "commit", "--lane", lane,
+			"--single", "--message", message, "--path", path,
+		}, strings.NewReader(""), &stdout, &stderr)
+		results <- concurrentResult{lane: lane, code: code, stdout: stdout.String(), stderr: stderr.String()}
+	}
+	go runLane("core-lane", "fix(core): capture core behavior", "core.txt")
+	go runLane("docs-lane", "docs(guide): capture docs behavior", "docs.txt")
+	close(start)
+
+	commits := map[string]string{}
+	for range 2 {
+		captured := <-results
+		var output envelope
+		if err := json.Unmarshal([]byte(captured.stdout), &output); err != nil {
+			t.Fatalf("decode %s output %q: %v; stderr=%s", captured.lane, captured.stdout, err, captured.stderr)
+		}
+		if captured.code != 0 || !output.OK {
+			t.Fatalf("%s capture: code=%d output=%#v stderr=%s", captured.lane, captured.code, output, captured.stderr)
+		}
+		var result engine.Result
+		decodeData(t, output.Data, &result)
+		if !result.RefUpdated || result.IntentState != "complete" || len(result.Commits) != 1 {
+			t.Fatalf("%s result = %#v", captured.lane, result)
+		}
+		commits[captured.lane] = result.FinalCommit
+	}
+
+	if got := cliGit(t, directory, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("source HEAD moved: %s", got)
+	}
+	if got := cliGitRaw(t, directory, "ls-files", "-s", "-z"); got != index {
+		t.Fatal("source index changed")
+	}
+	assertCLIFileAtCommit(t, directory, commits["core-lane"], "core.txt", "new core")
+	assertCLIFileAtCommit(t, directory, commits["core-lane"], "docs.txt", "base docs")
+	assertCLIFileAtCommit(t, directory, commits["core-lane"], "foreign.txt", "base foreign")
+	assertCLIFileAtCommit(t, directory, commits["docs-lane"], "core.txt", "base core")
+	assertCLIFileAtCommit(t, directory, commits["docs-lane"], "docs.txt", "new docs")
+	assertCLIFileAtCommit(t, directory, commits["docs-lane"], "foreign.txt", "base foreign")
+}
+
 func TestCommitRequiresSplitPlanUnlessSingleIsExplicit(t *testing.T) {
 	directory := cliTestRepo(t)
 	writeCLI(t, directory, "core.txt", "new core\n")
@@ -115,7 +179,7 @@ func TestInteractiveInitAndSplitPlannerKeepJSONClean(t *testing.T) {
 	}
 }
 
-func TestInitCanCreateLinkedWorktreeWithoutMovingAnchor(t *testing.T) {
+func TestInitCanCreateAndCaptureLinkedWorktreeWithoutMovingCheckouts(t *testing.T) {
 	directory := cliTestRepo(t)
 	head := cliGit(t, directory, "rev-parse", "HEAD")
 	linked := filepath.Join(t.TempDir(), "agent-worktree")
@@ -134,6 +198,35 @@ func TestInitCanCreateLinkedWorktreeWithoutMovingAnchor(t *testing.T) {
 	if got := cliGit(t, linked, "rev-parse", "HEAD"); got != head {
 		t.Fatalf("linked HEAD = %s, want %s", got, head)
 	}
+	writeCLI(t, linked, "core.txt", "linked core\n")
+	cliGit(t, linked, "add", "core.txt")
+	anchorIndex := cliGitRaw(t, directory, "ls-files", "-s", "-z")
+	linkedIndex := cliGitRaw(t, linked, "ls-files", "-s", "-z")
+	committed := runCLI(t, []string{
+		"--json", "--repo-dir", linked, "commit", "--lane", "linked-lane",
+		"--single", "--message", "fix(core): capture linked worktree change", "--path", "core.txt",
+	}, "")
+	if committed.code != 0 || !committed.envelope.OK {
+		t.Fatalf("worktree capture: %#v stderr=%s", committed.envelope, committed.stderr)
+	}
+	var capture engine.Result
+	decodeData(t, committed.envelope.Data, &capture)
+	if !capture.RefUpdated || capture.IntentState != "complete" {
+		t.Fatalf("worktree capture result = %#v", capture)
+	}
+	if got := cliGit(t, directory, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("anchor HEAD moved after capture: %s", got)
+	}
+	if got := cliGit(t, linked, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("linked HEAD moved after capture: %s", got)
+	}
+	if got := cliGitRaw(t, directory, "ls-files", "-s", "-z"); got != anchorIndex {
+		t.Fatal("anchor index changed")
+	}
+	if got := cliGitRaw(t, linked, "ls-files", "-s", "-z"); got != linkedIndex {
+		t.Fatal("linked index changed")
+	}
+	assertCLIFileAtCommit(t, directory, capture.FinalCommit, "core.txt", "linked core")
 }
 
 func TestInitDryRunAndInstallerAreNonDestructive(t *testing.T) {
@@ -344,4 +437,11 @@ func cliGitRaw(t *testing.T, directory string, args ...string) string {
 		t.Fatalf("git %v: %v\n%s", args, err, output)
 	}
 	return string(output)
+}
+
+func assertCLIFileAtCommit(t *testing.T, directory, commit, path, wanted string) {
+	t.Helper()
+	if got := cliGit(t, directory, "show", commit+":"+path); got != wanted {
+		t.Fatalf("%s:%s = %q, want %q", commit, path, got, wanted)
+	}
 }
