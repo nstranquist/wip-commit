@@ -37,6 +37,7 @@
         {"kind": "command", "value": "GOWORK=off go test -count=1 ./...", "observed_on": "2026-08-14"},
         {"kind": "command", "value": "GOWORK=off go test -race -count=3 ./...", "observed_on": "2026-08-14"},
         {"kind": "command", "value": "GOWORK=off go vet ./...", "observed_on": "2026-08-14"},
+        {"kind": "command", "value": "golangci-lint v2.12.2 run ./...", "observed_on": "2026-08-14"},
         {"kind": "command", "value": "GOWORK=off go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...", "observed_on": "2026-08-14"}
       ]
     },
@@ -111,7 +112,7 @@
       "status": "external-evidence",
       "owner": "repository-owner",
       "human_gate": true,
-      "acceptance": "The exact candidate passes Linux, macOS, Windows, race, vet, module, and dependency-review jobs.",
+      "acceptance": "The exact candidate passes Linux, macOS, Windows, race, vet, lint, module, and dependency-review jobs.",
       "evidence": [
         {"kind": "workflow", "value": ".github/workflows/ci.yml", "observed_on": "2026-08-14"}
       ]

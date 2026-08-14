@@ -25,6 +25,7 @@ is proposed. It does not authorize publication.
   guide.
 - Linux, macOS, and Windows CI definition.
 - Race-test CI definition.
+- Pinned golangci-lint CI definition.
 - Dependency-update settings.
 - Issue and pull-request templates.
 - Local unit, integration, race, vet, and cross-build commands.

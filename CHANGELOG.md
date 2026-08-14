@@ -10,6 +10,7 @@ Semantic Versioning.
 - Portable `wip-commit` agent skill with a public-only safety contract.
 - Deterministic six-target release builder, checksums, receipt, and attested
   prerelease workflow.
+- Pinned golangci-lint job for hosted pull-request and branch checks.
 - State compatibility policy and explicit upgrade and downgrade procedures.
 
 ### Changed
