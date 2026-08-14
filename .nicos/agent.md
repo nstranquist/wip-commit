@@ -1,5 +1,7 @@
-Agent pointer (do not vendor nicos-tools skills here).
+Maintainer agent pointer.
 
-- Use PATH ndev for catalog, hygiene, and search. Catalog writes stay in nicos-tools.
-- Commits: global wip-commit skill (~/.claude/skills, ~/.agents/skills, ~/.grok/skills).
-- Do not copy skills/wip-commit into this tree.
+- Public contributors need only this repository, Git, and Go.
+- Keep catalog writes in the owning portfolio registry.
+- Use an installed wip-commit skill for guarded maintainer commits.
+- Do not copy an external skill into this tree without an accepted extraction
+  decision.

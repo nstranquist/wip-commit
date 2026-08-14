@@ -1,0 +1,215 @@
+{
+  "schema_version": 1,
+  "plan_id": "wip-oss-public-beta",
+  "plan_status": "proposed",
+  "target_version": "v0.1.0-beta.1",
+  "last_reviewed": "2026-08-14",
+  "status_definitions": {
+    "verified": "Local evidence passed on the recorded source.",
+    "prepared": "The repository artifact exists, but hosted evidence is absent.",
+    "planned": "Owner-controlled implementation work remains.",
+    "human-gated": "An owner decision or external mutation is required.",
+    "external-evidence": "A hosted system or independent person must supply proof.",
+    "deferred": "The item is outside the public-beta gate."
+  },
+  "requirements": [
+    {
+      "id": "OSS-001",
+      "gate": "public-beta",
+      "title": "Confirm the public name and module path",
+      "status": "human-gated",
+      "owner": "repository-owner",
+      "human_gate": true,
+      "acceptance": "The owner approves wip-commit and github.com/nstranquist/wip-commit before the first push.",
+      "evidence": [
+        {"kind": "candidate", "value": "go.mod and README.md", "observed_on": "2026-08-14"}
+      ]
+    },
+    {
+      "id": "OSS-002",
+      "gate": "public-beta",
+      "title": "Prove the standalone source is healthy",
+      "status": "verified",
+      "owner": "maintainer",
+      "human_gate": false,
+      "acceptance": "Standalone build, test, race, vet, module, vulnerability, Git, and cross-compile checks pass with GOWORK=off.",
+      "evidence": [
+        {"kind": "command", "value": "GOWORK=off go test -count=1 ./...", "observed_on": "2026-08-14"},
+        {"kind": "command", "value": "GOWORK=off go test -race -count=3 ./...", "observed_on": "2026-08-14"},
+        {"kind": "command", "value": "GOWORK=off go vet ./...", "observed_on": "2026-08-14"},
+        {"kind": "command", "value": "GOWORK=off go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...", "observed_on": "2026-08-14"}
+      ]
+    },
+    {
+      "id": "OSS-003",
+      "gate": "public-beta",
+      "title": "Prove concurrent shared-lane capture",
+      "status": "verified",
+      "owner": "maintainer",
+      "human_gate": false,
+      "acceptance": "Two simultaneous disjoint captures preserve HEAD, the complete index, and foreign staged content.",
+      "evidence": [
+        {"kind": "test", "value": "TestConcurrentSharedLanesCaptureDisjointPaths", "observed_on": "2026-08-14"},
+        {"kind": "command", "value": "GOWORK=off go test -race -count=10 ./cmd/wip -run TestConcurrentSharedLanesCaptureDisjointPaths", "observed_on": "2026-08-14"}
+      ]
+    },
+    {
+      "id": "OSS-004",
+      "gate": "public-beta",
+      "title": "Prove linked-worktree setup and capture",
+      "status": "verified",
+      "owner": "maintainer",
+      "human_gate": false,
+      "acceptance": "wip init creates a detached linked worktree and capture preserves both checkout heads and indexes.",
+      "evidence": [
+        {"kind": "test", "value": "TestInitCanCreateAndCaptureLinkedWorktreeWithoutMovingCheckouts", "observed_on": "2026-08-14"}
+      ]
+    },
+    {
+      "id": "OSS-005",
+      "gate": "public-beta",
+      "title": "Review the complete history for secrets",
+      "status": "verified",
+      "owner": "maintainer",
+      "human_gate": false,
+      "acceptance": "The full Git history and worktree contain no detected secret.",
+      "evidence": [
+        {"kind": "command", "value": "gitleaks git --redact --exit-code 1 .", "observed_on": "2026-08-14"},
+        {"kind": "command", "value": "gitleaks dir --redact --exit-code 1 .", "observed_on": "2026-08-14"}
+      ]
+    },
+    {
+      "id": "OSS-006",
+      "gate": "public-beta",
+      "title": "Remove internal-only public instructions",
+      "status": "verified",
+      "owner": "maintainer",
+      "human_gate": false,
+      "acceptance": "Public usage and contribution paths require only this repository, Git, and Go.",
+      "evidence": [
+        {"kind": "review", "value": "README.md, AGENTS.md, .nicos/agent.md, CONTRIBUTING.md", "observed_on": "2026-08-14"},
+        {"kind": "review", "value": "The public tree has no absolute local path or required internal tool reference.", "observed_on": "2026-08-14"}
+      ]
+    },
+    {
+      "id": "OSS-007",
+      "gate": "public-beta",
+      "title": "Add a portable agent skill",
+      "status": "planned",
+      "owner": "maintainer",
+      "human_gate": false,
+      "acceptance": "The standalone skill uses public wip commands, defaults to split capture, and has no private helper dependency.",
+      "evidence": [
+        {"kind": "gap", "value": "AGENTS.md records that the canonical skill still lives outside this repository.", "observed_on": "2026-08-14"}
+      ]
+    },
+    {
+      "id": "OSS-008",
+      "gate": "public-beta",
+      "title": "Run hosted operating-system tests",
+      "status": "external-evidence",
+      "owner": "repository-owner",
+      "human_gate": true,
+      "acceptance": "The exact candidate passes Linux, macOS, Windows, race, vet, module, and dependency-review jobs.",
+      "evidence": [
+        {"kind": "workflow", "value": ".github/workflows/ci.yml", "observed_on": "2026-08-14"}
+      ]
+    },
+    {
+      "id": "OSS-009",
+      "gate": "public-beta",
+      "title": "Configure hosted repository protections",
+      "status": "human-gated",
+      "owner": "repository-owner",
+      "human_gate": true,
+      "acceptance": "main requires pull requests, review, required CI, and blocks force pushes and deletion.",
+      "evidence": [
+        {"kind": "gap", "value": "No remote is configured in the local checkout.", "observed_on": "2026-08-14"}
+      ]
+    },
+    {
+      "id": "OSS-010",
+      "gate": "public-beta",
+      "title": "Configure hosted security reporting",
+      "status": "human-gated",
+      "owner": "repository-owner",
+      "human_gate": true,
+      "acceptance": "Private vulnerability reporting, dependency alerts, secret scanning, and security notifications are enabled.",
+      "evidence": [
+        {"kind": "prepared-policy", "value": "SECURITY.md and .github/ISSUE_TEMPLATE/config.yml", "observed_on": "2026-08-14"}
+      ]
+    },
+    {
+      "id": "OSS-011",
+      "gate": "public-beta",
+      "title": "Build checksummed and attested release archives",
+      "status": "planned",
+      "owner": "maintainer",
+      "human_gate": false,
+      "acceptance": "The tag workflow builds six target archives, SHA-256 checksums, and build provenance from the exact tag.",
+      "evidence": [
+        {"kind": "gap", "value": "No release workflow exists.", "observed_on": "2026-08-14"}
+      ]
+    },
+    {
+      "id": "OSS-012",
+      "gate": "public-beta",
+      "title": "Complete an independent beta exercise",
+      "status": "external-evidence",
+      "owner": "independent-tester",
+      "human_gate": true,
+      "acceptance": "A non-author tests shared setup, worktree setup, split capture, failure behavior, and reconciliation.",
+      "evidence": [
+        {"kind": "gap", "value": "No independent beta receipt exists.", "observed_on": "2026-08-14"}
+      ]
+    },
+    {
+      "id": "OSS-013",
+      "gate": "public-beta",
+      "title": "Verify public installation",
+      "status": "external-evidence",
+      "owner": "repository-owner",
+      "human_gate": true,
+      "acceptance": "A clean environment installs the tagged command through the public Go module path and runs wip version.",
+      "evidence": [
+        {"kind": "gap", "value": "The module path is not public.", "observed_on": "2026-08-14"}
+      ]
+    },
+    {
+      "id": "OSS-014",
+      "gate": "public-beta",
+      "title": "Publish the approved beta tag",
+      "status": "human-gated",
+      "owner": "repository-owner",
+      "human_gate": true,
+      "acceptance": "The owner creates a signed v0.1.0-beta.1 tag only after every public-beta gate passes.",
+      "evidence": [
+        {"kind": "gap", "value": "No remote or tag exists.", "observed_on": "2026-08-14"}
+      ]
+    },
+    {
+      "id": "OSS-015",
+      "gate": "stable",
+      "title": "Define state compatibility and migration",
+      "status": "planned",
+      "owner": "maintainer",
+      "human_gate": false,
+      "acceptance": "The project documents schema support, upgrade behavior, downgrade behavior, and fail-closed migration errors.",
+      "evidence": [
+        {"kind": "gap", "value": "State schema version 1 exists without a public migration policy.", "observed_on": "2026-08-14"}
+      ]
+    },
+    {
+      "id": "OSS-016",
+      "gate": "stable",
+      "title": "Complete an independent security review",
+      "status": "external-evidence",
+      "owner": "independent-reviewer",
+      "human_gate": true,
+      "acceptance": "An independent reviewer assesses locks, hooks, crash recovery, path identity, and Windows behavior.",
+      "evidence": [
+        {"kind": "gap", "value": "No independent security review exists.", "observed_on": "2026-08-14"}
+      ]
+    }
+  ]
+}

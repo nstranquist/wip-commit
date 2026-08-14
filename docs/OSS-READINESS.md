@@ -6,6 +6,11 @@ The project is a strong candidate for its own public repository. The code and
 local evidence support a `v0.1.0-beta.1` label. They do not yet support a stable
 `v1.0.0` claim.
 
+The detailed release decision and current evidence are in
+[OSS-PUBLIC-BETA.md](OSS-PUBLIC-BETA.md) and
+[OSS-PUBLIC-BETA.requirements.yaml](OSS-PUBLIC-BETA.requirements.yaml). The plan
+is proposed. It does not authorize publication.
+
 ## Ready in this checkout
 
 - MIT license
@@ -23,6 +28,9 @@ local evidence support a `v0.1.0-beta.1` label. They do not yet support a stable
 - dependency-update configuration
 - issue and pull-request templates
 - local unit, integration, race, vet, and cross-build commands
+- full-history and worktree secret scans
+- simultaneous disjoint shared-lane capture test
+- end-to-end linked-worktree capture test
 
 ## Required before public beta publication
 
@@ -33,12 +41,11 @@ local evidence support a `v0.1.0-beta.1` label. They do not yet support a stable
    compilation is not a substitute for Windows runtime tests.
 4. Require pull-request review and passing CI on the default branch.
 5. Enable private vulnerability reporting and dependency alerts.
-6. Review the full Git history for secrets and private paths before the first
-   push.
+6. Add the portable public agent skill without private helper dependencies.
 7. Create signed or provenance-attested release archives and checksums.
 8. Ask at least one independent user to test shared and worktree flows.
-9. Record the known Windows process-descendant limitation in the release notes.
-10. Tag `v0.1.0-beta.1` only after the hosted checks pass.
+9. Run a clean public-module installation smoke test.
+10. Tag `v0.1.0-beta.1` only after every tracked public-beta gate passes.
 
 ## Required before a stable release
 

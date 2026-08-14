@@ -11,5 +11,5 @@
 - Add a failure-boundary test for each safety change.
 - Run `go test ./...`, `go test -race -count=3 ./...`, `go vet ./...`, and
   `actionlint` before handoff.
-- The canonical user-facing agent skill remains in the owning `nicos-tools`
-  repository until an explicit extraction decision moves it here.
+- The canonical user-facing agent skill remains in its owning repository until
+  an accepted extraction decision moves a portable version here.

@@ -215,7 +215,9 @@ command can still use the network.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the transaction model,
 [docs/ERRORS.md](docs/ERRORS.md) for recovery actions, and
-[docs/OSS-READINESS.md](docs/OSS-READINESS.md) for the publication checklist.
+[docs/OSS-READINESS.md](docs/OSS-READINESS.md) for the publication summary. The
+detailed proposal and evidence tracker are in
+[docs/OSS-PUBLIC-BETA.md](docs/OSS-PUBLIC-BETA.md).
 
 ## License
 
