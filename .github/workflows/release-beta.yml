@@ -1,0 +1,62 @@
+name: release-beta
+
+on:
+  push:
+    tags:
+      - "v*-*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.repository == 'nstranquist/wip-commit'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      attestations: write
+      artifact-metadata: write
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify source
+        run: |
+          go mod verify
+          go test -count=1 ./...
+          go test -race -count=3 ./...
+          go vet ./...
+      - name: Build deterministic archives
+        run: go run ./scripts/release --version "$GITHUB_REF_NAME" --out dist
+      - name: Attest release files
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+            dist/release-receipt.json
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          dist/*.tar.gz
+          dist/*.zip
+          dist/checksums.txt
+          dist/release-receipt.json
+          --generate-notes
+          --prerelease
+          --title "$GITHUB_REF_NAME"
+          --verify-tag

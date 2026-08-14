@@ -1,0 +1,63 @@
+package wipcommit
+
+import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+)
+
+func TestWorkflowActionsUseImmutableCommits(t *testing.T) {
+	entries, err := os.ReadDir(filepath.Join(".github", "workflows"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	usePattern := regexp.MustCompile(`(?m)^\s*-?\s*uses:\s+([^\s@]+)@([^\s#]+)`)
+	commitPattern := regexp.MustCompile(`^[0-9a-f]{40}$`)
+	count := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yml") {
+			continue
+		}
+		path := filepath.Join(".github", "workflows", entry.Name())
+		body := readOSSTestFile(t, path)
+		for _, match := range usePattern.FindAllStringSubmatch(body, -1) {
+			count++
+			if !commitPattern.MatchString(match[2]) {
+				t.Errorf("%s action %s uses mutable ref %q", path, match[1], match[2])
+			}
+		}
+	}
+	if count == 0 {
+		t.Fatal("no workflow actions found")
+	}
+}
+
+func TestBetaReleaseWorkflowContract(t *testing.T) {
+	body := readOSSTestFile(t, filepath.Join(".github", "workflows", "release-beta.yml"))
+	for _, required := range []string{
+		`- "v*-*"`,
+		"github.repository == 'nstranquist/wip-commit'",
+		"attestations: write",
+		"artifact-metadata: write",
+		"contents: write",
+		"id-token: write",
+		"go test -race -count=3 ./...",
+		"go run ./scripts/release",
+		"actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d",
+		"dist/checksums.txt",
+		"dist/release-receipt.json",
+		"--prerelease",
+		"--verify-tag",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("release workflow is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"workflow_dispatch:", "pull_request:", "branches:"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("release workflow contains unexpected trigger %q", forbidden)
+		}
+	}
+}
