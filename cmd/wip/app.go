@@ -115,7 +115,7 @@ func (application app) success(action string, data any, human string) int {
 	if application.jsonMode {
 		_ = json.NewEncoder(application.stdout).Encode(envelope{OK: true, Action: action, Data: data})
 	} else if human != "" {
-		fmt.Fprintln(application.stdout, human)
+		_, _ = fmt.Fprintln(application.stdout, human)
 	}
 	return 0
 }
@@ -125,7 +125,7 @@ func (application app) failure(action string, err error, data any, code int) int
 	if application.jsonMode {
 		_ = json.NewEncoder(application.stdout).Encode(envelope{OK: false, Action: action, Data: data, Error: payload})
 	} else {
-		fmt.Fprintf(application.stderr, "wip %s: %s: %s\n", action, payload.Code, payload.Message)
+		_, _ = fmt.Fprintf(application.stderr, "wip %s: %s: %s\n", action, payload.Code, payload.Message)
 	}
 	return code
 }
@@ -138,7 +138,7 @@ func (application app) flagSet(command string) *flag.FlagSet {
 
 func (application app) printHelp() {
 	output := application.stdout
-	fmt.Fprintln(output, `wip safely captures exact staged subsets on agent-owned refs.
+	_, _ = fmt.Fprintln(output, `wip safely captures exact staged subsets on agent-owned refs.
 
 Usage:
   wip [--json] [--repo-dir DIR] <command> [options]
@@ -193,10 +193,10 @@ Capture one all-or-nothing staged split plan. Important options:
 		"version":   "Usage: wip version",
 	}
 	if text, ok := usage[command]; ok {
-		fmt.Fprintln(application.stdout, text)
+		_, _ = fmt.Fprintln(application.stdout, text)
 		return true
 	}
-	fmt.Fprintf(application.stderr, "unknown command %q\n", command)
+	_, _ = fmt.Fprintf(application.stderr, "unknown command %q\n", command)
 	return false
 }
 

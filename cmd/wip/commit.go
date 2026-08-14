@@ -58,7 +58,7 @@ func (application app) runCommit(ctx context.Context, laneStore store.Store, arg
 	if err != nil {
 		return application.failure("commit", err, nil, 1)
 	}
-	defer lock.Release()
+	defer func() { _ = lock.Release() }()
 	lane, err := laneStore.Load(status.Lane.ID)
 	if err != nil {
 		return application.failure("commit", err, nil, 1)
@@ -133,7 +133,7 @@ func (application app) resolveGroups(ctx context.Context, laneStore store.Store,
 			if err != nil {
 				return nil, fail.Wrap("INVALID_PLAN", err)
 			}
-			defer file.Close()
+			defer func() { _ = file.Close() }()
 			reader = file
 		}
 		return decodePlan(reader)
@@ -239,9 +239,9 @@ func interactiveGroups(paths []string, allowWIP bool, prompter prompt) ([]engine
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	fmt.Fprintln(prompter.out, "Proposed split groups (one ref update after every group passes):")
+	_, _ = fmt.Fprintln(prompter.out, "Proposed split groups (one ref update after every group passes):")
 	for _, key := range keys {
-		fmt.Fprintf(prompter.out, "  %s:\n    %s\n", key, strings.Join(grouped[key], "\n    "))
+		_, _ = fmt.Fprintf(prompter.out, "  %s:\n    %s\n", key, strings.Join(grouped[key], "\n    "))
 	}
 	accepted, err := prompter.confirm("Use these split groups", true)
 	if err != nil {
@@ -259,12 +259,12 @@ func interactiveGroups(paths []string, allowWIP bool, prompter prompt) ([]engine
 				return nil, err
 			}
 			if err := engine.ValidateMessage(message, allowWIP); err != nil {
-				fmt.Fprintf(prompter.out, "%s: %s\n", fail.Code(err), err)
+				_, _ = fmt.Fprintf(prompter.out, "%s: %s\n", fail.Code(err), err)
 				continue
 			}
 			normalized := strings.ToLower(strings.TrimSpace(message))
 			if seen[normalized] {
-				fmt.Fprintln(prompter.out, "DUPLICATE_COMMIT_MESSAGE: use a distinct outcome for each group")
+				_, _ = fmt.Fprintln(prompter.out, "DUPLICATE_COMMIT_MESSAGE: use a distinct outcome for each group")
 				continue
 			}
 			seen[normalized] = true
@@ -299,7 +299,7 @@ func (application app) runReconcile(ctx context.Context, laneStore store.Store, 
 	if err != nil {
 		return application.failure("reconcile", err, nil, 1)
 	}
-	defer lock.Release()
+	defer func() { _ = lock.Release() }()
 	lane, err := laneStore.Load(status.Lane.ID)
 	if err != nil {
 		return application.failure("reconcile", err, nil, 1)

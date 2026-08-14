@@ -93,7 +93,7 @@ func readHook(path string) (hookSnapshot, []byte, error) {
 	if err != nil {
 		return hookSnapshot{}, nil, fail.Wrap("HOOK_PREPARE_FAILED", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
 	if err != nil {
 		return hookSnapshot{}, nil, fail.Wrap("HOOK_PREPARE_FAILED", err)

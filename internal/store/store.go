@@ -124,7 +124,7 @@ func validateStateDirectories(root string) error {
 	if err != nil {
 		return fail.Wrap("STORE_FAILED", err)
 	}
-	defer directory.Close()
+	defer func() { _ = directory.Close() }()
 	entries, err := directory.ReadDir(maxStateEntries + 1)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return fail.Wrap("STORE_FAILED", err)
@@ -208,12 +208,12 @@ func (store Store) Create(ctx context.Context, options CreateOptions) (Lane, err
 	if err != nil {
 		return Lane{}, err
 	}
-	defer lock.Release()
+	defer func() { _ = lock.Release() }()
 	registry, registryErr := store.registryLock(0)
 	if registryErr != nil {
 		return Lane{}, registryErr
 	}
-	defer registry.Release()
+	defer func() { _ = registry.Release() }()
 	if conflict, conflictErr := store.worktreeConflict(options.ID, worktree, options.Mode); conflictErr != nil {
 		return Lane{}, conflictErr
 	} else if conflict != "" {
@@ -270,7 +270,7 @@ func (store Store) Claim(id, agent, session string, paths []string) (Lease, erro
 	if err != nil {
 		return Lease{}, err
 	}
-	defer lock.Release()
+	defer func() { _ = lock.Release() }()
 	lane, err := store.Load(id)
 	if err != nil {
 		return Lease{}, err
@@ -289,7 +289,7 @@ func (store Store) Claim(id, agent, session string, paths []string) (Lease, erro
 	if err != nil {
 		return Lease{}, err
 	}
-	defer registry.Release()
+	defer func() { _ = registry.Release() }()
 	active, err := store.leases("", true)
 	if err != nil {
 		return Lease{}, err
@@ -335,7 +335,7 @@ func (store Store) Renew(id, agent, session string) ([]Lease, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer lock.Release()
+	defer func() { _ = lock.Release() }()
 	lane, err := store.Load(id)
 	if err != nil {
 		return nil, err
@@ -347,7 +347,7 @@ func (store Store) Renew(id, agent, session string) ([]Lease, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer registry.Release()
+	defer func() { _ = registry.Release() }()
 	leases, err := store.leases(id, false)
 	if err != nil {
 		return nil, err
@@ -512,12 +512,12 @@ func (store Store) Release(id, agent, session string, abort bool) error {
 	if err != nil {
 		return err
 	}
-	defer lock.Release()
+	defer func() { _ = lock.Release() }()
 	registry, err := store.registryLock(0)
 	if err != nil {
 		return err
 	}
-	defer registry.Release()
+	defer func() { _ = registry.Release() }()
 	lane, err := store.Load(id)
 	if err != nil {
 		return err

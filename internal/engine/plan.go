@@ -298,11 +298,11 @@ func Run(ctx context.Context, options Options) (result Result, err error) {
 	result.IntentState, result.GateOutcome = applied.State, "passed"
 	for _, commit := range result.Commits {
 		if _, err := options.Repo.Text(ctx, environment, "read-tree", commit.Tree); err != nil {
-			fmt.Fprintf(options.ErrorOutput, "wip: prepare post-commit index for %s: %v\n", commit.Commit, err)
+			_, _ = fmt.Fprintf(options.ErrorOutput, "wip: prepare post-commit index for %s: %v\n", commit.Commit, err)
 			continue
 		}
 		if err := postHook.run(ctx, options.Repo, hookEnvironment(index, target, commit.Commit), options.HookTimeout, options.Output, options.ErrorOutput); err != nil {
-			fmt.Fprintf(options.ErrorOutput, "wip: post-commit hook failed for %s: %v\n", commit.Commit, err)
+			_, _ = fmt.Fprintf(options.ErrorOutput, "wip: post-commit hook failed for %s: %v\n", commit.Commit, err)
 		}
 	}
 	return result, nil
@@ -430,7 +430,7 @@ func verifyTree(ctx context.Context, repo gitx.Repo, environment []string, tree 
 	if err != nil {
 		return fail.Wrap("VERIFY_FAILED", err)
 	}
-	defer os.RemoveAll(scratch)
+	defer func() { _ = os.RemoveAll(scratch) }()
 	if _, err := repo.Text(ctx, environment, "checkout-index", "--all", "--force", "--prefix="+scratch+string(filepath.Separator)); err != nil {
 		return fail.Wrap("VERIFY_FAILED", err)
 	}

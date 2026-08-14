@@ -178,7 +178,7 @@ func prepareInitOptions(ctx context.Context, source gitx.Repo, options *initOpti
 		staged, _ := source.NULPaths(ctx, nil, "diff", "--cached", "--no-renames", "--name-only", "-z")
 		if len(staged) > 0 {
 			sort.Strings(staged)
-			fmt.Fprintln(prompter.out, "Staged paths are suggestions only. Confirm ownership one path at a time:")
+			_, _ = fmt.Fprintln(prompter.out, "Staged paths are suggestions only. Confirm ownership one path at a time:")
 			for _, path := range staged {
 				accept, err := prompter.confirm("Claim "+path, false)
 				if err != nil {
@@ -190,7 +190,7 @@ func prepareInitOptions(ctx context.Context, source gitx.Repo, options *initOpti
 			}
 		}
 		for len(options.paths) == 0 {
-			fmt.Fprintln(prompter.out, "Enter owned paths one at a time. A blank line finishes the list.")
+			_, _ = fmt.Fprintln(prompter.out, "Enter owned paths one at a time. A blank line finishes the list.")
 			for {
 				value, err := prompter.ask("Path to claim", "")
 				if err != nil {
@@ -202,7 +202,7 @@ func prepareInitOptions(ctx context.Context, source gitx.Repo, options *initOpti
 				options.paths = append(options.paths, value)
 			}
 			if len(options.paths) == 0 {
-				fmt.Fprintln(prompter.out, "At least one explicit path is required.")
+				_, _ = fmt.Fprintln(prompter.out, "At least one explicit path is required.")
 			}
 		}
 	}
@@ -241,12 +241,12 @@ func executeInit(ctx context.Context, source gitx.Repo, options initOptions, pro
 	}
 	result.ClaimedPaths = normalized
 	if !options.yes {
-		fmt.Fprintf(output, "\nSetup summary:\n  mode: %s\n  lane: %s\n  agent: %s\n  session: %s\n  base: %s\n  paths: %s\n", options.mode, options.lane, options.agent, options.session, options.baseRef, strings.Join(normalized, ", "))
+		_, _ = fmt.Fprintf(output, "\nSetup summary:\n  mode: %s\n  lane: %s\n  agent: %s\n  session: %s\n  base: %s\n  paths: %s\n", options.mode, options.lane, options.agent, options.session, options.baseRef, strings.Join(normalized, ", "))
 		if options.createWorktree != "" {
-			fmt.Fprintf(output, "  create worktree: %s\n", options.createWorktree)
+			_, _ = fmt.Fprintf(output, "  create worktree: %s\n", options.createWorktree)
 		}
 		if options.install {
-			fmt.Fprintf(output, "  install: %s\n", filepath.Join(options.installDir, binaryName()))
+			_, _ = fmt.Fprintf(output, "  install: %s\n", filepath.Join(options.installDir, binaryName()))
 		}
 		confirmed, confirmErr := prompter.confirm("Apply this setup", false)
 		if confirmErr != nil {
@@ -473,9 +473,9 @@ func installSelf(directory string) (path string, installed, alreadyValid bool, e
 
 func (question prompt) ask(label, fallback string) (string, error) {
 	if fallback == "" {
-		fmt.Fprintf(question.out, "%s: ", label)
+		_, _ = fmt.Fprintf(question.out, "%s: ", label)
 	} else {
-		fmt.Fprintf(question.out, "%s [%s]: ", label, fallback)
+		_, _ = fmt.Fprintf(question.out, "%s [%s]: ", label, fallback)
 	}
 	value, err := question.reader.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
@@ -509,7 +509,7 @@ func (question prompt) confirm(label string, fallback bool) (bool, error) {
 		case "":
 			return fallback, nil
 		default:
-			fmt.Fprintln(question.out, "Enter yes or no.")
+			_, _ = fmt.Fprintln(question.out, "Enter yes or no.")
 		}
 	}
 }

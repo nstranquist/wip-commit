@@ -222,7 +222,7 @@ func buildRelease(root, outPath, version, commit string, epoch int64, targets []
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(staging)
+	defer func() { _ = os.RemoveAll(staging) }()
 	buildDir, err := os.MkdirTemp(staging, ".build-")
 	if err != nil {
 		return err
@@ -363,8 +363,8 @@ func writeTarGzip(path, root string, entries []archiveEntry, when time.Time) (re
 	if err != nil {
 		return err
 	}
-	gzipWriter.Header.ModTime = when
-	gzipWriter.Header.OS = 255
+	gzipWriter.ModTime = when
+	gzipWriter.OS = 255
 	tarWriter := tar.NewWriter(gzipWriter)
 	for _, entry := range entries {
 		header := &tar.Header{
@@ -401,7 +401,7 @@ func writeZip(path, root string, entries []archiveEntry, when time.Time) (return
 	for _, entry := range entries {
 		header := &zip.FileHeader{Name: root + "/" + entry.Name, Method: zip.Deflate}
 		header.SetMode(entry.Mode)
-		header.SetModTime(when)
+		header.Modified = when
 		writer, err := zipWriter.CreateHeader(header)
 		if err != nil {
 			return err
