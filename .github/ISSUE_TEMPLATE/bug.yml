@@ -1,0 +1,42 @@
+name: Bug report
+description: Report a reproducible safety or behavior defect.
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include tokens, private repository content, or full private paths.
+  - type: input
+    id: version
+    attributes:
+      label: wip version
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and Git version
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Small reproduction
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Redacted JSON result and expected behavior
+    validations:
+      required: true
+  - type: checkboxes
+    id: assets
+    attributes:
+      label: Observed state
+      options:
+        - label: Source HEAD moved
+        - label: Source index changed
+        - label: Foreign staged content entered the lane
+        - label: Lane ref moved after a failed gate
+        - label: Reconciliation failed
