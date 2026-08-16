@@ -40,6 +40,8 @@ is proposed. It does not authorize publication.
   support boundaries.
 - A maintained official-source register and an open source practice guide with
   explicit review triggers.
+- A self-hosted shared-checkout split receipt with verified failure isolation,
+  ancestry, final-tree equality, index preservation, and duplicate refusal.
 - Linux, macOS, and Windows CI definition.
 - Race-test CI definition.
 - Pinned golangci-lint CI definition.

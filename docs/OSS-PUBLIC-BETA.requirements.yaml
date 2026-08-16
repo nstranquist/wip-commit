@@ -278,9 +278,9 @@
       "status": "verified",
       "owner": "maintainer",
       "human_gate": false,
-      "acceptance": "Automation needs a reviewed split plan unless it explicitly selects one commit. The read-only planner proposes deterministic component groups and conservative Conventional Commit prefixes without moving HEAD or the index.",
+      "acceptance": "Automation needs a reviewed split plan unless it explicitly selects one commit. The read-only planner proposes deterministic component groups and conservative Conventional Commit prefixes for staged paths that differ from the lane's current commit, without moving HEAD or the index.",
       "evidence": [
-        {"kind": "test", "value": "TestCommitRequiresSplitPlanUnlessSingleIsExplicit and TestPlanPreviewUsesComponentBoundariesWithoutMutation", "observed_on": "2026-08-16"}
+        {"kind": "test", "value": "TestCommitRequiresSplitPlanUnlessSingleIsExplicit, TestPlanPreviewUsesComponentBoundariesWithoutMutation, and TestPlanPreviewExcludesAlreadyCapturedStagedPaths", "observed_on": "2026-08-16"}
       ]
     },
     {
@@ -365,6 +365,30 @@
       "acceptance": "The repository records authoritative open source, secure-development, evaluation, SSDF, and Git sources with reviewed revisions. A maintainer guide maps those sources to project rules, review triggers, evidence types, and accepted gaps.",
       "evidence": [
         {"kind": "artifact", "value": "docs/OSS-PRACTICE-GUIDE.md, docs/OSS-SOURCES.json, AGENTS.md, CONTRIBUTING.md, GOVERNANCE.md, and docs/RELEASE.md", "observed_on": "2026-08-16"}
+      ]
+    },
+    {
+      "id": "OSS-029",
+      "gate": "public-beta",
+      "title": "Dogfood a source-current split capture",
+      "status": "verified",
+      "owner": "maintainer",
+      "human_gate": false,
+      "acceptance": "A source-current binary initializes a lane on its own dirty shared checkout. Failed verification preserves HEAD, index, and ref. A reviewed plan produces a linear split chain whose final tree equals the staged tree, and an exact repeat publishes nothing.",
+      "evidence": [
+        {"kind": "receipt", "value": "docs/DOGFOOD.md records init-64f1850d3bf9c06fb9d818a2 and plan-146eb28105eccd3b0a67f90f with safe VERIFY_FAILED cases, four applied commits, final-tree equality, byte-equal index evidence, and EMPTY_COMMIT_GROUP duplicate refusal.", "observed_on": "2026-08-16"}
+      ]
+    },
+    {
+      "id": "OSS-030",
+      "gate": "public-beta",
+      "title": "Isolate candidate verification identity",
+      "status": "verified",
+      "owner": "maintainer",
+      "human_gate": false,
+      "acceptance": "A candidate verification command does not inherit the host WIP lane, agent, session, target ref, commit object, source index, or stale candidate-tree value. It receives only the current WIP_CANDIDATE_TREE value from wip.",
+      "evidence": [
+        {"kind": "test", "value": "TestVerificationEnvironmentDoesNotInheritCaptureIdentity and the self-hosted VERIFY_FAILED isolation receipt in docs/DOGFOOD.md", "observed_on": "2026-08-16"}
       ]
     }
   ]

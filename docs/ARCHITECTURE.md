@@ -38,6 +38,10 @@ and capture therefore stay bound to the canonical checkout. An inherited
 `GIT_INDEX_FILE` remains the source staged view. The capture transaction
 supplies its private index explicitly to Git and prepared hooks.
 
+Candidate verification commands remove the active WIP identity, target ref,
+commit object, source index, and stale candidate-tree variables. They receive
+only the current `WIP_CANDIDATE_TREE` value from the capture process.
+
 `<git-common-dir>/wip/domain.json` owns the state version. A shared
 `wip-coordination.lock` serializes public and legacy domain creation. The
 standalone store stops if `<git-common-dir>/ndev-wip` exists.
@@ -70,6 +74,9 @@ A dry-run creates no commit objects. The first planned group reports the
 current lane commit as its parent. A later group reports an empty parent because
 its preceding commit does not exist. The ordered group list defines the planned
 dependency chain.
+
+The split planner compares the active source index with the lane's current
+commit. It does not propose staged entries that already match the lane tree.
 
 Portable path identity applies NFC normalization, Unicode case folding, and a
 stable lowercase form. Reapplying the key produces the same bytes. Path overlap

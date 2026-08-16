@@ -157,6 +157,9 @@ one Conventional Commit prefix per group. The type is concrete only for clear
 documentation, dependency, CI, and test-only groups. Review semantic intent and
 dependency closure before you write the final plan.
 
+The planner compares the active source index with the lane's current commit.
+It omits staged paths that the lane already captured.
+
 Interactive capture uses the same proposals and asks for one Conventional
 Commit message per group. No ref moves until all gates pass.
 
@@ -325,6 +328,10 @@ The `wip` binary does not send telemetry or contact a network service. Use
 `--json` for local structured evidence. A repository hook or an explicit
 command in `verify` can still use the network.
 
+A `verify` command does not inherit the active WIP lane identity or source
+`GIT_INDEX_FILE`. It receives only `WIP_CANDIDATE_TREE` from `wip`. This rule
+prevents a nested command from selecting the host capture lane by accident.
+
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the transaction model,
 [docs/ERRORS.md](docs/ERRORS.md) for recovery actions, and
 [docs/STATE-COMPATIBILITY.md](docs/STATE-COMPATIBILITY.md) for upgrade and
@@ -339,6 +346,8 @@ Current support and safe incident-reporting guidance are in
 [SUPPORT.md](SUPPORT.md). Security reports use [SECURITY.md](SECURITY.md).
 The [open source practice guide](docs/OSS-PRACTICE-GUIDE.md) maps official
 guidance to project rules and records when maintainers must review it again.
+Local self-hosting receipts and safe-failure results are in
+[docs/DOGFOOD.md](docs/DOGFOOD.md).
 
 ## License
 
