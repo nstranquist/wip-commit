@@ -20,6 +20,7 @@ type app struct {
 	stdout, stderr io.Writer
 	jsonMode       bool
 	repoDir        string
+	leaseHeartbeat func(context.Context, store.Store, store.Lane, []string) (context.Context, func() error, error)
 }
 
 type errorPayload struct {
@@ -68,7 +69,30 @@ func (application *app) run(ctx context.Context, args []string) int {
 	if command == "init" {
 		return application.runInit(ctx, repo, rest)
 	}
-	laneStore, err := store.Open(repo)
+	if command == "doctor" {
+		return application.runDoctor(ctx, repo, rest)
+	}
+	if command == "archive" {
+		return application.runArchive(ctx, repo, rest)
+	}
+	readOnly := false
+	switch command {
+	case "status", "env", "plan":
+		readOnly = true
+	case "claim", "renew", "commit", "reconcile", "release", "abort":
+	default:
+		return application.failure(command, fail.Errorf("INVALID_ARGS", "unknown command %q", command), nil, 2)
+	}
+	laneStore, initialized, err := store.Inspect(repo)
+	if err == nil && !initialized {
+		err = fail.New("LANE_NOT_ACTIVE", "wip state is not initialized; run wip init before using lane commands")
+	}
+	if err != nil {
+		return application.failure(command, err, nil, 1)
+	}
+	if !readOnly {
+		laneStore, err = store.Open(repo)
+	}
 	if err != nil {
 		return application.failure(command, err, nil, 1)
 	}
@@ -81,6 +105,8 @@ func (application *app) run(ctx context.Context, args []string) int {
 		return application.runClaim(laneStore, rest)
 	case "renew":
 		return application.runRenew(laneStore, rest)
+	case "plan":
+		return application.runPlan(ctx, laneStore, rest)
 	case "commit":
 		return application.runCommit(ctx, laneStore, rest)
 	case "reconcile":
@@ -89,9 +115,8 @@ func (application *app) run(ctx context.Context, args []string) int {
 		return application.runRelease(laneStore, rest, false)
 	case "abort":
 		return application.runRelease(laneStore, rest, true)
-	default:
-		return application.failure(command, fail.Errorf("INVALID_ARGS", "unknown command %q", command), nil, 2)
 	}
+	return application.failure(command, fail.Errorf("INVALID_ARGS", "unknown command %q", command), nil, 2)
 }
 
 func (application *app) parseGlobal(args []string) (string, []string, error) {
@@ -145,10 +170,13 @@ Usage:
 
 Commands:
   init        interactively install and initialize a shared or worktree lane
+  doctor      audit bounded state, refs, and recovery requirements
+  archive     preview or apply recoverable state-record archival
   status      show the active lane and leases
   env         print shell environment for a lane
   claim       claim additional paths
   renew       renew active path leases
+  plan        preview deterministic split suggestions for staged leased paths
   commit      capture one atomic split plan
   reconcile   finish metadata after an interrupted successful ref update
   release     release the lane and its leases
@@ -170,6 +198,8 @@ Interactively initialize and optionally install wip. Important options:
   --base-ref REF               starting commit (default HEAD)
   --path PATH                  path claim; repeatable
   --install --install-dir DIR  copy this binary without overwriting
+  --install-skill --skill-dir DIR
+                               install the embedded portable skill safely
   --non-interactive --yes      do not prompt
   --dry-run                    validate without changing Git or installing`,
 		"commit": `Usage: wip commit [options]
@@ -183,10 +213,22 @@ Capture one all-or-nothing staged split plan. Important options:
   --hook-timeout DURATION      hook limit
   --verify-timeout DURATION    default verify limit
   --lock-wait DURATION         lane-lock wait`,
-		"status":    "Usage: wip status [--lane ID] [--agent ID] [--session ID]",
+		"status": "Usage: wip status [--lane ID] [--agent ID] [--session ID]",
+		"doctor": "Usage: wip doctor\n\nRead-only audit of bounded state records, refs, and recovery intents.",
+		"archive": `Usage: wip archive [options]
+
+Preview is the default. Important options:
+  --older-than DURATION       minimum released-lane age (default 720h)
+  --lane ID                   narrow to an eligible lane; repeatable
+  --cutoff TIME --plan-digest SHA256
+                              exact values from the reviewed preview
+  --apply --yes               apply the exact reviewed archive plan
+  --resume ARCHIVE_ID         resume a prepared receipt; requires --apply --yes
+  --restore ARCHIVE_ID        restore records; also requires --apply --yes`,
 		"env":       "Usage: wip env --lane ID",
 		"claim":     "Usage: wip claim [identity options] --path PATH [--path PATH...]",
 		"renew":     "Usage: wip renew [--lane ID] [--agent ID] [--session ID]",
+		"plan":      "Usage: wip plan [identity options] [--path PATH...]\n\nRead-only split suggestions. Review them before writing a commit plan.",
 		"reconcile": "Usage: wip reconcile [identity options] --plan-id ID --plan-digest SHA256",
 		"release":   "Usage: wip release [--lane ID] [--agent ID] [--session ID]",
 		"abort":     "Usage: wip abort [--lane ID] [--agent ID] [--session ID]",

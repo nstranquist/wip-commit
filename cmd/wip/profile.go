@@ -1,14 +1,15 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/nstranquist/wip-commit/internal/atomicfile"
 	"github.com/nstranquist/wip-commit/internal/fail"
+	"github.com/nstranquist/wip-commit/internal/recordjson"
 	"github.com/nstranquist/wip-commit/internal/safeio"
 	"github.com/nstranquist/wip-commit/internal/store"
 	"github.com/nstranquist/wip-commit/internal/strictjson"
@@ -23,7 +24,10 @@ type profile struct {
 	Worktree      string     `json:"worktree"`
 }
 
-const profileSchemaVersion = 1
+const (
+	profileSchemaVersion = 1
+	maxProfileBytes      = 64 << 10
+)
 
 type identityFlags struct {
 	lane, agent, session string
@@ -39,18 +43,24 @@ type flagBinder interface {
 	StringVar(*string, string, string, string)
 }
 
-func profilePath(laneStore store.Store, lane string) string {
-	return filepath.Join(laneStore.Root, "profiles", lane+".json")
+func profilePath(laneStore store.Store, lane string) (string, error) {
+	if err := store.ValidateID(lane, "lane"); err != nil {
+		return "", err
+	}
+	return filepath.Join(laneStore.Root, "profiles", lane+".json"), nil
 }
 
 func writeProfile(laneStore store.Store, lane store.Lane) (string, error) {
 	wanted := profile{SchemaVersion: profileSchemaVersion, Lane: lane.ID, Agent: lane.Agent, Session: lane.Session, Mode: lane.Mode, Worktree: lane.Worktree}
-	body, err := json.MarshalIndent(wanted, "", "  ")
+	body, err := recordjson.Marshal(wanted, maxProfileBytes, "PROFILE_WRITE_FAILED", "lane profile")
 	if err != nil {
-		return "", fail.Wrap("PROFILE_WRITE_FAILED", err)
+		return "", err
 	}
-	path := profilePath(laneStore, lane.ID)
-	err = atomicfile.Create(path, append(body, '\n'), 0o600)
+	path, err := profilePath(laneStore, lane.ID)
+	if err != nil {
+		return "", err
+	}
+	err = atomicfile.CreateWithTempDir(path, filepath.Join(laneStore.Root, "locks"), body, 0o600)
 	if err == nil {
 		return path, nil
 	}
@@ -69,7 +79,11 @@ func writeProfile(laneStore store.Store, lane store.Lane) (string, error) {
 
 func loadProfile(laneStore store.Store, lane string) (profile, error) {
 	var value profile
-	body, err := safeio.ReadRegular(profilePath(laneStore, lane), 64<<10)
+	path, err := profilePath(laneStore, lane)
+	if err != nil {
+		return value, err
+	}
+	body, err := safeio.ReadRegular(path, maxProfileBytes)
 	if errors.Is(err, os.ErrNotExist) {
 		return value, fail.New("PROFILE_NOT_FOUND", "lane profile not found; pass --agent and --session or rerun wip init")
 	}
@@ -85,20 +99,38 @@ func loadProfile(laneStore store.Store, lane string) (profile, error) {
 	if value.Lane != lane {
 		return profile{}, fail.New("PROFILE_READ_FAILED", "lane profile identity is invalid")
 	}
+	for label, identifier := range map[string]string{"lane": value.Lane, "agent": value.Agent, "session": value.Session} {
+		if err := store.ValidateID(identifier, label); err != nil {
+			return profile{}, fail.Wrap("PROFILE_READ_FAILED", err)
+		}
+	}
+	if value.Mode != store.ModeShared && value.Mode != store.ModeWorktree {
+		return profile{}, fail.New("PROFILE_READ_FAILED", "lane profile mode is invalid")
+	}
+	if value.Worktree == "" || !filepath.IsAbs(value.Worktree) || filepath.Clean(value.Worktree) != value.Worktree {
+		return profile{}, fail.New("PROFILE_READ_FAILED", "lane profile worktree is invalid")
+	}
+	laneRecord, err := laneStore.Load(lane)
+	if err != nil {
+		return profile{}, err
+	}
+	if laneRecord.Agent != value.Agent || laneRecord.Session != value.Session || laneRecord.Mode != value.Mode || laneRecord.Worktree != value.Worktree {
+		return profile{}, fail.New("PROFILE_READ_FAILED", "lane profile does not match the authoritative lane manifest")
+	}
 	return value, nil
 }
 
 func resolveStatus(laneStore store.Store, identity identityFlags) (store.Status, error) {
 	if identity.lane != "" && (identity.agent == "" || identity.session == "") {
-		if saved, err := loadProfile(laneStore, identity.lane); err == nil {
-			if identity.agent == "" {
-				identity.agent = saved.Agent
-			}
-			if identity.session == "" {
-				identity.session = saved.Session
-			}
-		} else if fail.Code(err) == "MIGRATION_REQUIRED" {
+		saved, err := loadProfile(laneStore, identity.lane)
+		if err != nil {
 			return store.Status{}, err
+		}
+		if identity.agent == "" {
+			identity.agent = saved.Agent
+		}
+		if identity.session == "" {
+			identity.session = saved.Session
 		}
 	}
 	status, err := laneStore.Current(identity.agent, identity.session, identity.lane)
@@ -113,7 +145,22 @@ func resolveStatus(laneStore store.Store, identity identityFlags) (store.Status,
 
 func shellEnvironment(saved profile) string {
 	if runtime.GOOS == "windows" {
-		return "$env:WIP_LANE = '" + saved.Lane + "'\n$env:WIP_AGENT = '" + saved.Agent + "'\n$env:WIP_SESSION = '" + saved.Session + "'"
+		return "$env:WIP_LANE = " + quotePowerShell(saved.Lane) + "\n$env:WIP_AGENT = " + quotePowerShell(saved.Agent) + "\n$env:WIP_SESSION = " + quotePowerShell(saved.Session)
 	}
-	return "export WIP_LANE='" + saved.Lane + "'\nexport WIP_AGENT='" + saved.Agent + "'\nexport WIP_SESSION='" + saved.Session + "'"
+	return "export WIP_LANE=" + quotePOSIX(saved.Lane) + "\nexport WIP_AGENT=" + quotePOSIX(saved.Agent) + "\nexport WIP_SESSION=" + quotePOSIX(saved.Session)
+}
+
+func quotePOSIX(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func quotePowerShell(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
+func quoteCommandArg(value string) string {
+	if runtime.GOOS == "windows" {
+		return quotePowerShell(value)
+	}
+	return quotePOSIX(value)
 }

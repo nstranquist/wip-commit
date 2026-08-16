@@ -1,18 +1,26 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/nstranquist/wip-commit/internal/engine"
+	"github.com/nstranquist/wip-commit/internal/fail"
 	"github.com/nstranquist/wip-commit/internal/gitx"
 	"github.com/nstranquist/wip-commit/internal/store"
+	skillbundle "github.com/nstranquist/wip-commit/skills/wip-commit"
 )
 
 func TestNonInteractiveInitIsIdempotentAndSingleCaptureIsExact(t *testing.T) {
@@ -27,6 +35,11 @@ func TestNonInteractiveInitIsIdempotentAndSingleCaptureIsExact(t *testing.T) {
 	first := runCLI(t, initArgs, "")
 	if first.code != 0 || !first.envelope.OK {
 		t.Fatalf("first init: %#v stderr=%s", first.envelope, first.stderr)
+	}
+	var setup initResult
+	decodeData(t, first.envelope.Data, &setup)
+	if setup.IntentState != "complete" || len(setup.CompletedSteps) != len(initStepOrder) {
+		t.Fatalf("init receipt = %#v", setup)
 	}
 	second := runCLI(t, initArgs, "")
 	if second.code != 0 || !second.envelope.OK {
@@ -154,18 +167,65 @@ func TestCommitRequiresSplitPlanUnlessSingleIsExplicit(t *testing.T) {
 	}
 }
 
+func TestPlanPreviewUsesComponentBoundariesWithoutMutation(t *testing.T) {
+	directory := cliTestRepo(t)
+	writeCLI(t, directory, "core.txt", "new core\n")
+	writeCLI(t, directory, "docs.txt", "new docs\n")
+	cliGit(t, directory, "add", "core.txt", "docs.txt")
+	initializeCLI(t, directory, "plan-preview", "core.txt", "docs.txt")
+	head := cliGit(t, directory, "rev-parse", "HEAD")
+	index := cliGitRaw(t, directory, "ls-files", "-s", "-z")
+	preview := runCLI(t, []string{"--json", "--repo-dir", directory, "plan", "--lane", "plan-preview"}, "")
+	if preview.code != 0 || !preview.envelope.OK {
+		t.Fatalf("plan preview: %#v stderr=%s", preview.envelope, preview.stderr)
+	}
+	var proposal planProposal
+	decodeData(t, preview.envelope.Data, &proposal)
+	if len(proposal.Groups) != 2 || proposal.Groups[0].SuggestedScope != "core" || proposal.Groups[1].SuggestedScope != "docs" {
+		t.Fatalf("plan proposal = %#v", proposal)
+	}
+	if got := cliGit(t, directory, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("plan moved HEAD: %s -> %s", head, got)
+	}
+	if got := cliGitRaw(t, directory, "ls-files", "-s", "-z"); got != index {
+		t.Fatal("plan changed the index")
+	}
+	groups := proposeSplitGroups([]string{"internal/store/store.go", "internal/store/store_test.go", "go.mod", "go.sum", "README.md", "THREAT-MODEL.md", ".github/workflows/ci.yml"})
+	if len(groups) != 4 || groups[0].Key != ".github/workflows" || groups[1].Key != "dependencies" || groups[2].Key != "internal/store" || groups[3].Key != "repository-docs" {
+		t.Fatalf("component proposals = %#v", groups)
+	}
+	if groups[0].SuggestedPrefix != "ci(ci): " || groups[1].SuggestedPrefix != "build(deps): " || groups[2].SuggestedPrefix != "<type>(store): " || groups[3].SuggestedPrefix != "docs(docs): " {
+		t.Fatalf("component naming hints = %#v", groups)
+	}
+	testGroups := proposeSplitGroups([]string{"internal/parser/parser_test.go", "internal/parser/testdata/input.txt"})
+	if len(testGroups) != 1 || testGroups[0].SuggestedPrefix != "test(parser): " {
+		t.Fatalf("test naming hint = %#v", testGroups)
+	}
+	unicodeGroups := proposeSplitGroups([]string{"cmd/Δ/handler.go"})
+	if len(unicodeGroups) != 1 || unicodeGroups[0].SuggestedPrefix != "<type>(repo): " {
+		t.Fatalf("unicode naming hint = %#v", unicodeGroups)
+	}
+	if err := engine.ValidateMessage(strings.Replace(unicodeGroups[0].SuggestedPrefix, "<type>", "fix", 1)+"handle request", false); err != nil {
+		t.Fatalf("suggested prefix is not a valid Conventional Commit prefix: %v", err)
+	}
+}
+
 func TestInteractiveInitAndSplitPlannerKeepJSONClean(t *testing.T) {
 	directory := cliTestRepo(t)
 	writeCLI(t, directory, "core.txt", "new core\n")
 	writeCLI(t, directory, "docs.txt", "new docs\n")
 	cliGit(t, directory, "add", "core.txt", "docs.txt")
-	input := "shared\n\n\ninteractive-lane\nyes\nyes\nyes\n"
-	initialized := runCLI(t, []string{"--json", "--repo-dir", directory, "init", "--no-install"}, input)
+	skillDir := t.TempDir()
+	input := "shared\n\n\n\ninteractive-lane\nyes\nyes\nyes\nyes\n"
+	initialized := runCLI(t, []string{"--json", "--repo-dir", directory, "init", "--no-install", "--skill-dir", skillDir}, input)
 	if initialized.code != 0 || !initialized.envelope.OK {
 		t.Fatalf("interactive init: %#v stderr=%s stdout=%s", initialized.envelope, initialized.stderr, initialized.stdout)
 	}
 	if strings.Contains(initialized.stdout, "Lane mode") {
 		t.Fatalf("prompt corrupted JSON stdout: %q", initialized.stdout)
+	}
+	if _, err := os.Stat(filepath.Join(skillDir, "wip-commit", "SKILL.md")); err != nil {
+		t.Fatalf("interactive skill install: %v", err)
 	}
 	commitInput := "\nfix(core): capture core behavior\ndocs(guide): capture docs behavior\n"
 	committed := runCLI(t, []string{"--json", "--repo-dir", directory, "commit", "--lane", "interactive-lane"}, commitInput)
@@ -236,6 +296,11 @@ func TestInitDryRunAndInstallerAreNonDestructive(t *testing.T) {
 	if result.code != 0 || !result.envelope.OK {
 		t.Fatalf("dry-run: %#v stderr=%s", result.envelope, result.stderr)
 	}
+	var worktreeDryRun initResult
+	decodeData(t, result.envelope.Data, &worktreeDryRun)
+	if worktreeDryRun.DiffCheckRun || worktreeDryRun.DiffCheckPassed {
+		t.Fatalf("missing worktree diff check = %#v", worktreeDryRun)
+	}
 	if _, err := os.Lstat(linked); !os.IsNotExist(err) {
 		t.Fatalf("dry-run created worktree: %v", err)
 	}
@@ -243,10 +308,30 @@ func TestInitDryRunAndInstallerAreNonDestructive(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(gitDir, "wip")); !os.IsNotExist(err) {
 		t.Fatalf("dry-run created WIP store: %v", err)
 	}
+	human := runCLI(t, []string{"--repo-dir", directory, "init", "--mode", "worktree", "--create-worktree", linked, "--lane", "dry-run-human", "--agent", "agent", "--session", "session", "--path", "core.txt", "--non-interactive", "--no-install", "--no-install-skill", "--dry-run"}, "")
+	if human.code != 0 || !strings.Contains(human.stdout, "staged diff check did not run") {
+		t.Fatalf("missing-worktree human output = %q, stderr=%q", human.stdout, human.stderr)
+	}
+	skillDir := filepath.Join(t.TempDir(), "skills")
+	skillDryRun := runCLI(t, []string{"--json", "--repo-dir", directory, "init", "--mode", "shared", "--lane", "skill-dry-run", "--agent", "agent", "--session", "session", "--path", "core.txt", "--non-interactive", "--no-install", "--install-skill", "--skill-dir", skillDir, "--dry-run"}, "")
+	if skillDryRun.code != 0 || !skillDryRun.envelope.OK {
+		t.Fatalf("skill dry-run: %#v stderr=%s", skillDryRun.envelope, skillDryRun.stderr)
+	}
+	var sharedDryRun initResult
+	decodeData(t, skillDryRun.envelope.Data, &sharedDryRun)
+	if !sharedDryRun.DiffCheckRun || !sharedDryRun.DiffCheckPassed {
+		t.Fatalf("shared checkout diff check = %#v", sharedDryRun)
+	}
+	if _, err := os.Lstat(portableSkillPath(skillDir)); !os.IsNotExist(err) {
+		t.Fatalf("dry-run installed skill: %v", err)
+	}
 	installDir := t.TempDir()
 	path, installed, valid, err := installSelf(installDir)
 	if err != nil || !installed || valid {
 		t.Fatalf("first install path=%s installed=%v valid=%v err=%v", path, installed, valid, err)
+	}
+	if entries, readErr := os.ReadDir(installDir); readErr != nil || len(entries) != 1 || entries[0].Name() != binaryName() {
+		t.Fatalf("binary install left temporary entries: %#v, err=%v", entries, readErr)
 	}
 	_, installed, valid, err = installSelf(installDir)
 	if err != nil || installed || !valid {
@@ -257,6 +342,541 @@ func TestInitDryRunAndInstallerAreNonDestructive(t *testing.T) {
 	}
 	if _, _, _, err := installSelf(installDir); err == nil {
 		t.Fatal("installer overwrote or accepted a different binary")
+	}
+	skillPath, installed, valid, err := installPortableSkill(skillDir)
+	if err != nil || !installed || valid {
+		t.Fatalf("first skill install path=%s installed=%v valid=%v err=%v", skillPath, installed, valid, err)
+	}
+	_, installed, valid, err = installPortableSkill(skillDir)
+	if err != nil || installed || !valid {
+		t.Fatalf("second skill install installed=%v valid=%v err=%v", installed, valid, err)
+	}
+	partialDir := t.TempDir()
+	partialPath := portableSkillPath(partialDir)
+	if err := os.Mkdir(partialPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	partialBody, err := skillbundle.FS.ReadFile("SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(partialPath, "SKILL.md"), partialBody, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists, valid, err := inspectPortableSkill(partialDir); err != nil || !exists || valid {
+		t.Fatalf("partial skill state exists=%v valid=%v err=%v", exists, valid, err)
+	}
+	if _, installed, valid, err := installPortableSkill(partialDir); err != nil || !installed || valid {
+		t.Fatalf("partial skill resume installed=%v valid=%v err=%v", installed, valid, err)
+	}
+	if _, _, valid, err := inspectPortableSkill(partialDir); err != nil || !valid {
+		t.Fatalf("resumed skill valid=%v err=%v", valid, err)
+	}
+	skillFile := filepath.Join(skillPath, "SKILL.md")
+	if err := os.WriteFile(skillFile, []byte("different skill\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := installPortableSkill(skillDir); fail.Code(err) != "SKILL_INSTALL_CONFLICT" {
+		t.Fatalf("different skill error = %v (%s)", err, fail.Code(err))
+	}
+	if body, err := os.ReadFile(skillFile); err != nil || string(body) != "different skill\n" {
+		t.Fatalf("skill conflict was overwritten: %q err=%v", body, err)
+	}
+}
+
+func TestInitDryRunReportsWhitespaceAndFailsClosedOnGitInspectionError(t *testing.T) {
+	directory := cliTestRepo(t)
+	writeCLI(t, directory, "core.txt", "trailing whitespace   \n")
+	cliGit(t, directory, "add", "core.txt")
+	args := []string{"--repo-dir", directory, "init", "--mode", "shared", "--lane", "diff-check", "--agent", "agent", "--session", "session", "--path", "core.txt", "--non-interactive", "--no-install", "--no-install-skill", "--dry-run"}
+	jsonRun := runCLI(t, append([]string{"--json"}, args...), "")
+	if jsonRun.code != 0 || !jsonRun.envelope.OK {
+		t.Fatalf("whitespace dry-run = %#v stderr=%s", jsonRun.envelope, jsonRun.stderr)
+	}
+	var result initResult
+	decodeData(t, jsonRun.envelope.Data, &result)
+	if !result.DiffCheckRun || result.DiffCheckPassed {
+		t.Fatalf("whitespace result = %#v", result)
+	}
+	humanRun := runCLI(t, args, "")
+	if humanRun.code != 0 || !strings.Contains(humanRun.stdout, "found staged whitespace errors") {
+		t.Fatalf("whitespace human output = %q, stderr=%q", humanRun.stdout, humanRun.stderr)
+	}
+
+	broken := cliTestRepo(t)
+	index := cliGit(t, broken, "rev-parse", "--git-path", "index")
+	if !filepath.IsAbs(index) {
+		index = filepath.Join(broken, index)
+	}
+	if err := os.Rename(index, index+".saved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(index, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	failed := runCLI(t, []string{"--json", "--repo-dir", broken, "init", "--mode", "shared", "--lane", "broken-index", "--agent", "agent", "--session", "session", "--path", "core.txt", "--non-interactive", "--no-install", "--no-install-skill", "--dry-run"}, "")
+	if failed.code == 0 || failed.envelope.Error == nil || failed.envelope.Error.Code != "GIT_FAILED" {
+		t.Fatalf("broken-index result = %#v stderr=%s", failed.envelope, failed.stderr)
+	}
+	gitDir := cliGit(t, broken, "rev-parse", "--absolute-git-dir")
+	if _, err := os.Lstat(filepath.Join(gitDir, "wip")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed dry-run initialized state: %v", err)
+	}
+}
+
+func TestInitSkipsHomeResolutionWhenInstallationIsDisabled(t *testing.T) {
+	directory := cliTestRepo(t)
+	repo, err := gitx.Discover(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+	options := initOptions{
+		mode: string(store.ModeShared), lane: "no-home", agent: "agent", session: "session", baseRef: "HEAD",
+		paths: stringList{"core.txt"}, nonInteractive: true, noInstall: true, noInstallSkill: true,
+	}
+	if err := prepareInitOptions(context.Background(), repo, &options, prompt{reader: bufio.NewReader(strings.NewReader("")), out: io.Discard}); err != nil {
+		t.Fatal(err)
+	}
+	if options.installDir != "" || options.skillDir != "" {
+		t.Fatalf("disabled installation resolved directories: %#v", options)
+	}
+}
+
+func TestInteractiveInitCanSkipConflictingOptionalSkill(t *testing.T) {
+	directory := cliTestRepo(t)
+	repo, err := gitx.Discover(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	skillRoot := t.TempDir()
+	target := portableSkillPath(skillRoot)
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "foreign.md"), []byte("foreign\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	options := initOptions{mode: string(store.ModeShared), lane: "skip-skill", agent: "agent", session: "session", baseRef: "HEAD", paths: stringList{"core.txt"}, noInstall: true, skillDir: skillRoot}
+	var output bytes.Buffer
+	prompter := prompt{reader: bufio.NewReader(strings.NewReader("\n\n\n\n\n")), out: &output}
+	if err := prepareInitOptions(context.Background(), repo, &options, prompter); err != nil {
+		t.Fatal(err)
+	}
+	if !options.noInstallSkill || options.installSkill || !strings.Contains(output.String(), "Continue without portable skill installation") {
+		t.Fatalf("conflicting optional skill options=%#v output=%q", options, output.String())
+	}
+	body, err := os.ReadFile(filepath.Join(target, "foreign.md"))
+	if err != nil || string(body) != "foreign\n" {
+		t.Fatalf("conflicting skill changed: %q err=%v", body, err)
+	}
+}
+
+func TestInitFailureReturnsDurableResumableReceipt(t *testing.T) {
+	directory := cliTestRepo(t)
+	repo, err := gitx.Discover(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laneStore, err := store.Open(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lane, err := laneStore.Create(context.Background(), store.CreateOptions{ID: "partial-init", Agent: "agent", Session: "session", Mode: store.ModeShared})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := profilePath(laneStore, lane.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conflict := profile{SchemaVersion: profileSchemaVersion, Lane: lane.ID, Agent: "other", Session: lane.Session, Mode: lane.Mode, Worktree: lane.Worktree}
+	body, err := json.MarshalIndent(conflict, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(body, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result := runCLI(t, []string{"--json", "--repo-dir", directory, "init", "--mode", "shared", "--lane", lane.ID, "--agent", lane.Agent, "--session", lane.Session, "--path", "core.txt", "--non-interactive", "--no-install", "--no-install-skill"}, "")
+	if result.code == 0 || result.envelope.Error == nil || result.envelope.Error.Code != "PROFILE_READ_FAILED" {
+		t.Fatalf("partial init result = %#v stderr=%s", result.envelope, result.stderr)
+	}
+	var partial initResult
+	decodeData(t, result.envelope.Data, &partial)
+	if partial.IntentID == "" || partial.IntentPath == "" || partial.IntentState != "pending" || len(partial.CompletedSteps) != 3 || len(partial.Recovery) != 3 {
+		t.Fatalf("partial receipt = %#v", partial)
+	}
+	intent, err := loadInitIntent(partial.IntentPath)
+	if err != nil || intent.State != "pending" || len(intent.CompletedSteps) != 3 {
+		t.Fatalf("durable partial intent = %#v err=%v", intent, err)
+	}
+	if got := cliGit(t, directory, "rev-parse", lane.Ref); got != lane.BaseSHA {
+		t.Fatalf("partial init moved lane ref: %s", got)
+	}
+	doctor := runCLI(t, []string{"--json", "--repo-dir", directory, "doctor"}, "")
+	if doctor.code != 1 || !doctor.envelope.OK {
+		t.Fatalf("doctor did not report resumable init: %#v stderr=%s", doctor.envelope, doctor.stderr)
+	}
+	var report doctorReport
+	decodeData(t, doctor.envelope.Data, &report)
+	if report.Healthy || len(report.PendingInit) != 1 || report.PendingInit[0] != partial.IntentID {
+		t.Fatalf("doctor partial report = %#v", report)
+	}
+}
+
+func TestInitRetryRepairsInterruptedLeaseBackReference(t *testing.T) {
+	directory := cliTestRepo(t)
+	args := []string{"--json", "--repo-dir", directory, "init", "--mode", "shared", "--lane", "init-claim-retry", "--agent", "agent", "--session", "session", "--path", "core.txt", "--non-interactive", "--no-install", "--no-install-skill"}
+	first := runCLI(t, args, "")
+	if first.code != 0 || !first.envelope.OK {
+		t.Fatalf("first init = %#v stderr=%s", first.envelope, first.stderr)
+	}
+	repo, err := gitx.Discover(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laneStore, err := store.Open(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := laneStore.Status("init-claim-retry")
+	if err != nil || len(status.Leases) != 1 {
+		t.Fatalf("initial status = %#v, err=%v", status, err)
+	}
+	lane := status.Lane
+	lane.LeaseIDs = nil
+	body, err := json.MarshalIndent(lane, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(laneStore.Root, "lanes", lane.ID+".json"), append(body, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	second := runCLI(t, args, "")
+	if second.code != 0 || !second.envelope.OK {
+		t.Fatalf("recovery init = %#v stderr=%s", second.envelope, second.stderr)
+	}
+	status, err = laneStore.Status(lane.ID)
+	if err != nil || len(status.Leases) != 1 || len(status.Lane.LeaseIDs) != 1 || status.Lane.LeaseIDs[0] != status.Leases[0].ID {
+		t.Fatalf("repaired status = %#v, err=%v", status, err)
+	}
+	doctor := runCLI(t, []string{"--json", "--repo-dir", directory, "doctor"}, "")
+	if doctor.code != 0 || !doctor.envelope.OK {
+		t.Fatalf("doctor after repair = %#v stderr=%s", doctor.envelope, doctor.stderr)
+	}
+	var report doctorReport
+	decodeData(t, doctor.envelope.Data, &report)
+	if !report.Healthy {
+		t.Fatalf("doctor after repair = %#v", report)
+	}
+}
+
+func TestOversizedInitIntentFailsBeforeRecordPublication(t *testing.T) {
+	directory := cliTestRepo(t)
+	repo, err := gitx.Discover(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laneStore, err := store.Open(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := make([]string, 10_000)
+	for index := range paths {
+		paths[index] = fmt.Sprintf("generated/%04d/%0140d.txt", index, index)
+	}
+	candidate := initIntent{
+		Lane: "oversized-init", Agent: "agent", Session: "session", Mode: store.ModeShared,
+		BaseSHA: cliGit(t, directory, "rev-parse", "HEAD"), Worktree: repo.Root, Paths: paths,
+	}
+	if _, path, err := beginInitIntent(laneStore, candidate); fail.Code(err) != "INIT_INTENT_FAILED" {
+		t.Fatalf("oversized init intent path=%s error=%v (%s)", path, err, fail.Code(err))
+	}
+	entries, err := os.ReadDir(filepath.Join(laneStore.Root, "init-intents"))
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("oversized init intent records = %#v, err=%v", entries, err)
+	}
+}
+
+func TestInitIntentReservesSpaceForEveryCompletionStep(t *testing.T) {
+	timestamp := maximumInitIntentTimestamp()
+	intent := initIntent{
+		SchemaVersion: initIntentSchemaVersion, ID: "init-capacity", Digest: "sha256:" + strings.Repeat("a", 64), State: "pending",
+		Lane: "capacity", Agent: "agent", Session: "session", Mode: store.ModeShared,
+		BaseSHA: strings.Repeat("b", 40), Worktree: "/tmp/capacity", Paths: []string{"x"}, CreatedAt: timestamp, UpdatedAt: timestamp,
+	}
+	pending, err := marshalInitIntentRecord(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delta := int(maxInitIntentBytes) - 1 - len(pending)
+	if delta <= 0 {
+		t.Fatalf("unexpected pending record size %d", len(pending))
+	}
+	intent.Paths[0] = strings.Repeat("x", delta+1)
+	if _, err := marshalInitIntentRecord(intent); err != nil {
+		t.Fatalf("pending form does not fit: %v", err)
+	}
+	if err := validateInitIntentCapacity(intent); fail.Code(err) != "INIT_INTENT_FAILED" {
+		t.Fatalf("completion capacity error = %v (%s)", err, fail.Code(err))
+	}
+}
+
+func TestDoctorIsReadOnlyAndAuditsHealthyState(t *testing.T) {
+	directory := cliTestRepo(t)
+	gitDir := cliGit(t, directory, "rev-parse", "--absolute-git-dir")
+	empty := runCLI(t, []string{"--json", "--repo-dir", directory, "doctor"}, "")
+	if empty.code != 0 || !empty.envelope.OK {
+		t.Fatalf("empty doctor: %#v stderr=%s", empty.envelope, empty.stderr)
+	}
+	var emptyReport doctorReport
+	decodeData(t, empty.envelope.Data, &emptyReport)
+	if !emptyReport.Healthy || emptyReport.State != "not-initialized" {
+		t.Fatalf("empty doctor report = %#v", emptyReport)
+	}
+	if _, err := os.Lstat(filepath.Join(gitDir, "wip")); !os.IsNotExist(err) {
+		t.Fatalf("doctor created state: %v", err)
+	}
+	initializeCLI(t, directory, "doctor-lane", "core.txt")
+	healthy := runCLI(t, []string{"--json", "--repo-dir", directory, "doctor"}, "")
+	if healthy.code != 0 || !healthy.envelope.OK {
+		t.Fatalf("healthy doctor: %#v stderr=%s", healthy.envelope, healthy.stderr)
+	}
+	var report doctorReport
+	decodeData(t, healthy.envelope.Data, &report)
+	if !report.Healthy || report.State != "initialized" || len(report.ActiveLanes) != 1 || report.Counts["lanes"] != 1 || report.Counts["init_intents"] != 1 {
+		t.Fatalf("healthy doctor report = %#v", report)
+	}
+}
+
+func TestReadOnlyLaneCommandsDoNotClaimPublicDomain(t *testing.T) {
+	for _, command := range [][]string{{"status"}, {"env", "--lane", "missing"}, {"plan"}} {
+		name := command[0]
+		t.Run(name, func(t *testing.T) {
+			directory := cliTestRepo(t)
+			result := runCLI(t, append([]string{"--json", "--repo-dir", directory}, command...), "")
+			if result.code != 1 || result.envelope.OK || result.envelope.Error == nil || result.envelope.Error.Code != "LANE_NOT_ACTIVE" {
+				t.Fatalf("read-only %s result = %#v stderr=%s", name, result.envelope, result.stderr)
+			}
+			gitDir := cliGit(t, directory, "rev-parse", "--absolute-git-dir")
+			for _, path := range []string{filepath.Join(gitDir, "wip"), filepath.Join(gitDir, "wip-coordination.lock")} {
+				if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("read-only %s created %s: %v", name, path, err)
+				}
+			}
+		})
+	}
+}
+
+func TestOnlyInitCanClaimAnUninitializedPublicDomain(t *testing.T) {
+	tests := []struct {
+		name, wantedError string
+		wantedCode        int
+		command           []string
+	}{
+		{name: "claim", wantedError: "LANE_NOT_ACTIVE", wantedCode: 1, command: []string{"claim"}},
+		{name: "renew", wantedError: "LANE_NOT_ACTIVE", wantedCode: 1, command: []string{"renew"}},
+		{name: "commit", wantedError: "LANE_NOT_ACTIVE", wantedCode: 1, command: []string{"commit"}},
+		{name: "reconcile", wantedError: "LANE_NOT_ACTIVE", wantedCode: 1, command: []string{"reconcile"}},
+		{name: "release", wantedError: "LANE_NOT_ACTIVE", wantedCode: 1, command: []string{"release"}},
+		{name: "abort", wantedError: "LANE_NOT_ACTIVE", wantedCode: 1, command: []string{"abort"}},
+		{name: "unknown", wantedError: "INVALID_ARGS", wantedCode: 2, command: []string{"not-a-command"}},
+		{name: "archive resume", wantedError: "ARCHIVE_NOT_FOUND", wantedCode: 1, command: []string{"archive", "--resume", "archive-000000000000000000000000", "--apply", "--yes"}},
+		{name: "archive restore", wantedError: "ARCHIVE_NOT_FOUND", wantedCode: 1, command: []string{"archive", "--restore", "archive-000000000000000000000000", "--apply", "--yes"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			directory := cliTestRepo(t)
+			result := runCLI(t, append([]string{"--json", "--repo-dir", directory}, test.command...), "")
+			if result.code != test.wantedCode || result.envelope.OK || result.envelope.Error == nil || result.envelope.Error.Code != test.wantedError {
+				t.Fatalf("uninitialized %s result = %#v stderr=%s", test.name, result.envelope, result.stderr)
+			}
+			gitDir := cliGit(t, directory, "rev-parse", "--absolute-git-dir")
+			for _, path := range []string{filepath.Join(gitDir, "wip"), filepath.Join(gitDir, "wip-coordination.lock")} {
+				if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("uninitialized %s created %s: %v", test.name, path, err)
+				}
+			}
+		})
+	}
+}
+
+func TestDoctorAcceptsMissingAdditiveV1DirectoriesWithoutCreatingThem(t *testing.T) {
+	directory := cliTestRepo(t)
+	repo, err := gitx.Discover(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laneStore, err := store.Open(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"init-intents", "archive"} {
+		if err := os.Remove(filepath.Join(laneStore.Root, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	doctor := runCLI(t, []string{"--json", "--repo-dir", directory, "doctor"}, "")
+	if doctor.code != 0 || !doctor.envelope.OK {
+		t.Fatalf("additive-directory doctor: %#v stderr=%s", doctor.envelope, doctor.stderr)
+	}
+	var report doctorReport
+	decodeData(t, doctor.envelope.Data, &report)
+	if !report.Healthy || report.State != "initialized" {
+		t.Fatalf("additive-directory report = %#v", report)
+	}
+	for _, name := range []string{"init-intents", "archive"} {
+		if _, err := os.Lstat(filepath.Join(laneStore.Root, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("doctor created optional directory %s: %v", name, err)
+		}
+	}
+}
+
+func TestDoctorRejectsLeaseOwnerMismatch(t *testing.T) {
+	directory := cliTestRepo(t)
+	initializeCLI(t, directory, "doctor-owner", "core.txt")
+	repo, err := gitx.Discover(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laneStore, err := store.Open(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(filepath.Join(laneStore.Root, "leases"))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("lease entries = %#v, err=%v", entries, err)
+	}
+	leasePath := filepath.Join(laneStore.Root, "leases", entries[0].Name())
+	body, err := os.ReadFile(leasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lease store.Lease
+	if err := json.Unmarshal(body, &lease); err != nil {
+		t.Fatal(err)
+	}
+	lease.Agent = "different-agent"
+	body, err = json.MarshalIndent(lease, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(leasePath, append(body, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	doctor := runCLI(t, []string{"--json", "--repo-dir", directory, "doctor"}, "")
+	if doctor.code != 1 || !doctor.envelope.OK {
+		t.Fatalf("doctor mismatch: %#v stderr=%s", doctor.envelope, doctor.stderr)
+	}
+	var report doctorReport
+	decodeData(t, doctor.envelope.Data, &report)
+	found := false
+	for _, finding := range report.Findings {
+		if finding.Code == "LEASE_OWNER_MISMATCH" {
+			found = true
+		}
+	}
+	if report.Healthy || !found {
+		t.Fatalf("doctor mismatch report = %#v", report)
+	}
+}
+
+func TestArchiveRequiresExactPreviewAndPreservesRefs(t *testing.T) {
+	directory := cliTestRepo(t)
+	initializeCLI(t, directory, "archive-cli", "core.txt")
+	release := runCLI(t, []string{"--json", "--repo-dir", directory, "release", "--lane", "archive-cli"}, "")
+	if release.code != 0 || !release.envelope.OK {
+		t.Fatalf("release for archive: %#v stderr=%s", release.envelope, release.stderr)
+	}
+	repo, err := gitx.Discover(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laneStore, err := store.Open(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lane, err := laneStore.Load("archive-cli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lane.UpdatedAt = time.Now().UTC().Add(-48 * time.Hour)
+	body, err := json.MarshalIndent(lane, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(laneStore.Root, "lanes", lane.ID+".json"), append(body, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	refBefore := cliGit(t, directory, "rev-parse", lane.Ref)
+	preview := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--older-than", "24h"}, "")
+	if preview.code != 0 || !preview.envelope.OK {
+		t.Fatalf("archive preview: %#v stderr=%s", preview.envelope, preview.stderr)
+	}
+	var plan archiveResult
+	decodeData(t, preview.envelope.Data, &plan)
+	if !plan.DryRun || len(plan.Candidates) != 1 || plan.PlanDigest == "" {
+		t.Fatalf("archive plan = %#v", plan)
+	}
+	missing := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--older-than", "24h", "--lane", "not-eligible"}, "")
+	if missing.code == 0 || missing.envelope.Error == nil || missing.envelope.Error.Code != "ARCHIVE_REFUSED" {
+		t.Fatalf("missing archive lane = %#v", missing.envelope)
+	}
+	wrong := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--cutoff", plan.Cutoff.Format(time.RFC3339Nano), "--plan-digest", "sha256:wrong", "--apply", "--yes"}, "")
+	if wrong.code == 0 || wrong.envelope.Error == nil || wrong.envelope.Error.Code != "ARCHIVE_PLAN_MOVED" {
+		t.Fatalf("wrong archive digest = %#v", wrong.envelope)
+	}
+	if _, err := laneStore.Load(lane.ID); err != nil {
+		t.Fatalf("wrong archive digest moved state: %v", err)
+	}
+	applied := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--cutoff", plan.Cutoff.Format(time.RFC3339Nano), "--plan-digest", plan.PlanDigest, "--apply", "--yes"}, "")
+	if applied.code != 0 || !applied.envelope.OK {
+		t.Fatalf("archive apply: %#v stderr=%s", applied.envelope, applied.stderr)
+	}
+	var archived archiveResult
+	decodeData(t, applied.envelope.Data, &archived)
+	if archived.Receipt == nil || archived.Receipt.State != "complete" {
+		t.Fatalf("archive receipt = %#v", archived)
+	}
+	receiptPath := filepath.Join(laneStore.Root, "archive", archived.Receipt.ID, "receipt.json")
+	archived.Receipt.State = "prepared"
+	receiptBody, err := json.MarshalIndent(archived.Receipt, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(receiptPath, append(receiptBody, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	doctor := runCLI(t, []string{"--json", "--repo-dir", directory, "doctor"}, "")
+	if doctor.code != 1 || !doctor.envelope.OK {
+		t.Fatalf("doctor prepared archive: %#v stderr=%s", doctor.envelope, doctor.stderr)
+	}
+	var doctorState doctorReport
+	decodeData(t, doctor.envelope.Data, &doctorState)
+	if len(doctorState.PendingArchive) != 1 || doctorState.PendingArchive[0] != archived.Receipt.ID {
+		t.Fatalf("doctor prepared archive report = %#v", doctorState)
+	}
+	resumed := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--resume", archived.Receipt.ID, "--apply", "--yes"}, "")
+	if resumed.code != 0 || !resumed.envelope.OK {
+		t.Fatalf("idempotent archive resume: %#v stderr=%s", resumed.envelope, resumed.stderr)
+	}
+	if _, err := laneStore.Load(lane.ID); fail.Code(err) != "LANE_NOT_FOUND" {
+		t.Fatalf("archive left live lane: %v (%s)", err, fail.Code(err))
+	}
+	if got := cliGit(t, directory, "rev-parse", lane.Ref); got != refBefore {
+		t.Fatalf("archive moved ref: %s -> %s", refBefore, got)
+	}
+	restored := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--restore", archived.Receipt.ID, "--apply", "--yes"}, "")
+	if restored.code != 0 || !restored.envelope.OK {
+		t.Fatalf("archive restore: %#v stderr=%s", restored.envelope, restored.stderr)
+	}
+	if lane, err := laneStore.Load(lane.ID); err != nil || lane.State != "released" {
+		t.Fatalf("restored lane = %#v err=%v", lane, err)
+	}
+	if got := cliGit(t, directory, "rev-parse", lane.Ref); got != refBefore {
+		t.Fatalf("restore moved ref: %s -> %s", refBefore, got)
 	}
 }
 
@@ -376,12 +996,303 @@ func TestFutureProfileSchemaRequiresMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(profilePath(laneStore, saved.Lane), append(body, '\n'), 0o600); err != nil {
+	path, err := profilePath(laneStore, saved.Lane)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(body, '\n'), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	result := runCLI(t, []string{"--json", "--repo-dir", directory, "status", "--lane", saved.Lane}, "")
 	if result.code == 0 || result.envelope.Error == nil || result.envelope.Error.Code != "MIGRATION_REQUIRED" {
 		t.Fatalf("future profile result = %#v stderr=%s", result.envelope, result.stderr)
+	}
+}
+
+func TestFutureInitIntentSchemaRequiresMigration(t *testing.T) {
+	directory := cliTestRepo(t)
+	result := runCLI(t, []string{"--json", "--repo-dir", directory, "init", "--mode", "shared", "--lane", "future-init", "--agent", "agent", "--session", "session", "--path", "core.txt", "--non-interactive", "--no-install", "--no-install-skill"}, "")
+	if result.code != 0 || !result.envelope.OK {
+		t.Fatalf("init: %#v stderr=%s", result.envelope, result.stderr)
+	}
+	var setup initResult
+	decodeData(t, result.envelope.Data, &setup)
+	intent, err := loadInitIntent(setup.IntentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent.SchemaVersion = initIntentSchemaVersion + 1
+	body, err := json.MarshalIndent(intent, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(setup.IntentPath, append(body, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadInitIntent(setup.IntentPath); fail.Code(err) != "MIGRATION_REQUIRED" {
+		t.Fatalf("future init intent error = %v (%s)", err, fail.Code(err))
+	}
+}
+
+func TestProfileIdentityAndShellOutputFailClosed(t *testing.T) {
+	directory := cliTestRepo(t)
+	initializeCLI(t, directory, "profile-guard", "core.txt")
+	repo, err := gitx.Discover(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laneStore, err := store.Open(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadProfile(laneStore, "../../outside"); fail.Code(err) != "INVALID_ID" {
+		t.Fatalf("traversal profile error = %v (%s)", err, fail.Code(err))
+	}
+	path, err := profilePath(laneStore, "profile-guard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := loadProfile(laneStore, "profile-guard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved.Agent = "different-agent"
+	body, err := json.MarshalIndent(saved, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(body, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadProfile(laneStore, "profile-guard"); fail.Code(err) != "PROFILE_READ_FAILED" {
+		t.Fatalf("profile/manifest mismatch error = %v (%s)", err, fail.Code(err))
+	}
+	if got := quotePOSIX("agent'; touch /tmp/nope; '"); got != `'agent'"'"'; touch /tmp/nope; '"'"''` {
+		t.Fatalf("POSIX quote = %q", got)
+	}
+	if got := quotePowerShell("agent'; Write-Output nope; '"); got != `'agent''; Write-Output nope; '''` {
+		t.Fatalf("PowerShell quote = %q", got)
+	}
+}
+
+func TestInitRecoveryQuotesEveryDynamicArgument(t *testing.T) {
+	options := initOptions{
+		mode:           string(store.ModeShared),
+		lane:           "safe-lane",
+		agent:          "safe-agent",
+		session:        "safe-session",
+		baseRef:        "topic branch",
+		paths:          []string{"dir/has space/file.txt", "dir/has'quote.txt"},
+		createWorktree: filepath.Join(t.TempDir(), "linked worktree"),
+		install:        true,
+		installDir:     filepath.Join(t.TempDir(), "bin dir"),
+		installSkill:   true,
+		skillDir:       filepath.Join(t.TempDir(), "skill dir"),
+	}
+	result := initResult{RepoDir: filepath.Join(t.TempDir(), "repo dir"), BaseSHA: strings.Repeat("a", 40), ClaimedPaths: []string{"canonical path/file.txt", "canonical'quote.txt"}, CompletedSteps: []string{"worktree-ready"}}
+	recovery := initRecovery(result, options)
+	if len(recovery) != 3 {
+		t.Fatalf("recovery = %#v", recovery)
+	}
+	command := recovery[2]
+	for _, wanted := range []string{
+		"--repo-dir " + quoteCommandArg(result.RepoDir),
+		"--base-ref " + quoteCommandArg(result.BaseSHA),
+		"--path " + quoteCommandArg(result.ClaimedPaths[0]),
+		"--path " + quoteCommandArg(result.ClaimedPaths[1]),
+		"--create-worktree " + quoteCommandArg(options.createWorktree),
+		"--install-dir " + quoteCommandArg(options.installDir),
+		"--skill-dir " + quoteCommandArg(options.skillDir),
+	} {
+		if !strings.Contains(command, wanted) {
+			t.Fatalf("recovery command %q does not contain %q", command, wanted)
+		}
+	}
+}
+
+func TestInitIntentRejectsNonCanonicalGitPaths(t *testing.T) {
+	base := initIntent{
+		SchemaVersion: initIntentSchemaVersion,
+		ID:            "init-valid",
+		Lane:          "lane",
+		Agent:         "agent",
+		Session:       "session",
+		Mode:          store.ModeShared,
+		BaseSHA:       strings.Repeat("a", 40),
+		Worktree:      t.TempDir(),
+		CreatedAt:     time.Now().UTC(),
+		UpdatedAt:     time.Now().UTC(),
+	}
+	for _, path := range []string{"../escape", "dir/../../escape", "dir/../escape", ".", "dir//file"} {
+		t.Run(strings.ReplaceAll(path, "/", "_"), func(t *testing.T) {
+			intent := base
+			intent.Paths = []string{path}
+			if err := validateInitIntent(intent); fail.Code(err) != "INIT_INTENT_FAILED" {
+				t.Fatalf("path %q error = %v (%s)", path, err, fail.Code(err))
+			}
+		})
+	}
+}
+
+func TestInitIntentRequiresAnExactStepPrefix(t *testing.T) {
+	directory := cliTestRepo(t)
+	repo, err := gitx.Discover(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laneStore, err := store.Open(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := cliGit(t, directory, "rev-parse", "HEAD")
+	intent, path, err := beginInitIntent(laneStore, initIntent{Lane: "strict-steps", Agent: "agent", Session: "session", Mode: store.ModeShared, BaseSHA: base, Worktree: repo.Root, Paths: []string{"core.txt"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := markInitStep(path, intent, "lane-ready"); fail.Code(err) != "INIT_INTENT_FAILED" {
+		t.Fatalf("out-of-order step error = %v (%s)", err, fail.Code(err))
+	}
+	intent.CompletedSteps = []string{"lane-ready"}
+	if err := writeInitIntent(path, intent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadInitIntent(path); fail.Code(err) != "INIT_INTENT_FAILED" {
+		t.Fatalf("gapped step history error = %v (%s)", err, fail.Code(err))
+	}
+}
+
+func TestConcurrentInitIntentProgressIsMonotonic(t *testing.T) {
+	directory := cliTestRepo(t)
+	repo, err := gitx.Discover(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laneStore, err := store.Open(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := cliGit(t, directory, "rev-parse", "HEAD")
+	intent, path, err := beginInitIntent(laneStore, initIntent{Lane: "concurrent-init", Agent: "agent", Session: "session", Mode: store.ModeShared, BaseSHA: base, Worktree: repo.Root, Paths: []string{"core.txt"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const workers = 24
+	start := make(chan struct{})
+	errorsFound := make(chan error, workers)
+	var group sync.WaitGroup
+	for worker := 0; worker < workers; worker++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-start
+			current := intent
+			for _, step := range initStepOrder {
+				updated, markErr := markInitStep(path, current, step)
+				if markErr != nil {
+					errorsFound <- markErr
+					return
+				}
+				current = updated
+			}
+		}()
+	}
+	close(start)
+	group.Wait()
+	close(errorsFound)
+	for markErr := range errorsFound {
+		t.Errorf("concurrent progress: %v", markErr)
+	}
+	final, err := loadInitIntent(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.State != "complete" || len(final.CompletedSteps) != len(initStepOrder) {
+		t.Fatalf("final concurrent intent = %#v", final)
+	}
+}
+
+func TestLeaseHeartbeatKeepsLongCaptureFenceActive(t *testing.T) {
+	directory := cliTestRepo(t)
+	repo, err := gitx.Discover(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laneStore, err := store.Open(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laneStore.LeaseTTL = 3 * time.Second
+	lane, err := laneStore.Create(context.Background(), store.CreateOptions{ID: "heartbeat", Agent: "agent", Session: "session", Mode: store.ModeShared})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := laneStore.Claim(lane.ID, lane.Agent, lane.Session, []string{"core.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	other, err := laneStore.Create(context.Background(), store.CreateOptions{ID: "heartbeat-other", Agent: "other", Session: "session", Mode: store.ModeShared})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := laneStore.LaneLock(lane.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Release() }()
+	_, stop, err := startLeaseHeartbeat(context.Background(), laneStore, lane, []string{"core.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(4 * time.Second)
+	if active, err := laneStore.ActivePaths(lane.ID); err != nil || len(active) != 1 || active[0] != "core.txt" {
+		t.Fatalf("heartbeat active paths = %v, err=%v", active, err)
+	}
+	if _, err := laneStore.Claim(other.ID, other.Agent, other.Session, []string{"core.txt"}); fail.Code(err) != "PATH_LEASE_CONFLICT" {
+		t.Fatalf("heartbeat did not fence competing claim: %v (%s)", err, fail.Code(err))
+	}
+	if err := stop(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLateHeartbeatFailureReturnsAppliedReceiptForReconciliation(t *testing.T) {
+	directory := cliTestRepo(t)
+	writeCLI(t, directory, "core.txt", "new core\n")
+	cliGit(t, directory, "add", "core.txt")
+	initializeCLI(t, directory, "heartbeat-recovery", "core.txt")
+	repo, err := gitx.Discover(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laneStore, err := store.Open(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	application := app{
+		stdin: strings.NewReader(""), stdout: &stdout, stderr: &stderr, jsonMode: true,
+		leaseHeartbeat: func(parent context.Context, _ store.Store, _ store.Lane, _ []string) (context.Context, func() error, error) {
+			return parent, func() error {
+				return fail.New("LEASE_HEARTBEAT_FAILED", "simulated late heartbeat failure")
+			}, nil
+		},
+	}
+	code := application.runCommit(context.Background(), laneStore, []string{"--lane", "heartbeat-recovery", "--single", "--message", "fix(lease): preserve late failure receipt", "--path", "core.txt"})
+	var output envelope
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("decode output %q: %v; stderr=%s", stdout.String(), err, stderr.String())
+	}
+	if code != 1 || output.OK || output.Error == nil || output.Error.Code != "LEASE_HEARTBEAT_FAILED" {
+		t.Fatalf("late heartbeat output = %#v, code=%d stderr=%s", output, code, stderr.String())
+	}
+	var result engine.Result
+	decodeData(t, output.Data, &result)
+	if !result.RefUpdated || result.IntentState != "applied" || result.PlanID == "" || result.PlanDigest == "" {
+		t.Fatalf("late heartbeat receipt = %#v", result)
+	}
+	reconciled := runCLI(t, []string{"--json", "--repo-dir", directory, "reconcile", "--lane", "heartbeat-recovery", "--plan-id", result.PlanID, "--plan-digest", result.PlanDigest}, "")
+	if reconciled.code != 0 || !reconciled.envelope.OK {
+		t.Fatalf("reconcile late heartbeat = %#v stderr=%s", reconciled.envelope, reconciled.stderr)
 	}
 }
 

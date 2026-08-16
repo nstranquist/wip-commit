@@ -73,15 +73,35 @@ func (application app) runCommit(ctx context.Context, laneStore store.Store, arg
 	if len(allowed) == 0 {
 		return application.failure("commit", fail.New("LEASE_REQUIRED", "claim or renew paths before capture"), nil, 1)
 	}
-	groups, err := application.resolveGroups(ctx, laneStore, allowed, options)
+	heartbeat := application.leaseHeartbeat
+	if heartbeat == nil {
+		heartbeat = startLeaseHeartbeat
+	}
+	captureCtx, stopHeartbeat, err := heartbeat(ctx, laneStore, lane, allowed)
 	if err != nil {
+		return application.failure("commit", err, nil, 1)
+	}
+	heartbeatStopped := false
+	stop := func() error {
+		if heartbeatStopped {
+			return nil
+		}
+		heartbeatStopped = true
+		return stopHeartbeat()
+	}
+	defer func() { _ = stop() }()
+	groups, err := application.resolveGroups(captureCtx, laneStore, allowed, options)
+	if err != nil {
+		if heartbeatErr := stop(); heartbeatErr != nil {
+			return application.failure("commit", heartbeatErr, nil, 1)
+		}
 		return application.failure("commit", err, nil, 2)
 	}
 	hookOutput := application.stdout
 	if application.jsonMode {
 		hookOutput = io.Discard
 	}
-	result, err := engine.Run(ctx, engine.Options{
+	result, err := engine.Run(captureCtx, engine.Options{
 		Repo:                 laneStore.Repo,
 		TargetRef:            lane.Ref,
 		ExpectedRef:          lane.CurrentSHA,
@@ -93,11 +113,15 @@ func (application app) runCommit(ctx context.Context, laneStore store.Store, arg
 		HookTimeout:          options.hookTimeout,
 		DefaultVerifyTimeout: options.verifyTimeout,
 		BeforePublish: func() error {
-			return laneStore.ValidateCapture(ctx, lane, allowed)
+			return laneStore.RefreshCaptureLease(captureCtx, lane, allowed)
 		},
 		Output:      hookOutput,
 		ErrorOutput: application.stderr,
 	})
+	heartbeatErr := stop()
+	if heartbeatErr != nil {
+		return application.failure("commit", heartbeatErr, result, 1)
+	}
 	if err != nil {
 		return application.failure("commit", err, result, 1)
 	}
@@ -118,6 +142,50 @@ func (application app) runCommit(ctx context.Context, laneStore store.Store, arg
 		human += " -> " + result.FinalCommit
 	}
 	return application.success("commit", result, human)
+}
+
+func startLeaseHeartbeat(parent context.Context, laneStore store.Store, lane store.Lane, allowed []string) (context.Context, func() error, error) {
+	if err := laneStore.RefreshCaptureLease(parent, lane, allowed); err != nil {
+		return nil, nil, fail.Wrap("LEASE_HEARTBEAT_FAILED", err)
+	}
+	captureCtx, cancelCapture := context.WithCancel(parent)
+	heartbeatCtx, cancelHeartbeat := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	ttl := laneStore.LeaseTTL
+	if ttl <= 0 {
+		ttl = store.DefaultLeaseTTL
+	}
+	interval := ttl / 3
+	if interval <= 0 {
+		interval = time.Nanosecond
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-parent.Done():
+				done <- nil
+				return
+			case <-heartbeatCtx.Done():
+				done <- nil
+				return
+			case <-ticker.C:
+				if err := laneStore.RefreshCaptureLease(parent, lane, allowed); err != nil {
+					cancelCapture()
+					done <- fail.Wrap("LEASE_HEARTBEAT_FAILED", err)
+					return
+				}
+			}
+		}
+	}()
+	stop := func() error {
+		cancelHeartbeat()
+		err := <-done
+		cancelCapture()
+		return err
+	}
+	return captureCtx, stop, nil
 }
 
 func (application app) resolveGroups(ctx context.Context, laneStore store.Store, allowed []string, options commitOptions) ([]engine.Group, error) {
@@ -228,20 +296,10 @@ func selectedStaged(ctx context.Context, laneStore store.Store, allowed []string
 }
 
 func interactiveGroups(paths []string, allowWIP bool, prompter prompt) ([]engine.Group, error) {
-	grouped := map[string][]string{}
-	for _, path := range paths {
-		parts := strings.SplitN(path, "/", 2)
-		key := parts[0]
-		grouped[key] = append(grouped[key], path)
-	}
-	keys := make([]string, 0, len(grouped))
-	for key := range grouped {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
+	proposals := proposeSplitGroups(paths)
 	_, _ = fmt.Fprintln(prompter.out, "Proposed split groups (one ref update after every group passes):")
-	for _, key := range keys {
-		_, _ = fmt.Fprintf(prompter.out, "  %s:\n    %s\n", key, strings.Join(grouped[key], "\n    "))
+	for _, proposal := range proposals {
+		_, _ = fmt.Fprintf(prompter.out, "  %s (prefix %s):\n    %s\n", proposal.Key, proposal.SuggestedPrefix, strings.Join(proposal.Files, "\n    "))
 	}
 	accepted, err := prompter.confirm("Use these split groups", true)
 	if err != nil {
@@ -251,10 +309,10 @@ func interactiveGroups(paths []string, allowWIP bool, prompter prompt) ([]engine
 		return nil, fail.New("SPLIT_PLAN_REQUIRED", "write a JSON plan to define different groups")
 	}
 	seen := map[string]bool{}
-	groups := make([]engine.Group, 0, len(keys))
-	for _, key := range keys {
+	groups := make([]engine.Group, 0, len(proposals))
+	for _, proposal := range proposals {
 		for {
-			message, err := prompter.ask("Conventional Commit message for "+key, "")
+			message, err := prompter.ask("Conventional Commit message for "+proposal.Key+" (start with "+proposal.SuggestedPrefix+")", "")
 			if err != nil {
 				return nil, err
 			}
@@ -268,7 +326,7 @@ func interactiveGroups(paths []string, allowWIP bool, prompter prompt) ([]engine
 				continue
 			}
 			seen[normalized] = true
-			groups = append(groups, engine.Group{Message: message, Files: grouped[key]})
+			groups = append(groups, engine.Group{Message: message, Files: proposal.Files})
 			break
 		}
 	}
