@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -562,13 +563,9 @@ func (output *boundedOutput) String() string {
 }
 
 func writeReceipt(root, name string, value receipt) error {
-	out, err := filepath.Abs(name)
+	out, err := validatedReceiptOutput(root, name)
 	if err != nil {
 		return err
-	}
-	relative, err := filepath.Rel(root, out)
-	if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return errors.New("--out must be outside the candidate checkout")
 	}
 	body, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
@@ -597,6 +594,34 @@ func writeReceipt(root, name string, value receipt) error {
 	}
 	complete = true
 	return nil
+}
+
+func validatedReceiptOutput(root, name string) (string, error) {
+	out, err := filepath.Abs(name)
+	if err != nil {
+		return "", err
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve candidate checkout: %w", err)
+	}
+	resolvedParent, err := filepath.EvalSymlinks(filepath.Dir(out))
+	if err != nil {
+		return "", fmt.Errorf("resolve receipt directory: %w", err)
+	}
+	resolvedOut := filepath.Join(resolvedParent, filepath.Base(out))
+	relative, err := filepath.Rel(resolvedRoot, resolvedOut)
+	if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", errors.New("--out must resolve outside the candidate checkout")
+	}
+	info, err := os.Stat(resolvedParent)
+	if err != nil || !info.IsDir() {
+		return "", errors.New("receipt parent must be an existing directory")
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
+		return "", errors.New("receipt directory must not grant group or other permissions")
+	}
+	return resolvedOut, nil
 }
 
 func uniqueNULValues(output string) []string {

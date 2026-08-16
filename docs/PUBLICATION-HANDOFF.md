@@ -40,11 +40,14 @@ Use the final clean publication candidate. It must satisfy all these checks:
 - `git fsck --strict --no-dangling` passes.
 - `gitleaks` passes for the complete history and worktree.
 
-Create a private directory beside the checkout. Make sure the receipt file does
-not exist. Then run:
+Create a private directory beside the checkout. On Unix, the preflight rejects
+a directory that grants group or other permissions. On Windows, use a private
+ACL for the current account. Make sure the receipt file does not exist. Then
+run:
 
 ```text
 mkdir -p ../wip-commit-private-receipts
+chmod 700 ../wip-commit-private-receipts
 go run ./scripts/publication-handoff \
   --repo-dir . \
   --target nstranquist/wip-commit \

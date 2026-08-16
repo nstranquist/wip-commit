@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -246,7 +247,7 @@ func TestWriteReceiptRefusesCheckoutAndOverwrite(t *testing.T) {
 	if err := writeReceipt(root, filepath.Join(root, "receipt.json"), value); err == nil {
 		t.Fatal("receipt writer accepted a path in the candidate checkout")
 	}
-	out := filepath.Join(t.TempDir(), "receipt.json")
+	out := filepath.Join(privatePublicationDirectory(t), "receipt.json")
 	if err := writeReceipt(root, out, value); err != nil {
 		t.Fatal(err)
 	}
@@ -263,9 +264,32 @@ func TestWriteReceiptRefusesCheckoutAndOverwrite(t *testing.T) {
 	}
 }
 
+func TestWriteReceiptRequiresPrivateResolvedParent(t *testing.T) {
+	root := t.TempDir()
+	value := receipt{SchemaVersion: receiptSchemaVersion, GeneratedAt: time.Unix(1_700_000_000, 0).UTC()}
+	outside := t.TempDir()
+	link := filepath.Join(outside, "checkout-link")
+	if err := os.Symlink(root, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if err := writeReceipt(root, filepath.Join(link, "receipt.json"), value); err == nil || !strings.Contains(err.Error(), "resolve outside") {
+		t.Fatalf("symlinked checkout output error = %v", err)
+	}
+	if runtime.GOOS == "windows" {
+		return
+	}
+	openDirectory := t.TempDir()
+	if err := os.Chmod(openDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeReceipt(root, filepath.Join(openDirectory, "receipt.json"), value); err == nil || !strings.Contains(err.Error(), "group or other") {
+		t.Fatalf("open receipt directory error = %v", err)
+	}
+}
+
 func TestRunWritesBoundReceiptWithDeterministicExternalEvidence(t *testing.T) {
 	repo, bootstrap := publicationCandidate(t)
-	out := filepath.Join(t.TempDir(), "receipt.json")
+	out := filepath.Join(privatePublicationDirectory(t), "receipt.json")
 	fixed := time.Date(2026, time.August, 16, 22, 55, 0, 123456789, time.UTC)
 	var stdout bytes.Buffer
 	err := runWithDependencies(context.Background(), []string{
@@ -369,6 +393,15 @@ func publicationCandidate(t *testing.T) (gitx.Repo, string) {
 	publicationGit(t, repo.Root, "add", "docs/handoff.md")
 	publicationGit(t, repo.Root, "commit", "-m", "docs(release): add handoff")
 	return repo, bootstrap
+}
+
+func privatePublicationDirectory(t *testing.T) string {
+	t.Helper()
+	directory := t.TempDir()
+	if err := os.Chmod(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return directory
 }
 
 func publicationRepo(t *testing.T) (gitx.Repo, string) {
