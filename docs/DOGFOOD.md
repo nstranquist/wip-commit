@@ -89,6 +89,38 @@ Receipt evidence:
   testing.
 - An exact repeat returned `EMPTY_COMMIT_GROUP` and did not move the lane ref.
 
+### Applied corrective split
+
+The source-current binary then captured the three corrections as a second
+reviewed split:
+
+1. `5eb4678b5330d97fc654a9b057e89f42e0981c95` — `fix(verify): isolate candidate capture identity`
+2. `fd908b90c63e67ab0aa3da3fda7cad41ee2b2037` — `fix(plan): omit already captured staged paths`
+3. `4593fab114b4bfae55613f31e77188e28612eccb` — `docs(dogfood): record self-hosted split evidence`
+
+The second plan ID was `plan-c554ab6722e5a5628e098b4e`. Its digest was
+`sha256:1b80f4e268899a203620a1414b741ad83c95c2e41a23daf859f20f65ead1246a`.
+The complete seven-commit chain was linear. Its final tree was
+`7a892f4f57a93c0df2e808c3b5c055145b1360fc`, equal to the complete staged
+tree at capture time. `HEAD` and the complete index-file digest stayed
+unchanged. A later `wip plan` returned `EMPTY_SELECTION`.
+
+### Released-state maintenance
+
+Release preserved the lane ref at
+`4593fab114b4bfae55613f31e77188e28612eccb`. It left `HEAD` and the complete
+index-file digest unchanged. `wip status` then returned `LANE_NOT_ACTIVE`, as
+required for a released lane.
+
+An archive preview left the complete state-file digest unchanged. The applied
+archive receipt was `archive-74f4b31a69187b337ed50e88`, with digest
+`sha256:74f4b31a69187b337ed50e885ae5c5af12a4f44549b9693af8a1824449b58ca2`.
+It moved only the released lane, lease, and profile records. It preserved the
+lane ref and commits. Restoring that exact receipt returned its state to
+`restored`, put the same three records back, and again preserved the ref.
+`wip doctor` remained healthy after apply and restore, with no pending work or
+findings.
+
 ### Finding
 
 The program fulfilled the shared-checkout capture contract during this
