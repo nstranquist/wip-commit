@@ -2,6 +2,10 @@
 
 - Read `README.md`, `THREAT-MODEL.md`, and `docs/ARCHITECTURE.md` before you
   change transaction code.
+- Read `docs/OSS-PRACTICE-GUIDE.md` before you change public scope,
+  governance, security, dependencies, support, or release policy.
+- Review the applicable official sources at every trigger in
+  `docs/OSS-SOURCES.json`. A generated dissection stub is not evidence.
 - Never stash, reset, clean, force-update, merge, or push as part of this
   project workflow.
 - Use Go for production helpers.

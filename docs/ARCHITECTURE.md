@@ -10,15 +10,41 @@ All coordination state is below the repository's Git common directory:
   leases/<lease>.json
   profiles/<lane>.json
   intents/<plan>.json
+  init-intents/<init>.json
+  archive/<archive>/receipt.json
   locks/lane-<lane>.lock
   locks/leases.lock
+  locks/intent-<init>.lock
 ```
+
+Durable record writes stage complete temporary files in `locks/`. Record
+directories therefore contain only canonical JSON names, even when a writer
+stops before publication. Temporary files are never interpreted as records.
+The encoder checks the final JSON record, including its newline, against the
+reader's byte limit before each first write or replacement. An oversized
+capture intent fails before the lane ref compare-and-swap. An oversized archive
+receipt fails before the command creates its archive batch.
+First writes reserve the largest supported lifecycle form. This reservation
+includes initialization steps, release timestamps, lane commit metadata, and
+archive restore state.
 
 Each checkout has its own Git index. All linked worktrees share the coordination
 store and refs through the Git common directory.
 
-The store checks for another version directory before it creates `v1`. It
-returns `MIGRATION_REQUIRED` for any other version directory or record schema.
+Git subprocesses remove inherited repository-local environment variables that
+can redirect or reinterpret the repository, common directory, worktree,
+namespace, refs, shallow boundary, configuration, or object storage. Discovery
+and capture therefore stay bound to the canonical checkout. An inherited
+`GIT_INDEX_FILE` remains the source staged view. The capture transaction
+supplies its private index explicitly to Git and prepared hooks.
+
+`<git-common-dir>/wip/domain.json` owns the state version. A shared
+`wip-coordination.lock` serializes public and legacy domain creation. The
+standalone store stops if `<git-common-dir>/ndev-wip` exists.
+
+The store checks the domain marker and version directories before it creates
+`v1`. It returns `MIGRATION_REQUIRED` for an unsupported version or record
+schema. It returns `COORDINATION_DOMAIN_CONFLICT` for another state owner.
 See [STATE-COMPATIBILITY.md](STATE-COMPATIBILITY.md).
 
 Lane refs have this form:
@@ -40,15 +66,27 @@ staged entries and leaves the worktree's `HEAD` and index unchanged.
 The mode changes the coordination boundary. It does not change the publication
 algorithm.
 
+A dry-run creates no commit objects. The first planned group reports the
+current lane commit as its parent. A later group reports an empty parent because
+its preceding commit does not exist. The ordered group list defines the planned
+dependency chain.
+
+Portable path identity applies NFC normalization, Unicode case folding, and a
+stable lowercase form. Reapplying the key produces the same bytes. Path overlap
+uses component boundaries after this canonicalization.
+
 ## Lock order
 
 Commands use this lock order:
 
-1. lane lock;
-2. lease-registry lock.
+1. coordination-domain lock during store creation;
+2. archive lock during archive or restore;
+3. lane locks in sorted lane order;
+4. lease-registry lock.
 
 No command acquires those locks in the opposite order. Different lanes can run
-capture work in parallel. One lane is serialized.
+capture work in parallel. One lane is serialized. An initialization-intent
+lock is acquired by itself when a completed step is recorded.
 
 ## Lane state
 
@@ -64,6 +102,27 @@ finishes a matching `creating` lane.
 Leases have an `active` or `released` stored state. An active lease also becomes
 inactive when its timestamp expires. An expired lease cannot be renewed. The
 owner must claim the paths again.
+
+A new lease uses a cryptographically random identifier and complete
+no-overwrite publication. Renewal and release use atomic replacement of that
+same record. Normal readers reject foreign entries in lane and lease record
+directories instead of skipping them.
+
+Claim retries can repair an active exact lease that exists without its lane
+back-reference. `wip init` repeats its complete canonical claim on every exact
+retry. This action repairs that interruption without creating another lease.
+Renewal and release inspect the complete lease registry before they write.
+Release accepts a valid partial-release state so the same operation can finish.
+
+Capture snapshots the lane's complete active lease set and refreshes it before
+work starts. A heartbeat refreshes the same set at one-third of the lease
+lifetime. The publication callback compares and refreshes the set while it
+holds the registry lock. Every refresh audits the complete active registry for
+a cross-lane path overlap.
+
+A heartbeat failure remains authoritative after the ref update. The failed
+result includes `ref_updated`, `plan_id`, `plan_digest`, and the applied intent
+state. The operator must use that evidence with `wip reconcile`.
 
 ## Capture transaction
 
@@ -110,6 +169,57 @@ The following table describes crash recovery:
 
 Reconciliation rejects a different ref, parent, tree, message, path set, scope,
 or final tree. It does not reconstruct or guess missing evidence.
+
+## Initialization transaction
+
+`wip init` validates and bootstraps the coordination domain, then writes a
+deterministic `pending` intent before it changes a worktree, lane, lease,
+profile, binary, or skill. The intent records these ordered steps:
+
+1. `worktree-ready`
+2. `lane-ready`
+3. `lease-ready`
+4. `profile-ready`
+5. `binary-ready`
+6. `skill-ready`
+
+Each step is idempotent. A retry must use the same setup values. A per-intent
+lock makes concurrent exact retries advance the completed-step prefix without
+regression. The intent changes to `complete` after all six steps pass. Recovery
+output uses the absolute repository and worktree paths and the resolved base
+commit ID. The binary uses complete no-overwrite publication. A matching
+partial embedded skill bundle is resumable.
+
+The staged-path read is mandatory when the target worktree exists. A Git read
+error stops initialization. Staged whitespace errors remain a reported,
+nonfatal finding. A dry-run for a worktree that does not exist reports that the
+staged check did not run.
+
+## State inspection and archival
+
+`wip doctor` opens existing state without creating it. It scans at most 10,000
+entries in each record directory. It validates refs, record links, profiles,
+capture intents, and initialization intents. Capture-intent loading validates
+canonical paths, bounds, object identities, the commit chain, and the digest
+before doctor accepts any intent state.
+
+`wip archive` selects only released or aborted lanes. A preview binds the
+candidate records to an exact cutoff and digest. Apply compares each complete
+candidate record again while it holds the archive, lane, and lease-registry
+locks. It moves lease and profile records before it moves the lane manifest
+under `archive/<id>/`. It preserves every lane ref.
+
+The archive receipt uses `prepared`, `complete`, `restoring`, and `restored`
+states. An interrupted apply returns the prepared receipt ID. `wip archive
+--resume <id>` continues only that immutable receipt. Restore records
+`restoring` before its first move, so an interrupted restore can continue by
+the same receipt ID. A retry can also recreate a missing receipt in its
+deterministic empty batch. Each receipt validates record placement and binds
+lane and released lease records to exact candidates. Extra records fail closed.
+Restore writes the lane manifest last.
+
+Resume and restore first inspect the existing domain. They return
+`ARCHIVE_NOT_FOUND` without creating state when the domain is not initialized.
 
 ## Split-plan format
 

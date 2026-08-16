@@ -3,7 +3,7 @@
   "plan_id": "wip-oss-public-beta",
   "plan_status": "proposed",
   "target_version": "v0.1.0-beta.1",
-  "last_reviewed": "2026-08-14",
+  "last_reviewed": "2026-08-16",
   "status_definitions": {
     "verified": "Local evidence passed on the recorded source.",
     "prepared": "The repository artifact exists, but hosted evidence is absent.",
@@ -34,11 +34,15 @@
       "human_gate": false,
       "acceptance": "Standalone build, test, race, vet, module, vulnerability, Git, and cross-compile checks pass with GOWORK=off.",
       "evidence": [
-        {"kind": "command", "value": "GOWORK=off go test -count=1 ./...", "observed_on": "2026-08-14"},
-        {"kind": "command", "value": "GOWORK=off go test -race -count=3 ./...", "observed_on": "2026-08-14"},
-        {"kind": "command", "value": "GOWORK=off go vet ./...", "observed_on": "2026-08-14"},
-        {"kind": "command", "value": "golangci-lint v2.12.2 run ./...", "observed_on": "2026-08-14"},
-        {"kind": "command", "value": "GOWORK=off go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...", "observed_on": "2026-08-14"}
+        {"kind": "command", "value": "GOWORK=off go test -count=1 ./...", "observed_on": "2026-08-16"},
+        {"kind": "command", "value": "GOWORK=off go test -race -count=3 ./...", "observed_on": "2026-08-16"},
+        {"kind": "command", "value": "GOWORK=off go vet ./...", "observed_on": "2026-08-16"},
+        {"kind": "command", "value": "golangci-lint v2.12.2 run ./...", "observed_on": "2026-08-16"},
+        {"kind": "command", "value": "actionlint v1.7.12", "observed_on": "2026-08-16"},
+        {"kind": "command", "value": "GOWORK=off go mod tidy -diff and GOWORK=off go mod verify", "observed_on": "2026-08-16"},
+        {"kind": "command", "value": "CGO_ENABLED=0 GOWORK=off go test -exec=/usr/bin/true ./... on linux and darwin amd64/arm64 plus windows amd64/arm64", "observed_on": "2026-08-16"},
+        {"kind": "command", "value": "git fsck --strict --no-dangling and git diff --check", "observed_on": "2026-08-16"},
+        {"kind": "command", "value": "GOWORK=off go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...", "observed_on": "2026-08-16"}
       ]
     },
     {
@@ -50,8 +54,8 @@
       "human_gate": false,
       "acceptance": "Two simultaneous disjoint captures preserve HEAD, the complete index, and foreign staged content.",
       "evidence": [
-        {"kind": "test", "value": "TestConcurrentSharedLanesCaptureDisjointPaths", "observed_on": "2026-08-14"},
-        {"kind": "command", "value": "GOWORK=off go test -race -count=10 ./cmd/wip -run TestConcurrentSharedLanesCaptureDisjointPaths", "observed_on": "2026-08-14"}
+        {"kind": "test", "value": "TestConcurrentSharedLanesCaptureDisjointPaths", "observed_on": "2026-08-16"},
+        {"kind": "command", "value": "GOWORK=off go test -race -count=10 ./cmd/wip -run TestConcurrentSharedLanesCaptureDisjointPaths", "observed_on": "2026-08-16"}
       ]
     },
     {
@@ -75,8 +79,8 @@
       "human_gate": false,
       "acceptance": "The full Git history and worktree contain no detected secret.",
       "evidence": [
-        {"kind": "command", "value": "gitleaks git --redact --exit-code 1 .", "observed_on": "2026-08-14"},
-        {"kind": "command", "value": "gitleaks dir --redact --exit-code 1 .", "observed_on": "2026-08-14"}
+        {"kind": "command", "value": "gitleaks v8.30.1 git --redact --exit-code 1 .", "observed_on": "2026-08-16"},
+        {"kind": "command", "value": "gitleaks v8.30.1 dir --redact --exit-code 1 .", "observed_on": "2026-08-16"}
       ]
     },
     {
@@ -99,10 +103,10 @@
       "status": "verified",
       "owner": "maintainer",
       "human_gate": false,
-      "acceptance": "The standalone skill uses public wip commands, defaults to split capture, and has no private helper dependency.",
+      "acceptance": "The standalone skill uses public wip commands, defaults to split capture, has no private helper dependency, and can be installed from the embedded canonical bundle without overwrite.",
       "evidence": [
-        {"kind": "artifact", "value": "skills/wip-commit/SKILL.md and skills/wip-commit/references/automation.md", "observed_on": "2026-08-14"},
-        {"kind": "test", "value": "TestPortableSkillContract", "observed_on": "2026-08-14"}
+        {"kind": "artifact", "value": "skills/wip-commit/SKILL.md, references/automation.md, and bundle.go", "observed_on": "2026-08-16"},
+        {"kind": "test", "value": "TestPortableSkillContract and TestInitDryRunAndInstallerAreNonDestructive", "observed_on": "2026-08-16"}
       ]
     },
     {
@@ -202,7 +206,7 @@
       "acceptance": "The project documents schema support, upgrade behavior, downgrade behavior, and fail-closed migration errors.",
       "evidence": [
         {"kind": "artifact", "value": "docs/STATE-COMPATIBILITY.md and docs/ERRORS.md", "observed_on": "2026-08-14"},
-        {"kind": "test", "value": "TestFutureStateDirectoryFailsBeforeV1Creation, TestFutureLaneAndLeaseSchemasRequireMigration, TestFutureIntentSchemaRequiresMigration, and TestFutureProfileSchemaRequiresMigration", "observed_on": "2026-08-14"}
+        {"kind": "test", "value": "TestFutureStateDirectoryFailsBeforeV1Creation, TestUnknownVersionedStateEntryRequiresMigrationBeforeMutation, TestCoordinationDomainMarkerAndForeignDomainFailClosed, TestFutureLaneAndLeaseSchemasRequireMigration, TestFutureIntentSchemaRequiresMigration, TestFutureInitIntentSchemaRequiresMigration, and TestFutureProfileSchemaRequiresMigration", "observed_on": "2026-08-16"}
       ]
     },
     {
@@ -215,6 +219,152 @@
       "acceptance": "An independent reviewer assesses locks, hooks, crash recovery, path identity, and Windows behavior.",
       "evidence": [
         {"kind": "gap", "value": "No independent security review exists.", "observed_on": "2026-08-14"}
+      ]
+    },
+    {
+      "id": "OSS-017",
+      "gate": "public-beta",
+      "title": "Enforce one coordination domain",
+      "status": "verified",
+      "owner": "maintainer",
+      "human_gate": false,
+      "acceptance": "Standalone and legacy lane stores share a creation lock, reject the other domain, and cannot win a concurrent dual-domain creation race.",
+      "evidence": [
+        {"kind": "test", "value": "TestCoordinationDomainMarkerAndForeignDomainFailClosed, TestCoordinationLockPreventsDualDomainCreationRace, TestReadOnlyLaneCommandsDoNotClaimPublicDomain, and TestOnlyInitCanClaimAnUninitializedPublicDomain", "observed_on": "2026-08-16"},
+        {"kind": "integration", "value": "The nicos-dev compatibility store uses the same wip-coordination.lock; TestWIPReadOnlyStatusDoesNotClaimLegacyDomain and TestWIPLegacyCommandsClaimStateOnlyForExplicitCreate prove that status, invalid actions, queue operations, and dry-runs do not claim legacy state.", "observed_on": "2026-08-16"},
+        {"kind": "test", "value": "TestOnlyInitCanClaimAnUninitializedPublicDomain covers archive resume and restore without domain creation.", "observed_on": "2026-08-16"}
+      ]
+    },
+    {
+      "id": "OSS-018",
+      "gate": "public-beta",
+      "title": "Make initialization resumable and portable",
+      "status": "verified",
+      "owner": "maintainer",
+      "human_gate": false,
+      "acceptance": "After domain bootstrap, wip init publishes an immutable pending receipt before worktree, lane, lease, profile, binary, or skill changes; records six ordered idempotent steps under a per-intent lock; pins exact retry values; repairs an interrupted exact lease back-reference; fails closed on Git inspection errors; resumes a matching partial skill bundle; and never overwrites different content.",
+      "evidence": [
+        {"kind": "test", "value": "TestConcurrentCreatePublishesOneCompleteWinner, TestCreateWithExternalTempDirectoryKeepsDestinationCanonical, TestWriteWithExternalTempDirectoryKeepsDestinationCanonical, TestInitFailureReturnsDurableResumableReceipt, TestInitDryRunAndInstallerAreNonDestructive, TestInitRetryRepairsInterruptedLeaseBackReference, TestInitDryRunReportsWhitespaceAndFailsClosedOnGitInspectionError, TestInitSkipsHomeResolutionWhenInstallationIsDisabled, TestInitRecoveryQuotesEveryDynamicArgument, TestInitIntentRequiresAnExactStepPrefix, and TestConcurrentInitIntentProgressIsMonotonic", "observed_on": "2026-08-16"}
+      ]
+    },
+    {
+      "id": "OSS-019",
+      "gate": "public-beta",
+      "title": "Fence long capture leases",
+      "status": "verified",
+      "owner": "maintainer",
+      "human_gate": false,
+      "acceptance": "Capture uses an idempotent Unicode path key, snapshots the lane's complete active lease set, audits the active registry for overlaps, refreshes only that exact set during long hooks and verification, then compares and refreshes it before ref publication. A late heartbeat failure returns applied receipt evidence. Lease creation is no-clobber. Renewal and release audit the complete registry, and an interrupted release remains resumable.",
+      "evidence": [
+        {"kind": "test", "value": "FuzzPortablePathIdentity with the retained Cherokee regression seed, TestLeaseHeartbeatKeepsLongCaptureFenceActive, TestLateHeartbeatFailureReturnsAppliedReceiptForReconciliation, TestCaptureRejectsCorruptedCrossLaneLeaseOverlap, TestRenewRejectsCorruptedCrossLaneOverlapBeforeWriting, TestReleaseRejectsBrokenLeaseLinksBeforeWriting, TestNewLeasePublicationNeverReplacesAnExistingID, and TestInterruptedReleaseBlocksLaneOperationsUntilReleaseResumes", "observed_on": "2026-08-16"}
+      ]
+    },
+    {
+      "id": "OSS-020",
+      "gate": "public-beta",
+      "title": "Add bounded diagnosis and recoverable archival",
+      "status": "verified",
+      "owner": "maintainer",
+      "human_gate": false,
+      "acceptance": "Doctor is read-only and bounded. Archive requires an exact reviewed plan, binds every moved record to a candidate, rechecks complete candidates under lock, preserves refs and commits, and resumes interrupted apply and restore operations by receipt.",
+      "evidence": [
+        {"kind": "test", "value": "TestDoctorIsReadOnlyAndAuditsHealthyState, TestDoctorRejectsLeaseOwnerMismatch, TestOperationalReadsRejectUnexpectedRecordEntries, TestLoadIntentRejectsSelfConsistentInvalidStructure, TestArchiveRequiresExactPreviewAndPreservesRefs, TestArchiveIsRecoverableAndResumesPartialMoves, TestArchiveRejectsCandidateMovementAfterPreview, and TestArchiveReceiptRejectsCrossLaneAndExtraRecords", "observed_on": "2026-08-16"}
+      ]
+    },
+    {
+      "id": "OSS-021",
+      "gate": "public-beta",
+      "title": "Default to reviewed split capture",
+      "status": "verified",
+      "owner": "maintainer",
+      "human_gate": false,
+      "acceptance": "Automation needs a reviewed split plan unless it explicitly selects one commit. The read-only planner proposes deterministic component groups and conservative Conventional Commit prefixes without moving HEAD or the index.",
+      "evidence": [
+        {"kind": "test", "value": "TestCommitRequiresSplitPlanUnlessSingleIsExplicit and TestPlanPreviewUsesComponentBoundariesWithoutMutation", "observed_on": "2026-08-16"}
+      ]
+    },
+    {
+      "id": "OSS-022",
+      "gate": "public-beta",
+      "title": "Keep every durable record readable",
+      "status": "verified",
+      "owner": "maintainer",
+      "human_gate": false,
+      "acceptance": "Every bounded durable-record writer rejects oversized encoded bytes before publication and reserves its largest supported lifecycle form. Capture intent rejection occurs before the lane ref compare-and-swap, and archive receipt rejection occurs before batch creation.",
+      "evidence": [
+        {"kind": "test", "value": "TestMarshalAcceptsExactLimitAndRejectsOneByteOver, TestOversizedIntentFailsBeforeRefPublication, TestOversizedInitIntentFailsBeforeRecordPublication, TestInitIntentReservesSpaceForEveryCompletionStep, TestLeaseWriterRejectsRecordThatItsReaderCannotRead, TestLeaseWriterReservesSpaceForReleaseState, and TestArchiveReceiptWriterRejectsUnreadableRecordSize", "observed_on": "2026-08-16"}
+      ]
+    },
+    {
+      "id": "OSS-023",
+      "gate": "public-beta",
+      "title": "Document governance and support",
+      "status": "verified",
+      "owner": "maintainer",
+      "human_gate": false,
+      "acceptance": "The repository states current decision authority, access and release rules, succession expectations, supported versions, support limits, and safe incident-reporting steps without claiming an existing community or service level.",
+      "evidence": [
+        {"kind": "artifact", "value": "GOVERNANCE.md and SUPPORT.md", "observed_on": "2026-08-16"}
+      ]
+    },
+    {
+      "id": "OSS-024",
+      "gate": "public-beta",
+      "title": "Approve and operationalize a Code of Conduct",
+      "status": "human-gated",
+      "owner": "repository-owner",
+      "human_gate": true,
+      "acceptance": "Before public contributions are solicited, the owner approves a Code of Conduct, names its enforcement responsibility, and configures a confidential conduct-reporting path.",
+      "evidence": [
+        {"kind": "gap", "value": "No approved Code of Conduct or confidential conduct-reporting channel exists in this local checkout.", "observed_on": "2026-08-16"}
+      ]
+    },
+    {
+      "id": "OSS-025",
+      "gate": "stable",
+      "title": "Evaluate and publish the supply-chain posture",
+      "status": "external-evidence",
+      "owner": "repository-owner",
+      "human_gate": true,
+      "acceptance": "The hosted project reviews OpenSSF Scorecard and Best Practices criteria, records accepted gaps, publishes an SBOM or a documented reason not to, and verifies signed release provenance from a clean consumer environment.",
+      "evidence": [
+        {"kind": "prepared-artifact", "value": "Checksums, immutable release workflow references, dependency review, vulnerability scanning, and artifact attestation are prepared locally; hosted and consumer evidence is absent.", "observed_on": "2026-08-16"}
+      ]
+    },
+    {
+      "id": "OSS-026",
+      "gate": "stable",
+      "title": "Prove project health and succession",
+      "status": "external-evidence",
+      "owner": "repository-owner",
+      "human_gate": true,
+      "acceptance": "After a beta period, the project reviews issue and pull-request response, maintainer load, unresolved security and safety defects, real concurrent use, and a tested backup-administrator, transfer, or archival path.",
+      "evidence": [
+        {"kind": "gap", "value": "A local unpublished project has no honest community-health or succession evidence.", "observed_on": "2026-08-16"}
+      ]
+    },
+    {
+      "id": "OSS-027",
+      "gate": "public-beta",
+      "title": "Bind Git commands to the selected repository",
+      "status": "verified",
+      "owner": "maintainer",
+      "human_gate": false,
+      "acceptance": "Git discovery, capture, and prepared hooks ignore inherited repository-local variables that can redirect or reinterpret the repository, worktree, common directory, configuration, namespace, replacement refs, shallow boundary, or object storage. The caller's active source index remains explicit, and hooks receive the private candidate index.",
+      "evidence": [
+        {"kind": "test", "value": "TestDiscoverIgnoresInheritedRepositoryRoutingEnvironment", "observed_on": "2026-08-16"}
+      ]
+    },
+    {
+      "id": "OSS-028",
+      "gate": "public-beta",
+      "title": "Preserve and apply authoritative OSS guidance",
+      "status": "verified",
+      "owner": "maintainer",
+      "human_gate": false,
+      "acceptance": "The repository records authoritative open source, secure-development, evaluation, SSDF, and Git sources with reviewed revisions. A maintainer guide maps those sources to project rules, review triggers, evidence types, and accepted gaps.",
+      "evidence": [
+        {"kind": "artifact", "value": "docs/OSS-PRACTICE-GUIDE.md, docs/OSS-SOURCES.json, AGENTS.md, CONTRIBUTING.md, GOVERNANCE.md, and docs/RELEASE.md", "observed_on": "2026-08-16"}
       ]
     }
   ]

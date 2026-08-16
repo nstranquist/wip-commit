@@ -8,11 +8,11 @@ Target: `v0.1.0-beta.1`
 
 Owner: Repository owner
 
-Last review: 2026-08-14
+Last review: 2026-08-16
 
 Approval: Not yet recorded
 
-Local preparation: Complete on 2026-08-14
+Local preparation: Extended safety pass complete on 2026-08-16
 
 ## Decision request
 
@@ -56,6 +56,21 @@ implementation claim.
 
 The owner-controlled repository work is complete. The checkout now contains:
 
+- a single-domain interlock that prevents standalone and legacy coordination
+  state from starting in the same Git common directory; only `wip init` can
+  claim an uninitialized repository.
+- a resumable `wip init` transaction with safe binary and embedded-skill
+  installation, complete no-overwrite first writes, and immutable recovery
+  values.
+- no-clobber lease creation, a capture heartbeat, a final exact-set publication
+  fence, and refusal of partially released lanes.
+- read-only split proposals and a split-plan default for automation.
+- bounded `wip doctor` inspection, structural capture-receipt validation, and
+  exact recoverable state archival.
+- receipt-bound archive records and recovery of a deterministic empty batch
+  when interruption occurs before receipt publication.
+- filesystem-root confinement for persistent state and private-index
+  directories.
 - a portable public skill with a regression test for private dependencies and
   unsafe commands.
 - a deterministic six-target builder with archive, checksum, receipt, and
@@ -103,6 +118,33 @@ The public beta must retain these properties:
 7. A linked-worktree capture leaves both checkout heads and indexes unchanged.
 8. Release and abort preserve the local agent ref.
 9. No command lands, merges, pushes, stashes, resets, or cleans work.
+10. Public and legacy coordination domains cannot start beside each other.
+11. A long capture keeps the exact active lane lease set captured at its start
+    alive and checks that same set again before publication.
+12. After an empty coordination-store bootstrap, initialization records every
+    durable step and exact retry value before it changes worktree, lane, lease,
+    profile, binary, or skill resources.
+13. State inspection is read-only and bounded.
+14. Archive apply rechecks every reviewed candidate under lock and preserves
+    all lane refs and commits.
+15. A prepared archive can resume or restore by immutable receipt ID.
+16. Commands other than `wip init` cannot claim an uninitialized repository.
+17. New lease publication cannot replace an existing lease record. A partial
+    release blocks claim, renewal, and capture until release resumes.
+18. Every durable record writer rejects bytes that its corresponding reader
+    cannot read. Capture intent rejection occurs before the lane ref update.
+19. An exact initialization retry repairs an exact active lease that lacks its
+    lane back-reference. Git inspection errors cannot appear as a passed check.
+20. A heartbeat failure after ref publication returns the applied plan evidence
+    and requires receipt-based reconciliation.
+21. Invalid legacy actions, legacy dry-runs, queue previews, archive resume, and
+    archive restore cannot claim an uninitialized coordination domain.
+22. Renewal and release audit the complete lease registry before mutation.
+    Release also verifies ownership and reverse references.
+23. Portable path keys are idempotent for valid UTF-8 paths. Overlap stays
+    symmetric across Unicode case pairs and component boundaries.
+24. Inherited Git variables cannot redirect repository discovery, refs, object
+    storage, or prepared hooks away from the selected canonical checkout.
 
 The threat model remains part of the release contract. Cooperating processes
 must honor leases. Hooks and `verify` commands remain trusted repository code.
@@ -120,10 +162,16 @@ must honor leases. Hooks and `verify` commands remain trusted repository code.
 
 1. Add the portable agent skill and its public-only regression tests.
 2. Remove internal-only instructions from public contributor surfaces.
-3. Add deterministic archives, checksums, and a provenance workflow.
-4. Add a state-schema compatibility and migration policy.
-5. Run the complete local gate with `GOWORK=off`.
-6. Scan the complete history and worktree for secrets.
+3. Add a single-domain compatibility contract for legacy integrations.
+4. Add resumable initialization and embedded portable-skill installation.
+5. Add automatic capture lease renewal and final lease fencing.
+6. Add bounded state diagnosis and exact recoverable archival.
+7. Add deterministic archives, checksums, and a provenance workflow.
+8. Add a state-schema compatibility and migration policy.
+9. Add governance and support policies that state the current single-maintainer
+   model and do not imply a service level or contributor community.
+10. Run the complete local gate with `GOWORK=off`.
+11. Scan the complete history and worktree for secrets.
 
 ### Phase 3: create the hosted candidate
 
@@ -134,6 +182,8 @@ must honor leases. Hooks and `verify` commands remain trusted repository code.
 5. Protect `main` with pull requests, review, and required CI jobs.
 6. Block force pushes and branch deletion.
 7. Run Linux, macOS, and Windows jobs on hosted workers.
+8. Approve a Code of Conduct, assign enforcement responsibility, and configure
+   a confidential conduct-reporting path before soliciting contributions.
 
 Hosted Windows execution is mandatory. A Windows cross-build does not exercise
 Windows locks, process cleanup, or atomic replacement.
@@ -212,6 +262,14 @@ tag, hosted attestation, and verification sequence.
 - Use GitHub [private vulnerability reporting](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/configure-vulnerability-reporting/configure-for-a-repository) for confidential reports.
 - Use GitHub [artifact attestations](https://docs.github.com/en/actions/concepts/security/artifact-attestations) for build provenance.
 - Follow the Go [module publication sequence](https://go.dev/doc/modules/publishing) for the public tag.
+- Use [Producing Open Source Software](https://producingoss.com/en/producingoss.html)
+  for project, governance, release, and succession practices.
+- Use the [GitHub Open Source Guides](https://opensource.guide/) for community
+  health and maintainer practices.
+- Review the OpenSSF [Concise Guide for Developing More Secure Software](https://github.com/ossf/wg-best-practices-os-developers/blob/main/docs/Concise-Guide-for-Developing-More-Secure-Software.md)
+  and [Concise Guide for Evaluating Open Source Software](https://github.com/ossf/wg-best-practices-os-developers/blob/main/docs/Concise-Guide-for-Evaluating-Open-Source-Software.md).
+- Map the secure-development lifecycle to the NIST
+  [Secure Software Development Framework](https://csrc.nist.gov/pubs/sp/800/218/final).
 
 ## Evaluation and privacy
 
@@ -220,7 +278,8 @@ The command sends no product telemetry. Keep that default for the public beta.
 Collect beta evidence through explicit, redacted reports. Record only the
 `wip` version, operating system, Git version, command outcome, and error code.
 Also record `ref_updated`, `intent_state`, and whether reconciliation was
-required.
+required. For initialization or archival recovery, record only the typed state
+and whether the exact receipt-based retry completed.
 
 Do not collect repository names, paths, file contents, commit messages,
 credentials, usernames, or remote addresses.

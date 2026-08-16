@@ -21,11 +21,17 @@ Two lanes can therefore capture disjoint staged paths in parallel. They do not
 commit directly to the same checked-out branch. Review and landing are separate
 operations.
 
+One repository can have only one coordination domain. Standalone state uses
+`<git-common-dir>/wip/v1`. Legacy Nicos Tools state uses
+`<git-common-dir>/ndev-wip/v1`. Both commands use one shared domain lock and
+stop with `COORDINATION_DOMAIN_CONFLICT` if the other domain exists.
+
 ## Requirements
 
 - Git 2.36 or newer.
 - Go 1.25 or newer to build from source.
-- A local filesystem with working advisory file locks.
+- A local filesystem with working advisory file locks and same-filesystem hard
+  links.
 
 ## Build locally
 
@@ -67,17 +73,38 @@ wip init
 
 The wizard does the following work:
 
-1. It inspects the repository and recommends `shared` or `worktree` mode.
+1. It checks the coordination domain and recommends `shared` or `worktree` mode.
 2. It asks for the agent, session, lane, base ref, and path claims.
-3. When you explicitly select one, it can create a detached linked worktree.
-4. When you explicitly agree, it can copy the current binary to
-   `~/.local/bin`.
-5. It creates the lane, claims the paths, writes a private profile, and checks
+3. It can create a detached linked worktree after you select that mode.
+4. It can copy the current binary to `~/.local/bin` after you approve the path.
+5. It can install the embedded portable skill in `~/.agents/skills`.
+6. It creates the lane, claims the paths, writes a private profile, and checks
    the staged diff.
 
-The installer never overwrites a different binary. The wizard does not change
-global Git configuration or install hooks. Existing repository hooks still run
-during capture.
+The staged-path read must succeed when the worktree exists. Git inspection
+errors stop setup and preserve its recovery receipt. Staged whitespace errors
+remain nonfatal, but the human and JSON results report them. A future worktree
+dry-run reports that its staged check did not run.
+
+The installers publish a complete file without overwriting an existing path.
+They never overwrite different content or follow a target symlink. A retry can
+finish a matching partial skill bundle after an interruption. The wizard does
+not change global Git configuration or install hooks. Existing repository hooks
+still run during capture.
+
+The wizard first validates and bootstraps the coordination domain. It then
+writes a durable initialization intent before it changes a worktree, lane,
+lease, profile, binary, or skill. Each completed step is idempotent. If setup
+stops, the error includes the intent path, completed steps, and an exact resume
+command. The command pins the absolute repository and worktree paths and the
+resolved base commit ID.
+
+An exact retry repeats the full canonical path claim. This action repairs an
+interruption between lease publication and the lane back-reference.
+
+`wip init` is the only command that can claim an uninitialized repository.
+All other commands inspect the state first. When no state exists, they do not
+create the public marker, state tree, or coordination lock.
 
 Use non-interactive setup for an agent:
 
@@ -90,7 +117,8 @@ wip --json --repo-dir /repo init \
   --path internal/parser \
   --path docs/parser.md \
   --non-interactive \
-  --no-install
+  --no-install \
+  --install-skill
 ```
 
 Create and initialize a linked worktree from the anchor checkout:
@@ -120,12 +148,17 @@ same index.
 
 ```text
 git add -- internal/parser docs/parser.md
+wip plan
 wip commit
 ```
 
-Interactive capture proposes split groups by the first path component and asks
-for one Conventional Commit message per group. No ref moves until every group,
-hook, diff test, and command in `verify` passes.
+`wip plan` is read-only. It groups paths at component boundaries and suggests
+one Conventional Commit prefix per group. The type is concrete only for clear
+documentation, dependency, CI, and test-only groups. Review semantic intent and
+dependency closure before you write the final plan.
+
+Interactive capture uses the same proposals and asks for one Conventional
+Commit message per group. No ref moves until all gates pass.
 
 Automation must supply a split plan or explicitly opt out:
 
@@ -163,11 +196,15 @@ messages, subjects longer than 72 characters, and `wip:` unless you pass
 
 ## Continue and finish
 
-Leases last 15 minutes. Renew them during long tasks:
+Leases last 15 minutes while the agent edits. Renew them between captures:
 
 ```text
 wip renew
 ```
+
+`wip commit` snapshots and renews the lane's complete active lease set before
+capture. It renews that same set in the background. The final publication check
+renews and compares the set again.
 
 Add another claim with:
 
@@ -190,12 +227,72 @@ wip release
 Release and abort both preserve the local agent ref. Neither command deletes
 commits, lands a branch, pushes a remote, or merges work.
 
+## Inspect and archive state
+
+Run a read-only state audit:
+
+```text
+wip doctor
+```
+
+The command checks bounded record sets, lane refs, leases, profiles, capture
+intents, and initialization intents. It does not create a state directory. It
+returns exit code 1 when a recovery or error finding needs operator action.
+
+Preview old released records:
+
+```text
+wip archive --older-than 720h
+```
+
+The preview returns an exact cutoff and plan digest. Reuse both values:
+
+```text
+wip archive \
+  --cutoff '<exact-preview-cutoff>' \
+  --plan-digest '<exact-preview-sha256>' \
+  --apply --yes
+```
+
+The store compares every reviewed candidate again while it holds the archive,
+lane, and lease-registry locks. It then moves records into a recoverable archive
+batch. The receipt binds each lane record and released lease to its candidate.
+Unexpected or cross-lane records stop the operation. Archival never deletes or
+moves lane refs or commits.
+
+If an apply stops after it returns a prepared receipt, resume only that receipt:
+
+```text
+wip archive --resume <archive-id> --apply --yes
+```
+
+If the process stops before it writes the receipt, rerun the same reviewed
+apply. The deterministic empty batch is safe to reuse. A batch with an
+unexpected record stops with `ARCHIVE_CONFLICT`.
+
+Restore one batch with:
+
+```text
+wip archive --restore <archive-id> --apply --yes
+```
+
+Restore writes a durable `restoring` state before it moves the first record. If
+restore stops, run the same restore command again. `wip doctor` reports the
+receipt until recovery completes.
+
 ## Important index behavior
 
 A successful capture leaves the source `HEAD`, worktree, and complete Git index
 unchanged. Captured entries therefore remain staged relative to the source
 branch. This is deliberate: `wip` cannot safely clear selected entries while an
 uncoordinated process can update the shared index.
+
+`wip` ignores inherited repository-local Git variables that can redirect or
+reinterpret the repository, common directory, worktree, namespace, refs,
+shallow boundary, configuration, or object storage. The canonical repository
+selected by `--repo-dir` or the current directory wins. It honors an inherited
+`GIT_INDEX_FILE` as the caller's active source index. Capture hooks receive the
+private candidate index instead.
 
 You can modify and stage a later version of the same leased path. The next
 capture compares that staged version with the current lane commit. Do not run a
@@ -236,6 +333,12 @@ archives and the human-gated tag procedure. The publication summary is in
 [docs/OSS-READINESS.md](docs/OSS-READINESS.md). The detailed proposal and
 evidence tracker are in
 [docs/OSS-PUBLIC-BETA.md](docs/OSS-PUBLIC-BETA.md).
+
+Project authority and succession are in [GOVERNANCE.md](GOVERNANCE.md).
+Current support and safe incident-reporting guidance are in
+[SUPPORT.md](SUPPORT.md). Security reports use [SECURITY.md](SECURITY.md).
+The [open source practice guide](docs/OSS-PRACTICE-GUIDE.md) maps official
+guidance to project rules and records when maintainers must review it again.
 
 ## License
 

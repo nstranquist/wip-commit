@@ -17,12 +17,29 @@ is proposed. It does not authorize publication.
 - SemVer beta version and changelog.
 - Standalone Go module and `wip` binary.
 - Interactive and non-interactive initialization.
+- Durable initialization receipts, complete no-overwrite first writes, and
+  resumable embedded-skill installation.
+- Writer-side byte bounds that prevent unreadable durable records.
 - Shared-checkout and linked-worktree modes.
+- One coordination-domain interlock for standalone and legacy installations.
+- Explicit initialization ownership; probes and other lane commands cannot
+  claim an uninitialized repository.
 - Exact staged-subset and all-or-nothing split capture.
+- Read-only component split proposals and split-plan automation defaults.
+- Automatic lease heartbeat and an exact final publication fence.
+- Random no-clobber lease creation and fail-closed partial-release recovery.
+- Exact init-claim repair and complete-registry renewal and release checks.
 - Durable crash recovery.
+- Bounded read-only state diagnosis.
+- Exact-plan, receipt-based archive, resume, and restore operations that
+  preserve refs and commits.
 - Strict JSON and Conventional Commit policy.
 - Threat model, architecture, error guide, security policy, and contribution
   guide.
+- Honest single-maintainer governance, succession expectations, and beta
+  support boundaries.
+- A maintained official-source register and an open source practice guide with
+  explicit review triggers.
 - Linux, macOS, and Windows CI definition.
 - Race-test CI definition.
 - Pinned golangci-lint CI definition.
@@ -37,6 +54,13 @@ is proposed. It does not authorize publication.
 - Tag-only artifact-attestation workflow with immutable action references.
 - State compatibility, upgrade, and downgrade policy.
 - Fail-closed tests for unsupported state directories and record schemas.
+- Symlink-escape and dual-domain creation-race tests.
+- Concurrent first-use directory and no-clobber publication tests.
+- Archive record-binding, partial-move, and receipt-free retry tests.
+- Failure-boundary tests for oversized records, Git inspection, late
+  heartbeats, orphaned lease links, and legacy preview state claims.
+- Canonical Git repository and object-store binding despite inherited routing
+  environment variables.
 
 ## Required before public beta publication
 
@@ -47,9 +71,11 @@ is proposed. It does not authorize publication.
    compilation is not a substitute for Windows runtime tests.
 4. Require pull-request review and passing CI on the default branch.
 5. Enable private vulnerability reporting and dependency alerts.
-6. Ask at least one independent user to test shared and worktree flows.
-7. Run a clean public-module installation smoke test.
-8. Create and push `v0.1.0-beta.1` only after every tracked public-beta gate
+6. Approve a Code of Conduct and configure confidential conduct reporting
+   before soliciting public contributions.
+7. Ask at least one independent user to test shared and worktree flows.
+8. Run a clean public-module installation smoke test.
+9. Create and push `v0.1.0-beta.1` only after every tracked public-beta gate
    passes. Check that the hosted release attestation succeeds.
 
 ## Required before a stable release
@@ -60,6 +86,10 @@ is proposed. It does not authorize publication.
 - A documented landing workflow or an explicit capture-only decision.
 - A tested migration command before the first state-schema change.
 - Measured use in real concurrent agent sessions.
+- A reviewed OpenSSF posture, an SBOM decision, and verified consumer-side
+  provenance.
+- Project-health evidence and a tested backup-administrator, transfer, or
+  archival path.
 - No unresolved data-loss or foreign-staged-content defects through a public
   beta period.
 

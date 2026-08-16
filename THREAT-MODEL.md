@@ -46,6 +46,19 @@ Path claims use portable Unicode case folding, NFC normalization, and component
 boundaries. A repository-wide lease lock serializes claim decisions. Active
 leases cannot overlap across lanes.
 
+The folded path key is idempotent, including Cherokee case pairs. Fuzz tests
+verify key stability, overlap symmetry, and coverage consistency.
+
+Capture renews its complete lease set before work starts. A heartbeat renews
+the set during long gates. The publication callback renews the same set while
+it holds the lease-registry lock. Each refresh also audits all active lease
+records and stops if persisted state contains a cross-lane overlap.
+
+Normal renewal and release also inspect the complete lease registry before a
+write. Release verifies lane ownership and both directions of every lease
+reference. It permits valid partial release so an interrupted release can
+finish.
+
 Capture reads exact stage-zero index entries for the planned paths into a
 private index. It does not use `git add` against the source worktree. A final
 digest check detects a selected staged entry that changed while the plan ran.
@@ -77,6 +90,10 @@ metadata advances. Intent files use mode `0600`, bounded strict JSON, a digest
 over immutable fields, file synchronization, and directory synchronization on
 Unix.
 
+The command encodes and bounds the complete intent before the ref update. A
+late heartbeat failure returns the applied receipt instead of reporting
+success. This receipt permits exact reconciliation after the ref moved.
+
 `wip reconcile` checks all immutable Git evidence before it advances metadata.
 
 ### Hooks
@@ -104,16 +121,78 @@ bounded process wait behavior.
 
 State readers require bounded regular non-symlink files, reject path replacement
 during reads, reject unknown JSON fields, and validate stored identities and
-canonical paths. Atomic replacement is used for state transitions. Windows uses
-`MoveFileEx` with replace and write-through flags.
+canonical paths. A first write creates and synchronizes a complete temporary
+file, then uses a same-filesystem hard link to publish it without overwrite.
+Atomic replacement is used for state transitions. Windows uses `MoveFileEx`
+with replace and write-through flags. Record writes stage temporary files in the
+store's `locks` directory, so an interrupted writer cannot add a foreign entry
+to a lane, lease, profile, intent, or archive batch directory.
+
+Each durable writer checks the final encoded size against its reader limit.
+The archive writer performs this check before it creates a new batch. Thus, a
+writer cannot publish a record that supported recovery commands cannot read.
+New records also reserve their largest supported lifecycle form. This check
+prevents a valid initial record from blocking a later completion or release.
+
+New lease records use cryptographically random identifiers and no-overwrite
+publication. Normal lane and lease scans reject unexpected record-directory
+entries. A partially released lane cannot claim, renew, or capture paths; only
+the idempotent release operation can finish that state transition.
+
+State-directory creation uses a filesystem root handle. The handle confines
+all paths to the Git common directory. The store rejects a symlink at `wip`,
+`v1`, or any required state subdirectory.
+
+Private-index directory creation uses a filesystem root handle for the checkout
+Git directory. It rejects a symlink at `wip` or `wip/indexes` before it writes a
+temporary index or hook snapshot.
+
+Profiles must match the authoritative lane manifest. Shell output uses explicit
+POSIX or PowerShell quoting. An invalid lane ID fails before path construction.
+
+Git commands remove inherited repository-local environment variables except
+the active source index. A caller cannot use routing, configuration, namespace,
+replacement, shallow-file, or object-storage variables to make `--repo-dir`
+inspect one checkout and write objects or refs through another. The caller's
+`GIT_INDEX_FILE` remains the active source index. Prepared hooks receive only
+the private candidate index for their Git operations.
+
+The public and legacy implementations use one domain lock. Public state and
+legacy `ndev-wip` state cannot start beside each other. Read-only legacy checks
+do not create a legacy state directory. Invalid legacy actions and queue
+previews also use inspection only. Only explicit legacy lane creation can claim
+the legacy domain.
 
 The store rejects unsupported state-directory and record-schema versions. It
 checks the directory version before it creates local state. This rule prevents
 an older binary from silently coordinating through a separate state version.
 
-`wip init --install` creates a new binary with exclusive file creation. It
-accepts an existing target only when the bytes match and the file is executable.
-It never replaces a different target.
+`wip init --install` synchronizes a complete temporary binary before a
+no-overwrite hard-link publication. It accepts an existing target only when the
+bytes match and the file is executable. It never replaces a different target.
+
+`wip init --install-skill` installs the embedded public skill as a complete
+directory. It rejects different files, extra files, and symlinks. A retry can
+complete a matching partial bundle. Temporary skill files stay in the parent
+skill directory, so interruption does not add a foreign entry to the bundle. A
+durable initialization intent records each completed setup step and pins the
+exact base commit and canonical paths. Domain validation and empty-store
+bootstrap occur before this intent. The intent precedes worktree, lane, lease,
+profile, binary, and skill changes. A per-intent lock serializes step updates,
+so concurrent exact retries cannot replace a longer completed-step prefix with
+a shorter one.
+
+An exact initialization retry repeats the complete canonical path claim. This
+action repairs a lease that was published before its lane back-reference. Git
+index inspection errors stop the transaction and return its recovery receipt.
+
+`wip doctor` reads bounded record sets and validates recovery state. `wip
+archive` requires an exact reviewed digest and compares complete candidate
+records under the archive, lane, and registry locks. The receipt binds every
+lane and released lease record to its candidate and rejects extra batch records.
+Archival moves the lane manifest last, preserves lane refs, and uses a durable
+receipt for explicit resume. Restore records a durable `restoring` state before
+its first move and can continue after an interruption.
 
 ## Residual risks
 
@@ -133,6 +212,10 @@ It never replaces a different target.
   Windows. File replacement uses the strongest practical write-through API.
 - Advisory locks can be unreliable on some network filesystems. Use a local
   filesystem for concurrent capture.
+- First-write publication needs same-filesystem hard links. An unsupported
+  filesystem returns an error without publishing a partial destination.
+- A hard process stop can leave a hidden complete temporary file. The file is
+  not a state record. Inspect unexpected files before you remove them.
 - Paths that are not valid UTF-8 are not supported by plans.
 - Leases use the host wall clock. Large clock changes can shorten or extend a
   lease.

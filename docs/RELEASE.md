@@ -22,6 +22,11 @@ the source commit, source timestamp, Go version, file sizes, and digests.
 
 ## Rehearse locally
 
+Review every release-triggered source in
+[OSS-PRACTICE-GUIDE.md](OSS-PRACTICE-GUIDE.md). Update
+`OSS-SOURCES.json` and the public-beta tracker when a source changes a project
+requirement.
+
 Use the same Go version that `go.mod` specifies. Start from a clean checkout at
 the intended release commit. Run all local gates:
 

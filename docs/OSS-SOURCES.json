@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "reviewed_on": "2026-08-16",
+  "sources": [
+    {
+      "id": "producing-open-source-software",
+      "title": "Producing Open Source Software",
+      "authority": "official-book",
+      "url": "https://producingoss.com/en/producingoss.html",
+      "reviewed_revision": "2.3315, 2026-05-20",
+      "use_for": [
+        "project mission and truthful status",
+        "governance and decision process",
+        "community infrastructure and succession",
+        "release and security practices"
+      ]
+    },
+    {
+      "id": "github-open-source-guides",
+      "title": "GitHub Open Source Guides",
+      "authority": "official-guide",
+      "url": "https://opensource.guide/",
+      "repository_url": "https://github.com/github/opensource.guide",
+      "reviewed_revision": "8a7589ab8fe31841a2de3be6f77e5e011a5e1533",
+      "use_for": [
+        "community profile files",
+        "maintainer roles and leadership",
+        "contributor experience",
+        "project-health measurements"
+      ]
+    },
+    {
+      "id": "openssf-secure-development",
+      "title": "OpenSSF Concise Guide for Developing More Secure Software",
+      "authority": "official-guide",
+      "url": "https://github.com/ossf/wg-best-practices-os-developers/blob/main/docs/Concise-Guide-for-Developing-More-Secure-Software.md",
+      "repository_url": "https://github.com/ossf/wg-best-practices-os-developers",
+      "reviewed_revision": "429544ce24fa3351c193190ef563377f61ce8aa3",
+      "use_for": [
+        "secure development controls",
+        "dependency and vulnerability practices",
+        "negative testing and review",
+        "release integrity and supply-chain evidence"
+      ]
+    },
+    {
+      "id": "openssf-evaluation",
+      "title": "OpenSSF Concise Guide for Evaluating Open Source Software",
+      "authority": "official-guide",
+      "url": "https://github.com/ossf/wg-best-practices-os-developers/blob/main/docs/Concise-Guide-for-Evaluating-Open-Source-Software.md",
+      "repository_url": "https://github.com/ossf/wg-best-practices-os-developers",
+      "reviewed_revision": "429544ce24fa3351c193190ef563377f61ce8aa3",
+      "use_for": [
+        "dependency selection",
+        "maintenance and adoption evidence",
+        "license and vulnerability review",
+        "secure-use decisions"
+      ]
+    },
+    {
+      "id": "nist-ssdf",
+      "title": "NIST Secure Software Development Framework",
+      "authority": "government-standard",
+      "url": "https://csrc.nist.gov/pubs/sp/800/218/final",
+      "reviewed_revision": "NIST SP 800-218",
+      "use_for": [
+        "security requirements",
+        "toolchain and provenance protection",
+        "well-secured software practices",
+        "vulnerability response and recurrence prevention"
+      ]
+    },
+    {
+      "id": "pro-git-environment",
+      "title": "Pro Git: Environment Variables",
+      "authority": "official-git-book",
+      "url": "https://git-scm.com/book/en/v2/Git-Internals-Environment-Variables",
+      "reviewed_revision": "online second edition, reviewed 2026-08-16",
+      "use_for": [
+        "repository and worktree selection",
+        "index and object-store behavior",
+        "Git configuration boundaries",
+        "subprocess environment design"
+      ]
+    }
+  ],
+  "refresh_triggers": [
+    "before the first public repository push",
+    "before each release candidate",
+    "before a stable release",
+    "before a state-format or trust-boundary change",
+    "before adding a supported platform",
+    "after a security incident",
+    "before a maintainer or repository-administrator transfer"
+  ]
+}
