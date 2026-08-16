@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -174,6 +175,47 @@ func TestCommandFailureOutputIncludesBothStreams(t *testing.T) {
 	}
 	if got := commandFailureOutput("", ""); got != "no diagnostic output" {
 		t.Fatalf("empty failure output = %q", got)
+	}
+}
+
+func TestReceiptSchemaRequiresUTCDateTimeSyntax(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "docs", "PUBLICATION-HANDOFF.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Properties map[string]struct {
+			Format  string `json:"format"`
+			Pattern string `json:"pattern"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(body, &document); err != nil {
+		t.Fatal(err)
+	}
+	generated, ok := document.Properties["generated_at"]
+	if !ok || generated.Format != "date-time" || generated.Pattern == "" {
+		t.Fatalf("generated_at schema = %#v", generated)
+	}
+	pattern, err := regexp.Compile(generated.Pattern)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{
+		"2026-08-16T22:47:35Z",
+		"2026-08-16T22:47:35.123456789Z",
+	} {
+		if !pattern.MatchString(value) {
+			t.Errorf("valid UTC timestamp %q did not match", value)
+		}
+	}
+	for _, value := range []string{
+		"not-a-time",
+		"2026-08-16T22:47:35-05:00",
+		"2026-08-16T22:47:35.1234567890Z",
+	} {
+		if pattern.MatchString(value) {
+			t.Errorf("invalid UTC timestamp %q matched", value)
+		}
 	}
 }
 
