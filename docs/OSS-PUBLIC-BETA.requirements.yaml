@@ -376,7 +376,7 @@
       "human_gate": false,
       "acceptance": "A source-current binary initializes a lane on its own dirty shared checkout. Failed verification preserves HEAD, index, and ref. A reviewed plan produces a linear split chain whose final tree equals the staged tree, and an exact repeat publishes nothing.",
       "evidence": [
-        {"kind": "receipt", "value": "docs/DOGFOOD.md records init-64f1850d3bf9c06fb9d818a2 and plan-146eb28105eccd3b0a67f90f with safe VERIFY_FAILED cases, four applied commits, final-tree equality, byte-equal index evidence, and EMPTY_COMMIT_GROUP duplicate refusal.", "observed_on": "2026-08-16"}
+        {"kind": "receipt", "value": "docs/DOGFOOD.md records init-64f1850d3bf9c06fb9d818a2, both applied plans, seven linear commits, safe VERIFY_FAILED cases, final-tree equality, byte-equal index evidence, EMPTY_COMMIT_GROUP duplicate refusal, and the applied and restored archive receipt.", "observed_on": "2026-08-16"}
       ]
     },
     {
