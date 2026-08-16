@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -246,6 +247,35 @@ func TestSourceVersionAndExclusiveFileCreation(t *testing.T) {
 	}
 }
 
+func TestRequireCleanFailsClosed(t *testing.T) {
+	repository := t.TempDir()
+	releaseGit(t, repository, "init", "-b", "main")
+	releaseGit(t, repository, "config", "user.name", "Release Test")
+	releaseGit(t, repository, "config", "user.email", "release@example.invalid")
+	tracked := filepath.Join(repository, "tracked.txt")
+	if err := os.WriteFile(tracked, []byte("base\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	releaseGit(t, repository, "add", "tracked.txt")
+	releaseGit(t, repository, "commit", "-m", "test: create clean release fixture")
+	if err := requireClean(repository); err != nil {
+		t.Fatalf("clean repository rejected: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repository, "untracked.txt"), []byte("dirty\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := "source checkout is not clean; commit the reviewed release inputs first"
+	if err := requireClean(repository); err == nil || err.Error() != want {
+		t.Fatalf("dirty repository error = %v, want %q", err, want)
+	}
+	if err := requireClean(t.TempDir()); err == nil {
+		t.Fatal("non-repository passed the clean-source gate")
+	}
+	if _, err := gitOutput(filepath.Join(repository, "missing"), "status", "--porcelain=v1"); err == nil {
+		t.Fatal("Git command in a missing directory returned success")
+	}
+}
+
 func assertTarEntry(t *testing.T, reader *tar.Reader, name string, mode int64, body string) {
 	t.Helper()
 	header, err := reader.Next()
@@ -311,5 +341,14 @@ func assertEqualDirectoryFiles(t *testing.T, left, right string) {
 		if !bytes.Equal(leftBody, rightBody) {
 			t.Errorf("release file %s differs", name)
 		}
+	}
+}
+
+func releaseGit(t *testing.T, directory string, args ...string) {
+	t.Helper()
+	command := exec.Command("git", args...)
+	command.Dir = directory
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, output)
 	}
 }
