@@ -427,6 +427,79 @@ func TestIntentDigestAndCompletedRefAreRevalidated(t *testing.T) {
 	}
 }
 
+func TestValidateAppliedChecksGitObjectsAgainstReceipt(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Intent, string)
+	}{
+		{
+			name: "message",
+			mutate: func(intent *Intent, _ string) {
+				intent.Commits[0].Message = "fix(receipt): substitute another valid message"
+			},
+		},
+		{
+			name: "tree",
+			mutate: func(intent *Intent, oldTree string) {
+				intent.Commits[0].Tree = oldTree
+				intent.FinalTree = oldTree
+			},
+		},
+		{
+			name: "changed path set",
+			mutate: func(intent *Intent, _ string) {
+				intent.Commits[0].ChangedPaths = []string{"core.txt"}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repo := engineTestRepo(t)
+			write(t, repo.Root, "core.txt", "new core\n")
+			write(t, repo.Root, "docs.txt", "new docs\n")
+			engineGit(t, repo.Root, "add", "core.txt", "docs.txt")
+			head := engineGit(t, repo.Root, "rev-parse", "HEAD")
+			oldTree := engineGit(t, repo.Root, "show", "-s", "--format=%T", head)
+			target := "refs/heads/wip/agent/git-evidence"
+			engineGit(t, repo.Root, "update-ref", target, head, "")
+			result, err := Run(context.Background(), Options{
+				Repo: repo, TargetRef: target, ExpectedRef: head, ExpectedSourceHead: head,
+				AllowedPaths: []string{"core.txt", "docs.txt"},
+				Groups: []Group{{
+					Message: "fix(receipt): verify immutable Git evidence",
+					Files:   []string{"core.txt", "docs.txt"},
+				}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, clean, err := ValidateApplied(context.Background(), repo, result.PlanID, result.PlanDigest, target, head); err != nil || clean {
+				t.Fatalf("valid applied receipt clean=%v err=%v", clean, err)
+			}
+
+			intent, path, err := LoadIntent(repo, result.PlanID, result.PlanDigest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			test.mutate(&intent, oldTree)
+			intent.PlanDigest, err = digestIntent(intent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := json.MarshalIndent(intent, "", "  ")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, append(body, '\n'), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := ValidateApplied(context.Background(), repo, result.PlanID, intent.PlanDigest, target, head); fail.Code(err) != "CAPTURE_RECEIPT_MISMATCH" {
+				t.Fatalf("mismatched %s receipt error = %v (%s)", test.name, err, fail.Code(err))
+			}
+		})
+	}
+}
+
 func TestFutureIntentSchemaRequiresMigration(t *testing.T) {
 	repo := engineTestRepo(t)
 	write(t, repo.Root, "core.txt", "new core\n")
