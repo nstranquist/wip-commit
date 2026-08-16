@@ -75,6 +75,12 @@ current lane commit as its parent. A later group reports an empty parent because
 its preceding commit does not exist. The ordered group list defines the planned
 dependency chain.
 
+Building candidates, including during a dry-run, can add tree objects to the
+Git object database. A failed non-dry-run can also leave unreachable commit
+objects because publication uses one final ref update. These objects are not
+published history. Normal Git garbage collection can remove them later. `wip`
+does not prune or delete Git objects as a recovery action.
+
 The split planner compares the active source index with the lane's current
 commit. It does not propose staged entries that already match the lane tree.
 
