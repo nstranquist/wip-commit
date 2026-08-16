@@ -74,6 +74,18 @@ func TestNonInteractiveInitIsIdempotentAndSingleCaptureIsExact(t *testing.T) {
 	}
 }
 
+func TestIdentityEnvironmentDefaultsRemainSupported(t *testing.T) {
+	directory := cliTestRepo(t)
+	initializeCLI(t, directory, "environment-defaults", "core.txt")
+	t.Setenv("WIP_LANE", "environment-defaults")
+	t.Setenv("WIP_AGENT", "agent")
+	t.Setenv("WIP_SESSION", "session")
+	result := runCLIWithAmbientIdentity(t, []string{"--json", "--repo-dir", directory, "status"}, "")
+	if result.code != 0 || !result.envelope.OK {
+		t.Fatalf("environment identity status = %#v stderr=%s", result.envelope, result.stderr)
+	}
+}
+
 func TestConcurrentSharedLanesCaptureDisjointPaths(t *testing.T) {
 	directory := cliTestRepo(t)
 	writeCLI(t, directory, "core.txt", "new core\n")
@@ -1335,6 +1347,16 @@ type cliRun struct {
 }
 
 func runCLI(t *testing.T, args []string, input string) cliRun {
+	t.Helper()
+	// The in-process CLI reads these defaults from the process environment.
+	// Keep a maintainer's active capture identity out of disposable fixtures.
+	for _, name := range []string{"WIP_LANE", "WIP_AGENT", "WIP_SESSION"} {
+		t.Setenv(name, "")
+	}
+	return runCLIWithAmbientIdentity(t, args, input)
+}
+
+func runCLIWithAmbientIdentity(t *testing.T, args []string, input string) cliRun {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
 	code := run(context.Background(), args, strings.NewReader(input), &stdout, &stderr)
