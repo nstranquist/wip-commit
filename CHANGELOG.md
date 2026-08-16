@@ -34,6 +34,9 @@ Planned first prerelease: `v0.1.0-beta.1`.
 
 - Unsupported state-directory, lane, lease, intent, and profile schemas now
   fail with `MIGRATION_REQUIRED` before the command changes state.
+- The minimum build toolchain is Go 1.25.12. This patched floor excludes
+  GO-2026-4602, GO-2026-4864, and GO-2026-4970 from reachable standard-library
+  paths found by the release vulnerability scan.
 
 ### Known limitations
 

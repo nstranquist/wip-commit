@@ -30,7 +30,7 @@ stop with `COORDINATION_DOMAIN_CONFLICT` if the other domain exists.
 ## Requirements
 
 - Git 2.36 or newer.
-- Go 1.25 or newer to build from source.
+- Go 1.25.12 or newer to build from source.
 - A local filesystem with working advisory file locks and same-filesystem hard
   links.
 
