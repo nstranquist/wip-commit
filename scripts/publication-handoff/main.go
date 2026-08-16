@@ -31,6 +31,7 @@ const (
 	maximumPathsBytes         = 64 << 10
 	maximumTrackerBytes       = 1 << 20
 	maximumModuleBytes        = 64 << 10
+	maximumCommandOutputBytes = 1 << 20
 	githubCommandTimeout      = 30 * time.Second
 	secretScanTimeout         = 5 * time.Minute
 )
@@ -116,6 +117,13 @@ type requirementTracker struct {
 	} `json:"requirements"`
 }
 
+type externalRunner func(context.Context, time.Duration, string, string, ...string) (string, string, int, error)
+
+type dependencies struct {
+	external externalRunner
+	now      func() time.Time
+}
+
 func main() {
 	if err := run(context.Background(), os.Args[1:], os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "publication-handoff:", err)
@@ -124,6 +132,16 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, stdout io.Writer) error {
+	return runWithDependencies(ctx, args, stdout, dependencies{
+		external: externalCommandWithTimeout,
+		now:      time.Now,
+	})
+}
+
+func runWithDependencies(ctx context.Context, args []string, stdout io.Writer, deps dependencies) error {
+	if deps.external == nil || deps.now == nil {
+		return errors.New("publication dependencies are incomplete")
+	}
 	flags := flag.NewFlagSet("publication-handoff", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	repoDir := flags.String("repo-dir", ".", "candidate checkout")
@@ -169,17 +187,17 @@ func run(ctx context.Context, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	githubState, err := collectGitHubEvidence(ctx, repo.Root, *target, gitState.HistoryEmails)
+	githubState, err := collectGitHubEvidence(ctx, repo.Root, *target, gitState.HistoryEmails, deps.external)
 	if err != nil {
 		return err
 	}
-	if err := runSecretScans(ctx, repo.Root); err != nil {
+	if err := runSecretScans(ctx, repo.Root, deps.external); err != nil {
 		return err
 	}
 
 	result := receipt{
 		SchemaVersion:      receiptSchemaVersion,
-		GeneratedAt:        time.Now().UTC(),
+		GeneratedAt:        deps.now().UTC(),
 		TargetRepository:   *target,
 		TargetVisibility:   "public",
 		DefaultBranch:      "main",
@@ -417,16 +435,16 @@ func loadOwnerApproval(path, expectedReference string) (ownerApproval, error) {
 	return ownerApproval{}, errors.New("OSS-001 is missing")
 }
 
-func collectGitHubEvidence(ctx context.Context, directory, target string, authorEmails []string) (githubEvidence, error) {
+func collectGitHubEvidence(ctx context.Context, directory, target string, historyEmails []string, runExternal externalRunner) (githubEvidence, error) {
 	owner := strings.SplitN(target, "/", 2)[0]
-	login, _, code, err := externalCommandWithTimeout(ctx, githubCommandTimeout, directory, "gh", "api", "user", "--jq", ".login")
+	login, _, code, err := runExternal(ctx, githubCommandTimeout, directory, "gh", "api", "user", "--jq", ".login")
 	if err != nil {
 		return githubEvidence{}, err
 	}
 	if code != 0 || strings.TrimSpace(login) != owner {
 		return githubEvidence{}, errors.New("authenticated GitHub account does not match the target owner")
 	}
-	publicEmail, _, code, err := externalCommandWithTimeout(ctx, githubCommandTimeout, directory, "gh", "api", "users/"+owner, "--jq", ".email")
+	publicEmail, _, code, err := runExternal(ctx, githubCommandTimeout, directory, "gh", "api", "users/"+owner, "--jq", ".email")
 	publicEmail = strings.TrimSpace(publicEmail)
 	if err != nil {
 		return githubEvidence{}, err
@@ -434,12 +452,12 @@ func collectGitHubEvidence(ctx context.Context, directory, target string, author
 	if code != 0 || publicEmail == "" || publicEmail == "null" {
 		return githubEvidence{}, errors.New("target owner's public GitHub email is unavailable")
 	}
-	for _, email := range authorEmails {
+	for _, email := range historyEmails {
 		if !strings.EqualFold(strings.TrimSpace(email), strings.TrimSpace(publicEmail)) {
-			return githubEvidence{}, errors.New("candidate author identity does not match the owner's public GitHub profile")
+			return githubEvidence{}, errors.New("candidate history identity does not match the owner's public GitHub profile")
 		}
 	}
-	_, stderr, code, err := externalCommandWithTimeout(ctx, githubCommandTimeout, directory, "gh", "api", "repos/"+target)
+	_, stderr, code, err := runExternal(ctx, githubCommandTimeout, directory, "gh", "api", "repos/"+target)
 	if err != nil {
 		return githubEvidence{}, err
 	}
@@ -452,12 +470,12 @@ func collectGitHubEvidence(ctx context.Context, directory, target string, author
 	return githubEvidence{AuthenticatedOwner: true, TargetRepositoryExists: false, PublicAuthorIdentityMatch: true}, nil
 }
 
-func runSecretScans(ctx context.Context, directory string) error {
+func runSecretScans(ctx context.Context, directory string, runExternal externalRunner) error {
 	for _, args := range [][]string{
 		{"git", "--redact", "--exit-code", "1", "."},
 		{"dir", "--redact", "--exit-code", "1", "."},
 	} {
-		stdout, stderr, code, err := externalCommandWithTimeout(ctx, secretScanTimeout, directory, "gitleaks", args...)
+		stdout, stderr, code, err := runExternal(ctx, secretScanTimeout, directory, "gitleaks", args...)
 		if err != nil {
 			return err
 		}
@@ -496,7 +514,8 @@ func externalCommand(ctx context.Context, directory, name string, args ...string
 	command := exec.CommandContext(ctx, name, args...)
 	command.Dir = directory
 	command.Env = gitx.Environment(nil)
-	var stdout, stderr bytes.Buffer
+	stdout := newBoundedOutput(maximumCommandOutputBytes)
+	stderr := newBoundedOutput(maximumCommandOutputBytes)
 	command.Stdout, command.Stderr = &stdout, &stderr
 	err := command.Run()
 	if ctx.Err() != nil {
@@ -510,6 +529,36 @@ func externalCommand(ctx context.Context, directory, name string, args ...string
 		return stdout.String(), stderr.String(), exitError.ExitCode(), nil
 	}
 	return stdout.String(), stderr.String(), -1, fmt.Errorf("run %s: %w", name, err)
+}
+
+type boundedOutput struct {
+	buffer    bytes.Buffer
+	remaining int
+	truncated bool
+}
+
+func newBoundedOutput(maximum int) boundedOutput {
+	return boundedOutput{remaining: maximum}
+}
+
+func (output *boundedOutput) Write(value []byte) (int, error) {
+	length := len(value)
+	writeLength := min(output.remaining, length)
+	if writeLength > 0 {
+		_, _ = output.buffer.Write(value[:writeLength])
+		output.remaining -= writeLength
+	}
+	if writeLength < length {
+		output.truncated = true
+	}
+	return length, nil
+}
+
+func (output *boundedOutput) String() string {
+	if output.truncated {
+		return output.buffer.String() + "\n[output truncated]"
+	}
+	return output.buffer.String()
 }
 
 func writeReceipt(root, name string, value receipt) error {

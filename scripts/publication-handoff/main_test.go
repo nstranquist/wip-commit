@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -178,6 +182,23 @@ func TestCommandFailureOutputIncludesBothStreams(t *testing.T) {
 	}
 }
 
+func TestBoundedOutputCapsDiagnosticsWithoutShortWrite(t *testing.T) {
+	output := newBoundedOutput(4)
+	written, err := output.Write([]byte("abcdef"))
+	if err != nil || written != 6 {
+		t.Fatalf("write = %d, %v", written, err)
+	}
+	if got := output.String(); got != "abcd\n[output truncated]" {
+		t.Fatalf("bounded output = %q", got)
+	}
+	exact := newBoundedOutput(4)
+	_, _ = exact.Write([]byte("ab"))
+	_, _ = exact.Write([]byte("cd"))
+	if got := exact.String(); got != "abcd" {
+		t.Fatalf("exact bounded output = %q", got)
+	}
+}
+
 func TestReceiptSchemaRequiresUTCDateTimeSyntax(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", "docs", "PUBLICATION-HANDOFF.schema.json"))
 	if err != nil {
@@ -242,6 +263,105 @@ func TestWriteReceiptRefusesCheckoutAndOverwrite(t *testing.T) {
 	}
 }
 
+func TestRunWritesBoundReceiptWithDeterministicExternalEvidence(t *testing.T) {
+	repo, bootstrap := publicationCandidate(t)
+	out := filepath.Join(t.TempDir(), "receipt.json")
+	fixed := time.Date(2026, time.August, 16, 22, 55, 0, 123456789, time.UTC)
+	var stdout bytes.Buffer
+	err := runWithDependencies(context.Background(), []string{
+		"--repo-dir", repo.Root,
+		"--target", approvedTarget,
+		"--bootstrap", bootstrap,
+		"--paths-file", "docs/paths.txt",
+		"--out", out,
+	}, &stdout, dependencies{
+		external: publicationExternalFixture,
+		now:      func() time.Time { return fixed },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		OK              bool   `json:"ok"`
+		CandidateCommit string `json:"candidate_commit"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if !envelope.OK || envelope.CandidateCommit == "" {
+		t.Fatalf("stdout envelope = %#v", envelope)
+	}
+	body, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got receipt
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.GeneratedAt.Equal(fixed) || got.Candidate.Commit != envelope.CandidateCommit || got.Candidate.CommitCount != 1 {
+		t.Fatalf("receipt = %#v", got)
+	}
+	if !got.GitHub.AuthenticatedOwner || got.GitHub.TargetRepositoryExists || !got.GitHub.PublicAuthorIdentityMatch {
+		t.Fatalf("GitHub evidence = %#v", got.GitHub)
+	}
+	if got.Local.HistorySecretScan != "passed" || got.Local.WorktreeSecretScan != "passed" || got.Local.ObjectIntegrityCheck != "passed" {
+		t.Fatalf("local evidence = %#v", got.Local)
+	}
+	info, err := os.Stat(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("receipt mode = %v", info.Mode())
+	}
+}
+
+func TestRunRejectsIncompleteDependencies(t *testing.T) {
+	if err := runWithDependencies(context.Background(), nil, io.Discard, dependencies{}); err == nil || !strings.Contains(err.Error(), "dependencies") {
+		t.Fatalf("incomplete dependency error = %v", err)
+	}
+}
+
+func TestExternalCommandWithTimeout(t *testing.T) {
+	t.Setenv("GO_WANT_PUBLICATION_HELPER", "1")
+	arguments := func(mode string) []string {
+		return []string{"-test.run=^TestPublicationExternalHelperProcess$", "--", mode}
+	}
+	stdout, stderr, code, err := externalCommandWithTimeout(context.Background(), 2*time.Second, t.TempDir(), os.Args[0], arguments("success")...)
+	if err != nil || code != 0 || stdout != "stdout" || stderr != "stderr" {
+		t.Fatalf("success = stdout %q, stderr %q, code %d, err %v", stdout, stderr, code, err)
+	}
+	_, _, code, err = externalCommandWithTimeout(context.Background(), 2*time.Second, t.TempDir(), os.Args[0], arguments("failure")...)
+	if err != nil || code != 7 {
+		t.Fatalf("failure = code %d, err %v", code, err)
+	}
+	_, _, code, err = externalCommandWithTimeout(context.Background(), 50*time.Millisecond, t.TempDir(), os.Args[0], arguments("timeout")...)
+	if err == nil || code != -1 || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("timeout = code %d, err %v", code, err)
+	}
+}
+
+func TestPublicationExternalHelperProcess(t *testing.T) {
+	if os.Getenv("GO_WANT_PUBLICATION_HELPER") != "1" {
+		return
+	}
+	mode := os.Args[len(os.Args)-1]
+	switch mode {
+	case "success":
+		_, _ = fmt.Fprint(os.Stdout, "stdout")
+		_, _ = fmt.Fprint(os.Stderr, "stderr")
+		os.Exit(0)
+	case "failure":
+		os.Exit(7)
+	case "timeout":
+		time.Sleep(10 * time.Second)
+		os.Exit(0)
+	default:
+		os.Exit(8)
+	}
+}
+
 func publicationCandidate(t *testing.T) (gitx.Repo, string) {
 	t.Helper()
 	repo, bootstrap := publicationRepo(t)
@@ -258,13 +378,32 @@ func publicationRepo(t *testing.T) (gitx.Repo, string) {
 	publicationGit(t, directory, "config", "user.name", "Public Author")
 	publicationGit(t, directory, "config", "user.email", "public@example.invalid")
 	writePublicationFile(t, directory, "README.md", "base\n")
-	publicationGit(t, directory, "add", "README.md")
+	writePublicationFile(t, directory, "go.mod", "module github.com/nstranquist/wip-commit\n\ngo 1.25.0\n")
+	writePublicationFile(t, directory, "docs/paths.txt", "docs/handoff.md\n")
+	writePublicationFile(t, directory, "docs/OSS-PUBLIC-BETA.requirements.yaml", `{"requirements":[{"id":"OSS-001","status":"verified","human_gate":false,"evidence":[{"kind":"owner-approval","value":"owner-session-2026-08-16"}]}]}`+"\n")
+	publicationGit(t, directory, "add", "README.md", "go.mod", "docs/paths.txt", "docs/OSS-PUBLIC-BETA.requirements.yaml")
 	publicationGit(t, directory, "commit", "-m", "chore: create fixture")
 	repo, err := gitx.Discover(context.Background(), directory)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return repo, publicationGit(t, directory, "rev-parse", "HEAD")
+}
+
+func publicationExternalFixture(_ context.Context, _ time.Duration, _ string, name string, args ...string) (string, string, int, error) {
+	command := name + " " + strings.Join(args, " ")
+	switch command {
+	case "gh api user --jq .login":
+		return "nstranquist\n", "", 0, nil
+	case "gh api users/nstranquist --jq .email":
+		return "public@example.invalid\n", "", 0, nil
+	case "gh api repos/nstranquist/wip-commit":
+		return "", "gh: Not Found (HTTP 404)\n", 1, nil
+	case "gitleaks git --redact --exit-code 1 .", "gitleaks dir --redact --exit-code 1 .":
+		return "", "", 0, nil
+	default:
+		return "", "", -1, fmt.Errorf("unexpected external command %q", command)
+	}
 }
 
 func writePublicationFile(t *testing.T, root, name, body string) {
