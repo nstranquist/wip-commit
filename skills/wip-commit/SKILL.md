@@ -12,13 +12,17 @@ unchanged.
 ## Inspect before changing state
 
 1. Read the repository's agent instructions.
-2. Run `git status --short --branch` and `git diff --cached --name-only`.
+2. Run `git status --short --branch` and
+   `git diff --cached --no-renames --name-only -z`. Parse the second command as
+   NUL-delimited paths. Do not split its output on whitespace or newlines.
 3. If a merge, rebase, cherry-pick, or revert is in progress, stop. Ask the
    operator to finish or cancel that Git operation.
 4. Identify the exact paths owned by this task. Do not claim or stage a broad
    directory. When another agent can change a child path, use a narrower claim.
 5. Run `wip version`. If the command is absent, build or install it by using
    this repository's documented method.
+6. Run `wip --json doctor`. If it reports another coordination domain, stop.
+   Preserve both state roots and select one domain before setup.
 
 Never stash, reset, restore, clean, merge, push, or force-update a ref. Do not
 delete another lane, worktree, lock, profile, intent, or receipt.
@@ -30,6 +34,13 @@ For an interactive setup, run:
 ```text
 wip init
 ```
+
+The wizard can install the binary and this embedded portable skill. After it
+validates and bootstraps the coordination domain, it writes a durable
+initialization intent before worktree, lane, lease, profile, binary, or skill
+changes. If setup stops, use the reported resume command. It pins the absolute
+repository and worktree paths and the exact base commit. A matching partial
+skill installation is resumable.
 
 When agents edit the same checkout, accept the recommended `shared` mode. When
 the task has a dedicated linked worktree, use `worktree` mode. Both modes use
@@ -46,7 +57,8 @@ wip --json init \
   --session <session-id> \
   --path <owned-path> \
   --non-interactive \
-  --no-install
+  --no-install \
+  --no-install-skill
 ```
 
 Repeat `--path` for each disjoint claim. If `PATH_LEASE_CONFLICT` occurs, do
@@ -72,6 +84,10 @@ git add -- <owned-path>
 Inspect the staged names and diff before capture. Foreign staged entries can
 remain in the source index.
 
+Run `wip --json plan` for a read-only component split proposal. Review each
+group for semantic intent and dependency closure. The proposed prefix is a
+naming hint, not a commit message.
+
 Use split commits by default. Interactive work can run `wip commit` and accept
 or refine the proposed groups. Automation must use a reviewed JSON plan:
 
@@ -85,8 +101,10 @@ When one commit is a deliberate, coherent unit, use `--single --message`.
 Read [references/automation.md](references/automation.md) before an automated
 capture.
 
-For long work, run `wip renew` before the 15-minute lease expires. Use
-`wip claim --path <path>` before staging a newly owned path.
+For long editing work, run `wip renew` before the 15-minute lease expires. Use
+`wip claim --path <path>` before staging a newly owned path. `wip commit`
+snapshots and renews the lane's complete active lease set during long hooks and
+verification commands.
 
 ## Check the result
 
@@ -117,3 +135,7 @@ wip release
 Release removes the active coordination claim and preserves the lane ref and
 commits. It does not land, merge, or push them. Hand the exact ref and commit
 to the repository's separate review and landing process.
+
+Run `wip doctor` before you archive old state. Use `wip archive` without
+`--apply` first. Reuse the exact cutoff and plan digest only after review. If
+apply returns a prepared receipt, use its exact ID with `wip archive --resume`.
