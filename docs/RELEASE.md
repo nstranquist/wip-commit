@@ -28,22 +28,30 @@ Review every release-triggered source in
 `OSS-SOURCES.json` and the public-beta tracker when a source changes a project
 requirement.
 
-Use the same Go version that `go.mod` specifies. Start from a clean checkout at
-the intended release commit. Run all local gates:
+Use the exact minimum Go version that `go.mod` specifies. A clean scan from a
+newer host toolchain does not prove that the minimum toolchain is safe. Start
+from a clean checkout at the intended release commit. Confirm the selected
+version and run all local gates:
 
 ```text
-go mod verify
-go test -count=1 ./...
-go test -race -count=3 ./...
-go vet ./...
+GOTOOLCHAIN=go1.25.12 GOWORK=off go version
+GOTOOLCHAIN=go1.25.12 GOWORK=off go mod verify
+GOTOOLCHAIN=go1.25.12 GOWORK=off go test -count=1 ./...
+GOTOOLCHAIN=go1.25.12 GOWORK=off go test -race -count=3 ./...
+GOTOOLCHAIN=go1.25.12 GOWORK=off go vet ./...
+GOTOOLCHAIN=go1.25.12 GOWORK=off go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 actionlint
 ```
+
+Stop if `govulncheck` finds a reachable standard-library vulnerability. Raise
+the `go` directive to a fixed patch release, then repeat every gate on the new
+candidate.
 
 Choose a new output path. The builder refuses an existing path and a dirty
 checkout.
 
 ```text
-go run ./scripts/release \
+GOTOOLCHAIN=go1.25.12 GOWORK=off go run ./scripts/release \
   --version v0.1.0-beta.1 \
   --out dist
 ```

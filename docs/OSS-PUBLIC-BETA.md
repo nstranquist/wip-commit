@@ -82,6 +82,8 @@ The owner-controlled repository work is complete. The checkout now contains:
   unsupported state.
 - failure-boundary tests for state-directory, lane, lease, intent, and profile
   versions.
+- an exact minimum Go 1.25.12 gate that excludes reachable standard-library
+  vulnerabilities found in Go 1.25.0.
 
 Two clean six-target rehearsals produced equal directory trees. Every recorded
 archive checksum passed, and the native archive reported the target version.
@@ -224,21 +226,26 @@ defective, publish a new beta tag.
 
 ## Local gate
 
-Run this gate from the standalone repository:
+Run this gate from the standalone repository. Keep `GOTOOLCHAIN` equal to the
+exact minimum in `go.mod`:
 
 ```text
-GOWORK=off go mod tidy -diff
-GOWORK=off go mod verify
-GOWORK=off go test -count=1 ./...
-GOWORK=off go test -race -count=3 ./...
-GOWORK=off go vet ./...
+GOTOOLCHAIN=go1.25.12 GOWORK=off go mod tidy -diff
+GOTOOLCHAIN=go1.25.12 GOWORK=off go mod verify
+GOTOOLCHAIN=go1.25.12 GOWORK=off go test -count=1 ./...
+GOTOOLCHAIN=go1.25.12 GOWORK=off go test -race -count=3 ./...
+GOTOOLCHAIN=go1.25.12 GOWORK=off go vet ./...
 golangci-lint run ./...
-GOWORK=off go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 GOWORK=off go test -exec=/usr/bin/true ./...
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOWORK=off go test -exec=/usr/bin/true ./...
+GOTOOLCHAIN=go1.25.12 GOWORK=off go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=go1.25.12 GOWORK=off go test -exec=/usr/bin/true ./...
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 GOTOOLCHAIN=go1.25.12 GOWORK=off go test -exec=/usr/bin/true ./...
+CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 GOTOOLCHAIN=go1.25.12 GOWORK=off go test -exec=/usr/bin/true ./...
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 GOTOOLCHAIN=go1.25.12 GOWORK=off go test -exec=/usr/bin/true ./...
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 GOTOOLCHAIN=go1.25.12 GOWORK=off go test -exec=/usr/bin/true ./...
+CGO_ENABLED=0 GOOS=windows GOARCH=arm64 GOTOOLCHAIN=go1.25.12 GOWORK=off go test -exec=/usr/bin/true ./...
 actionlint
-GOWORK=off go run ./scripts/release --version v0.1.0-beta.1 --out <new-output-a>
-GOWORK=off go run ./scripts/release --version v0.1.0-beta.1 --out <new-output-b>
+GOTOOLCHAIN=go1.25.12 GOWORK=off go run ./scripts/release --version v0.1.0-beta.1 --out <new-output-a>
+GOTOOLCHAIN=go1.25.12 GOWORK=off go run ./scripts/release --version v0.1.0-beta.1 --out <new-output-b>
 diff -rq <new-output-a> <new-output-b>
 gitleaks git --redact --exit-code 1 .
 gitleaks dir --redact --exit-code 1 .
@@ -247,7 +254,9 @@ git fsck --strict --no-dangling
 ```
 
 Review the pinned `govulncheck` version before each release audit. Record the
-selected version in the evidence tracker.
+selected version in the evidence tracker. Stop if the exact minimum Go
+toolchain has a reachable vulnerability, even when a newer host toolchain is
+clean.
 
 ## Release controls
 

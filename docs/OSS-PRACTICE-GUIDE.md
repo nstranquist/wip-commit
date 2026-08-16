@@ -26,6 +26,7 @@ Use each source for its documented purpose:
 | Does development follow secure defaults and review practices? | OpenSSF secure-development guide and NIST SSDF |
 | Is a dependency suitable and securely usable? | OpenSSF evaluation guide |
 | Can Git environment or configuration change command behavior? | Pro Git and the installed Git manual |
+| Is the minimum Go toolchain supported and free of reachable vulnerabilities? | Go toolchain documentation and Go vulnerability database |
 | How must hosted branch, security, and provenance controls work? | Current GitHub repository and security documentation |
 
 Review the exact source, not only its title or table of contents. Record the
@@ -103,6 +104,12 @@ bounded and make unsupported state fail closed.
 Review dependencies before adoption. Record their purpose, license,
 maintenance evidence, vulnerability posture, and secure-use constraints.
 
+Treat the `go` directive as the minimum supported toolchain. Before a release,
+run `govulncheck` with that exact patch release. A clean result from a newer
+host toolchain does not prove that the minimum is safe. If the minimum has a
+reachable standard-library vulnerability, raise the patch floor and repeat all
+local and hosted gates on the new candidate.
+
 Use private vulnerability reporting. Preserve evidence during an incident.
 After a fix, add a regression test and review the same failure class elsewhere.
 
@@ -125,6 +132,10 @@ Use SemVer. Never replace or reuse a published tag.
 Build from an approved exact commit. Publish checksums and provenance for the
 same source. Verify an archive and public installation from a clean consumer
 environment.
+
+Build both reproducibility copies with the exact release toolchain. Record that
+toolchain in the release receipt. Do not claim reproducibility across different
+Go toolchains.
 
 Use least privilege and multi-factor authentication for repository access.
 Require review and hosted tests on protected branches.

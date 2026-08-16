@@ -49,6 +49,8 @@ It does not authorize an agent push or a release tag.
 - Dependency-update settings.
 - Issue and pull-request templates.
 - Local unit, integration, race, vet, and cross-build commands.
+- An exact minimum Go patch gate that checks reachable standard-library
+  vulnerabilities before release builds.
 - Full-history and worktree secret scans.
 - Simultaneous disjoint shared-lane capture test.
 - End-to-end linked-worktree capture test.

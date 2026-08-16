@@ -84,6 +84,30 @@
       ]
     },
     {
+      "id": "go-toolchains",
+      "title": "Go Toolchains",
+      "authority": "official-language-documentation",
+      "url": "https://go.dev/doc/toolchain",
+      "reviewed_revision": "live documentation, reviewed 2026-08-16",
+      "use_for": [
+        "minimum Go version semantics",
+        "patch-level toolchain selection",
+        "release toolchain reproducibility"
+      ]
+    },
+    {
+      "id": "go-vulnerability-database",
+      "title": "Go Vulnerability Database",
+      "authority": "official-language-vulnerability-database",
+      "url": "https://pkg.go.dev/vuln/",
+      "reviewed_revision": "GO-2026-4602, GO-2026-4864, and GO-2026-4970, reviewed 2026-08-16",
+      "use_for": [
+        "standard-library vulnerability checks",
+        "minimum safe Go patch selection",
+        "release vulnerability evidence"
+      ]
+    },
+    {
       "id": "github-repository-rulesets",
       "title": "GitHub Docs: Managing rulesets for a repository",
       "authority": "official-product-documentation",
@@ -147,6 +171,7 @@
     "before a stable release",
     "before a state-format or trust-boundary change",
     "before adding a supported platform",
+    "after a Go toolchain or vulnerability database update",
     "after a security incident",
     "before a maintainer or repository-administrator transfer"
   ]

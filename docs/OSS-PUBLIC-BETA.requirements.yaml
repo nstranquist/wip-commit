@@ -33,17 +33,17 @@
       "status": "verified",
       "owner": "maintainer",
       "human_gate": false,
-      "acceptance": "Standalone build, test, race, vet, module, vulnerability, Git, and cross-compile checks pass with GOWORK=off.",
+      "acceptance": "Standalone build, test, race, vet, module, vulnerability, Git, and six-target cross-compile checks pass with GOWORK=off and the exact minimum Go patch declared by go.mod.",
       "evidence": [
-        {"kind": "command", "value": "GOWORK=off go test -count=1 ./...", "observed_on": "2026-08-16"},
-        {"kind": "command", "value": "GOWORK=off go test -race -count=3 ./...", "observed_on": "2026-08-16"},
-        {"kind": "command", "value": "GOWORK=off go vet ./...", "observed_on": "2026-08-16"},
+        {"kind": "command", "value": "GOTOOLCHAIN=go1.25.12 GOWORK=off go test -count=1 ./...", "observed_on": "2026-08-16"},
+        {"kind": "command", "value": "GOTOOLCHAIN=go1.25.12 GOWORK=off go test -race -count=3 ./...", "observed_on": "2026-08-16"},
+        {"kind": "command", "value": "GOTOOLCHAIN=go1.25.12 GOWORK=off go vet ./...", "observed_on": "2026-08-16"},
         {"kind": "command", "value": "golangci-lint v2.12.2 run ./...", "observed_on": "2026-08-16"},
         {"kind": "command", "value": "actionlint v1.7.12", "observed_on": "2026-08-16"},
-        {"kind": "command", "value": "GOWORK=off go mod tidy -diff and GOWORK=off go mod verify", "observed_on": "2026-08-16"},
-        {"kind": "command", "value": "CGO_ENABLED=0 GOWORK=off go test -exec=/usr/bin/true ./... on linux and darwin amd64/arm64 plus windows amd64/arm64", "observed_on": "2026-08-16"},
+        {"kind": "command", "value": "GOTOOLCHAIN=go1.25.12 GOWORK=off go mod tidy -diff and go mod verify", "observed_on": "2026-08-16"},
+        {"kind": "command", "value": "CGO_ENABLED=0 GOTOOLCHAIN=go1.25.12 GOWORK=off go test -exec=/usr/bin/true ./... on linux, darwin, and windows amd64/arm64", "observed_on": "2026-08-16"},
         {"kind": "command", "value": "git fsck --strict --no-dangling and git diff --check", "observed_on": "2026-08-16"},
-        {"kind": "command", "value": "GOWORK=off go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...", "observed_on": "2026-08-16"}
+        {"kind": "command", "value": "GOTOOLCHAIN=go1.25.12 GOWORK=off go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...", "observed_on": "2026-08-16"}
       ]
     },
     {
@@ -419,6 +419,20 @@
       "evidence": [
         {"kind": "artifact", "value": "scripts/publication-handoff, docs/PUBLICATION-HANDOFF.md, docs/PUBLICATION-HANDOFF.paths, and docs/PUBLICATION-HANDOFF.schema.json", "observed_on": "2026-08-16"},
         {"kind": "gap", "value": "The project instructions prohibit an agent push. Human execution and hosted evidence remain required.", "observed_on": "2026-08-16"}
+      ]
+    },
+    {
+      "id": "OSS-033",
+      "gate": "public-beta",
+      "title": "Verify the minimum supported Go toolchain",
+      "status": "verified",
+      "owner": "maintainer",
+      "human_gate": false,
+      "acceptance": "The go directive names a patched minimum toolchain. Tests, race tests, vet, all six target builds, deterministic release builds, and govulncheck pass with that exact patch. A newer host-toolchain scan is not accepted as proof for the minimum.",
+      "evidence": [
+        {"kind": "finding", "value": "Go 1.25.0 reached GO-2026-4602, GO-2026-4864, and GO-2026-4970 in project code paths; all are fixed by Go 1.25.12.", "observed_on": "2026-08-16"},
+        {"kind": "artifact", "value": "go.mod requires Go 1.25.12; docs/RELEASE.md and docs/OSS-PRACTICE-GUIDE.md require exact-minimum verification.", "observed_on": "2026-08-16"},
+        {"kind": "command", "value": "GOTOOLCHAIN=go1.25.12 GOWORK=off go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...", "observed_on": "2026-08-16"}
       ]
     }
   ]
