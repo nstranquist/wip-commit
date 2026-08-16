@@ -4,8 +4,9 @@
 source checkout's `HEAD` or rewriting its Git index. Each agent writes to a
 local ref under `refs/heads/wip/<agent>/<lane>`.
 
-The current release candidate is `v0.1.0-beta.1`. It is suitable for local beta
-use. It is not yet a stable release, and this checkout has not been published.
+The planned first prerelease is `v0.1.0-beta.1`. The current candidate is
+suitable for local beta use, but it is not a stable release. Verify the public
+tag and release before you treat a checkout as published software.
 
 ## Why it exists
 
@@ -35,20 +36,20 @@ stop with `COORDINATION_DOMAIN_CONFLICT` if the other domain exists.
 
 ## Build locally
 
-This repository has no configured remote. Build the current checkout with:
+Build the current checkout with:
 
 ```text
 go build -trimpath -o ./bin/wip ./cmd/wip
 ./bin/wip version
 ```
 
-After publication, the intended install command is:
+For a published `v0.1.0-beta.1` tag, the install command is:
 
 ```text
 go install github.com/nstranquist/wip-commit/cmd/wip@v0.1.0-beta.1
 ```
 
-Do not use that command until the module exists at that public address.
+Before you run that command, verify that the tag exists at that public address.
 
 ## Use the agent skill
 
@@ -346,7 +347,9 @@ defines the safety boundary for a possible future landing command without
 authorizing its implementation. Non-authors can use the redacted
 [beta exercise](docs/BETA-EXERCISE.md) to produce independent evidence.
 Repository owners can use the human-gated
-[hosted setup runbook](docs/HOSTED-SETUP.md) after they approve publication.
+[publication handoff](docs/PUBLICATION-HANDOFF.md) and
+[hosted setup runbook](docs/HOSTED-SETUP.md). These procedures do not authorize
+a push or release tag.
 
 Project authority and succession are in [GOVERNANCE.md](GOVERNANCE.md).
 Current support and safe incident-reporting guidance are in

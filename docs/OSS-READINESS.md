@@ -9,7 +9,8 @@ the local evidence does not support a stable `v1.0.0` claim.
 The detailed release decision and current evidence are in
 [OSS-PUBLIC-BETA.md](OSS-PUBLIC-BETA.md) and
 [OSS-PUBLIC-BETA.requirements.yaml](OSS-PUBLIC-BETA.requirements.yaml). The plan
-is proposed. It does not authorize publication.
+is accepted. The approval fixes the name, module path, and capture-only scope.
+It does not authorize an agent push or a release tag.
 
 ## Ready in this checkout
 
@@ -22,7 +23,7 @@ is proposed. It does not authorize publication.
 - Writer-side byte bounds that prevent unreadable durable records.
 - Shared-checkout and linked-worktree modes.
 - One coordination-domain interlock for standalone and legacy installations.
-- Explicit initialization ownership; probes and other lane commands cannot
+- Explicit initialization ownership. Probes and other lane commands cannot
   claim an uninitialized repository.
 - Exact staged-subset and all-or-nothing split capture.
 - Read-only component split proposals and split-plan automation defaults.
@@ -60,6 +61,7 @@ is proposed. It does not authorize publication.
 - A redacted independent beta exercise protocol and machine-checkable receipt
   schema.
 - A human-gated hosted-repository setup and evidence runbook.
+- A fail-closed pre-first-push receipt and exact human publication handoff.
 - Fail-closed tests for unsupported state directories and record schemas.
 - Symlink-escape and dual-domain creation-race tests.
 - Concurrent first-use directory and no-clobber publication tests.
@@ -71,22 +73,22 @@ is proposed. It does not authorize publication.
 
 ## Required before public beta publication
 
-1. Approve the repository name, module path, and capture-only boundary.
-2. Create the public repository and add a remote. This local checkout currently
+1. Follow [PUBLICATION-HANDOFF.md](PUBLICATION-HANDOFF.md). Create the public
+   repository and add a remote. The reviewed candidate checkout currently
    has no remote.
-3. Run the prepared CI on hosted Linux, macOS, and Windows workers. Local cross
+2. Run the prepared CI on hosted Linux, macOS, and Windows workers. Local cross
    compilation is not a substitute for Windows runtime tests.
-4. Follow [HOSTED-SETUP.md](HOSTED-SETUP.md) to require pull-request review and
+3. Follow [HOSTED-SETUP.md](HOSTED-SETUP.md) to require pull-request review and
    the observed passing CI checks on the default branch.
-5. Enable private vulnerability reporting, dependency alerts, and secret
+4. Enable private vulnerability reporting, dependency alerts, and secret
    scanning as described in the hosted setup runbook.
-6. Approve a Code of Conduct and configure confidential conduct reporting
+5. Approve a Code of Conduct and configure confidential conduct reporting
    before soliciting public contributions.
-7. Ask at least one independent user to follow
+6. Ask at least one independent user to follow
    [BETA-EXERCISE.md](BETA-EXERCISE.md) for shared and worktree flows. Retain a
    redacted receipt that passes [BETA-EXERCISE.schema.json](BETA-EXERCISE.schema.json).
-8. Run a clean public-module installation smoke test.
-9. Create and push `v0.1.0-beta.1` only after every tracked public-beta gate
+7. Run a clean public-module installation smoke test.
+8. Create and push `v0.1.0-beta.1` only after every tracked public-beta gate
    passes. Check that the hosted release attestation succeeds.
 
 ## Required before a stable release
@@ -106,6 +108,7 @@ is proposed. It does not authorize publication.
 
 ## Publication boundary
 
-A remote, a history push, repository settings, and a published release are
-external changes. They require the repository owner's explicit authorization.
-Preparing this checkout does not perform those actions.
+The owner approved the public target and capture-only scope. A remote, history
+push, repository setting, and release are still external changes. The project
+instructions assign the first push to a human. Preparing this checkout does not
+perform those actions.

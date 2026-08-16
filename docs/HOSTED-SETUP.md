@@ -2,13 +2,15 @@
 
 ## Authority boundary
 
-Do not create the public repository until the owner approves the name, module
-path, and capture-only boundary.
+The owner approved the `wip-commit` name,
+`github.com/nstranquist/wip-commit` module path, and capture-only boundary on
+2026-08-16. This approval does not permit an agent to push. The repository
+instructions assign the first push to a human.
 
 Do not create a release tag until every public-beta gate passes.
 
-This runbook prepares the settings. It does not authorize a remote, push,
-ruleset, security setting, or release.
+Use [PUBLICATION-HANDOFF.md](PUBLICATION-HANDOFF.md) before this runbook. This
+runbook does not authorize a release tag.
 
 ## Source of truth
 
@@ -25,13 +27,11 @@ availability can change.
 
 ## Repository creation
 
-1. Confirm the approved owner and repository name.
-2. Confirm `github.com/nstranquist/wip-commit` as the Go module path.
-3. Create an empty public repository without generated files.
-4. Add the remote to a clean candidate checkout.
-5. Push only the approved candidate history.
-6. Set `main` as the default branch.
-7. Verify that the public tree equals the approved candidate tree.
+1. Validate and retain the private pre-first-push receipt.
+2. Follow the human-only first-push and pull-request sequence in the
+   publication handoff.
+3. Verify that remote `main` equals the receipt's candidate commit and tree.
+4. Set `main` as the default branch before you activate its ruleset.
 
 Do not force-push or replace imported history.
 

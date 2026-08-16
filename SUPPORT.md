@@ -2,12 +2,12 @@
 
 ## Current support level
 
-`wip-commit` is a local beta candidate. It has not been published. Support is
-best effort, and there is no response-time or resolution-time guarantee.
+`wip-commit` is beta software. Support is best effort, and there is no
+response-time or resolution-time guarantee. A local candidate and a published
+prerelease have the same beta support boundary.
 
-After publication, the newest beta is the only supported beta unless a release
-note says otherwise. A published stable version will define a separate support
-policy.
+The newest published beta is the only supported beta unless a release note says
+otherwise. A published stable version will define a separate support policy.
 
 ## Ask for help
 
@@ -25,7 +25,8 @@ approve a Code of Conduct before the project solicits public contributions.
 
 ## Report a capture problem
 
-If a command might have captured foreign content or changed the wrong ref:
+If you suspect that a command captured foreign content or changed the wrong
+ref:
 
 1. Stop further capture and landing work.
 2. Preserve the worktree, index, agent ref, JSON result, and recovery receipt.

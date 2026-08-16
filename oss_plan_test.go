@@ -150,7 +150,7 @@ func assertOSSVersionReferences(t *testing.T, target string) {
 		text string
 	}{
 		{path: "README.md", text: target},
-		{path: "CHANGELOG.md", text: "[" + strings.TrimPrefix(target, "v") + "]"},
+		{path: "CHANGELOG.md", text: target},
 	} {
 		body, err := os.ReadFile(check.path)
 		if err != nil {

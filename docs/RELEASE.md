@@ -2,7 +2,8 @@
 
 This procedure builds and publishes a prerelease. A tag push starts the
 release workflow. Do not create or push a tag until the repository owner
-approves the public-beta plan.
+approves the tag and every public-beta gate passes. Approval of the repository
+name and capture-only scope is not tag approval.
 
 ## Release boundary
 
@@ -65,9 +66,15 @@ timestamp, target names, sizes, and digests.
 
 Complete the owner, hosted-CI, repository-settings, and independent-user gates
 in the public-beta tracker. Record the evidence before tag creation.
-Use [HOSTED-SETUP.md](HOSTED-SETUP.md) for the hosted controls. Require a
+Use [PUBLICATION-HANDOFF.md](PUBLICATION-HANDOFF.md) for the first push and
+[HOSTED-SETUP.md](HOSTED-SETUP.md) for the hosted controls. Require a
 non-author receipt produced with [BETA-EXERCISE.md](BETA-EXERCISE.md) and
 validated against [BETA-EXERCISE.schema.json](BETA-EXERCISE.schema.json).
+
+Before the tag, move the release notes from `Unreleased` to a
+`0.1.0-beta.1` section with the actual tag date. Add the release comparison
+links. Treat that edit as a source change: rerun every local and hosted gate on
+the new commit before tag approval.
 
 Create one signed tag at the approved commit:
 

@@ -5,6 +5,8 @@ Semantic Versioning.
 
 ## [Unreleased]
 
+Planned first prerelease: `v0.1.0-beta.1`.
+
 ### Added
 
 - Portable `wip-commit` agent skill with a public-only safety contract.
@@ -12,16 +14,11 @@ Semantic Versioning.
   prerelease workflow.
 - Pinned golangci-lint job for hosted pull-request and branch checks.
 - State compatibility policy and explicit upgrade and downgrade procedures.
-
-### Changed
-
-- Unsupported state-directory, lane, lease, intent, and profile schemas now
-  fail with `MIGRATION_REQUIRED` before the command changes state.
-
-## [0.1.0-beta.1] - 2026-08-14
-
-### Added
-
+- Fail-closed, read-only pre-first-push receipt that binds the reviewed
+  bootstrap, linear split-commit range, complete path delta, public author and
+  committer identities, object integrity, owner approval, and secret scans.
+- Human-only publication handoff for the first hosted pull request, exact CI
+  check discovery, direct bootstrap fast-forward, and protected-branch setup.
 - Shared-checkout and detached linked-worktree lanes.
 - Exact staged-subset capture through private Git indexes.
 - All-or-nothing split plans with one final ref compare-and-swap.
@@ -33,6 +30,11 @@ Semantic Versioning.
   atomic replacement and file locks.
 - NUL-delimited delete/add accounting for renamed paths.
 
+### Changed
+
+- Unsupported state-directory, lane, lease, intent, and profile schemas now
+  fail with `MIGRATION_REQUIRED` before the command changes state.
+
 ### Known limitations
 
 - Coordination protects cooperating local processes. External Git commands can
@@ -40,5 +42,4 @@ Semantic Versioning.
 - Windows process-descendant cleanup is best-effort after a command timeout.
 - The beta captures local agent refs. It does not land, merge, or push them.
 
-[Unreleased]: https://github.com/nstranquist/wip-commit/compare/v0.1.0-beta.1...HEAD
-[0.1.0-beta.1]: https://github.com/nstranquist/wip-commit/releases/tag/v0.1.0-beta.1
+[Unreleased]: https://github.com/nstranquist/wip-commit/commits/main

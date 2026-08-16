@@ -2,7 +2,7 @@
 
 Plan ID: `wip-oss-public-beta`
 
-Status: Proposed
+Status: Accepted
 
 Target: `v0.1.0-beta.1`
 
@@ -10,13 +10,13 @@ Owner: Repository owner
 
 Last review: 2026-08-16
 
-Approval: Not yet recorded
+Approval: `owner-session-2026-08-16`
 
 Local preparation: Extended safety pass complete on 2026-08-16
 
-## Decision request
+## Approved decision
 
-Approve a capture-only public beta with these boundaries:
+The owner approved a capture-only public beta with these boundaries:
 
 - Keep the repository name `wip-commit`.
 - Keep the module path `github.com/nstranquist/wip-commit`.
@@ -26,9 +26,10 @@ Approve a capture-only public beta with these boundaries:
 - Keep branch landing, merging, pushing, and remote coordination out of scope.
 - Use `v0.1.0-beta.1` only after all public-beta gates pass.
 
-The owner must accept this proposal before remote creation, first push, or tag
-creation. Those actions can disclose history or publish an immutable Go module
-version.
+This approval fixes the repository name, module path, and capture-only scope.
+It does not approve a release tag. The project instructions require a human to
+perform the first push. Follow
+[PUBLICATION-HANDOFF.md](PUBLICATION-HANDOFF.md) for that exact boundary.
 
 ## Why this plan exists
 
@@ -57,7 +58,7 @@ implementation claim.
 The owner-controlled repository work is complete. The checkout now contains:
 
 - a single-domain interlock that prevents standalone and legacy coordination
-  state from starting in the same Git common directory; only `wip init` can
+  state from starting in the same Git common directory. Only `wip init` can
   claim an uninitialized repository.
 - a resumable `wip init` transaction with safe binary and embedded-skill
   installation, complete no-overwrite first writes, and immutable recovery
@@ -85,7 +86,7 @@ The owner-controlled repository work is complete. The checkout now contains:
 Two clean six-target rehearsals produced equal directory trees. Every recorded
 archive checksum passed, and the native archive reported the target version.
 This local proof does not satisfy hosted CI, attestation, independent testing,
-public installation, owner approval, or publication gates.
+public installation, or publication gates.
 
 ## Product boundary
 
@@ -151,12 +152,11 @@ must honor leases. Hooks and `verify` commands remain trusted repository code.
 
 ## Release sequence
 
-### Phase 1: accept the public contract
+### Phase 1: accept the public contract — complete
 
-1. Approve the repository name and module path.
-2. Accept or revise the capture-only boundary.
-3. Accept the standalone skill ownership boundary.
-4. Record the approval in this document and the requirement tracker.
+The owner approved the repository name, module path, capture-only boundary, and
+standalone skill ownership boundary on 2026-08-16. The requirement tracker
+records the same approval reference.
 
 ### Phase 2: finish local public artifacts
 
@@ -180,7 +180,8 @@ must honor leases. Hooks and `verify` commands remain trusted repository code.
 
 ### Phase 3: create the hosted candidate
 
-Follow [HOSTED-SETUP.md](HOSTED-SETUP.md) and retain its redacted evidence.
+Follow [PUBLICATION-HANDOFF.md](PUBLICATION-HANDOFF.md), then
+[HOSTED-SETUP.md](HOSTED-SETUP.md), and retain their redacted evidence.
 The exact required CI check names come from the first hosted pull request.
 Do not guess them from workflow job labels.
 

@@ -17,12 +17,13 @@
       "id": "OSS-001",
       "gate": "public-beta",
       "title": "Confirm the public name and module path",
-      "status": "human-gated",
+      "status": "verified",
       "owner": "repository-owner",
-      "human_gate": true,
+      "human_gate": false,
       "acceptance": "The owner approves wip-commit and github.com/nstranquist/wip-commit before the first push.",
       "evidence": [
-        {"kind": "candidate", "value": "go.mod and README.md", "observed_on": "2026-08-14"}
+        {"kind": "owner-approval", "value": "owner-session-2026-08-16", "observed_on": "2026-08-16"},
+        {"kind": "contract", "value": "docs/OSS-PUBLIC-BETA.md records the approved wip-commit name, github.com/nstranquist/wip-commit module path, and capture-only beta boundary.", "observed_on": "2026-08-16"}
       ]
     },
     {
@@ -405,6 +406,19 @@
       "acceptance": "The beta remains capture-only. A KEP defines future exact fast-forward landing for unchecked targets, refuses checked-out targets unless a worktree-aware adapter owns them, and requires recovery, privacy, lock, backup-ref, and receipt gates before implementation.",
       "evidence": [
         {"kind": "artifact", "value": "docs/KEP-0001-capture-to-landing-boundary.md", "observed_on": "2026-08-16"}
+      ]
+    },
+    {
+      "id": "OSS-032",
+      "gate": "public-beta",
+      "title": "Prepare an exact human publication handoff",
+      "status": "verified",
+      "owner": "repository-owner",
+      "human_gate": false,
+      "acceptance": "A source-current, fail-closed preflight binds a clean final candidate to the reviewed bootstrap, a merge-free linear split-commit range, the complete reviewed path delta, zero remotes and tags, owner approval, public author and committer identities, absent target repository, complete non-replaced history, passing object integrity, and passing history and worktree secret scans. It writes a no-overwrite private receipt outside the checkout. A human-only runbook preserves the exact candidate while obtaining hosted checks without merging a pull request.",
+      "evidence": [
+        {"kind": "artifact", "value": "scripts/publication-handoff, docs/PUBLICATION-HANDOFF.md, docs/PUBLICATION-HANDOFF.paths, and docs/PUBLICATION-HANDOFF.schema.json", "observed_on": "2026-08-16"},
+        {"kind": "gap", "value": "The project instructions prohibit an agent push. Human execution and hosted evidence remain required.", "observed_on": "2026-08-16"}
       ]
     }
   ]
