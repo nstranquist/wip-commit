@@ -210,6 +210,38 @@ func TestPlanPreviewUsesComponentBoundariesWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestPlanPreviewExcludesAlreadyCapturedStagedPaths(t *testing.T) {
+	directory := cliTestRepo(t)
+	writeCLI(t, directory, "core.txt", "new core\n")
+	writeCLI(t, directory, "docs.txt", "new docs\n")
+	cliGit(t, directory, "add", "core.txt", "docs.txt")
+	initializeCLI(t, directory, "incremental-plan", "core.txt", "docs.txt")
+	planPath := filepath.Join(t.TempDir(), "plan.json")
+	plan := `[
+  {"message":"fix(core): capture core behavior","files":["core.txt"]},
+  {"message":"docs(guide): capture docs behavior","files":["docs.txt"]}
+]`
+	if err := os.WriteFile(planPath, []byte(plan), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	captured := runCLI(t, []string{"--json", "--repo-dir", directory, "commit", "--lane", "incremental-plan", "--plan", planPath}, "")
+	if captured.code != 0 || !captured.envelope.OK {
+		t.Fatalf("initial capture: %#v stderr=%s", captured.envelope, captured.stderr)
+	}
+
+	writeCLI(t, directory, "docs.txt", "newer docs\n")
+	cliGit(t, directory, "add", "docs.txt")
+	preview := runCLI(t, []string{"--json", "--repo-dir", directory, "plan", "--lane", "incremental-plan"}, "")
+	if preview.code != 0 || !preview.envelope.OK {
+		t.Fatalf("incremental preview: %#v stderr=%s", preview.envelope, preview.stderr)
+	}
+	var proposal planProposal
+	decodeData(t, preview.envelope.Data, &proposal)
+	if len(proposal.StagedPaths) != 1 || proposal.StagedPaths[0] != "docs.txt" || len(proposal.Groups) != 1 {
+		t.Fatalf("incremental proposal = %#v", proposal)
+	}
+}
+
 func TestInteractiveInitAndSplitPlannerKeepJSONClean(t *testing.T) {
 	directory := cliTestRepo(t)
 	writeCLI(t, directory, "core.txt", "new core\n")

@@ -47,7 +47,7 @@ func (application app) runPlan(ctx context.Context, laneStore store.Store, args 
 	if err != nil {
 		return application.failure("plan", err, nil, 1)
 	}
-	selected, err := selectedStaged(ctx, laneStore, allowed, paths)
+	selected, err := selectedStaged(ctx, laneStore, status.Lane.CurrentSHA, allowed, paths)
 	if err != nil {
 		return application.failure("plan", err, nil, 1)
 	}

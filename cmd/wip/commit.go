@@ -90,7 +90,7 @@ func (application app) runCommit(ctx context.Context, laneStore store.Store, arg
 		return stopHeartbeat()
 	}
 	defer func() { _ = stop() }()
-	groups, err := application.resolveGroups(captureCtx, laneStore, allowed, options)
+	groups, err := application.resolveGroups(captureCtx, laneStore, lane.CurrentSHA, allowed, options)
 	if err != nil {
 		if heartbeatErr := stop(); heartbeatErr != nil {
 			return application.failure("commit", heartbeatErr, nil, 1)
@@ -188,7 +188,7 @@ func startLeaseHeartbeat(parent context.Context, laneStore store.Store, lane sto
 	return captureCtx, stop, nil
 }
 
-func (application app) resolveGroups(ctx context.Context, laneStore store.Store, allowed []string, options commitOptions) ([]engine.Group, error) {
+func (application app) resolveGroups(ctx context.Context, laneStore store.Store, laneCommit string, allowed []string, options commitOptions) ([]engine.Group, error) {
 	if options.plan != "" {
 		if options.single || options.message != "" || len(options.paths) > 0 {
 			return nil, fail.New("INVALID_ARGS", "--plan cannot be combined with --single, --message, or --path")
@@ -210,7 +210,7 @@ func (application app) resolveGroups(ctx context.Context, laneStore store.Store,
 		if strings.TrimSpace(options.message) == "" {
 			return nil, fail.New("INVALID_ARGS", "--single requires --message")
 		}
-		selected, err := selectedStaged(ctx, laneStore, allowed, options.paths)
+		selected, err := selectedStaged(ctx, laneStore, laneCommit, allowed, options.paths)
 		if err != nil {
 			return nil, err
 		}
@@ -222,7 +222,7 @@ func (application app) resolveGroups(ctx context.Context, laneStore store.Store,
 	if options.noInteractive {
 		return nil, fail.New("SPLIT_PLAN_REQUIRED", "non-interactive capture requires --plan or an explicit --single")
 	}
-	selected, err := selectedStaged(ctx, laneStore, allowed, nil)
+	selected, err := selectedStaged(ctx, laneStore, laneCommit, allowed, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -251,8 +251,8 @@ func decodePlan(reader io.Reader) ([]engine.Group, error) {
 	return groups, nil
 }
 
-func selectedStaged(ctx context.Context, laneStore store.Store, allowed []string, requested []string) ([]string, error) {
-	staged, err := laneStore.Repo.NULPaths(ctx, nil, "diff", "--cached", "--no-renames", "--name-only", "-z")
+func selectedStaged(ctx context.Context, laneStore store.Store, laneCommit string, allowed []string, requested []string) ([]string, error) {
+	staged, err := laneStore.Repo.NULPaths(ctx, nil, "diff", "--cached", "--no-renames", "--name-only", "-z", laneCommit, "--")
 	if err != nil {
 		return nil, fail.Wrap("GIT_FAILED", err)
 	}
