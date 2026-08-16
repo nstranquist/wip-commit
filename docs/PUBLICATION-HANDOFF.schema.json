@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nstranquist/wip-commit/blob/main/docs/PUBLICATION-HANDOFF.schema.json",
+  "title": "wip-commit pre-first-push receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "target_repository",
+    "target_visibility",
+    "default_branch",
+    "bootstrap",
+    "candidate",
+    "history_commit_count",
+    "delta_paths",
+    "local",
+    "github",
+    "owner_approval",
+    "authority"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "target_repository": {"const": "nstranquist/wip-commit"},
+    "target_visibility": {"const": "public"},
+    "default_branch": {"const": "main"},
+    "bootstrap": {"$ref": "#/$defs/object"},
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "tree", "immediate_parent", "commit_count"],
+      "properties": {
+        "commit": {"$ref": "#/$defs/object_id"},
+        "tree": {"$ref": "#/$defs/object_id"},
+        "immediate_parent": {"$ref": "#/$defs/object_id"},
+        "commit_count": {"type": "integer", "minimum": 1}
+      }
+    },
+    "history_commit_count": {"type": "integer", "minimum": 2},
+    "delta_paths": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "pattern": "^[^/]"}
+    },
+    "local": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clean",
+        "remote_count",
+        "tag_count",
+        "history_identity_email_count",
+        "history_secret_scan",
+        "worktree_secret_scan",
+        "object_integrity_check",
+        "expected_delta_matched",
+        "bootstrap_is_ancestor",
+        "linear_candidate_range"
+      ],
+      "properties": {
+        "clean": {"const": true},
+        "remote_count": {"const": 0},
+        "tag_count": {"const": 0},
+        "history_identity_email_count": {"type": "integer", "minimum": 1},
+        "history_secret_scan": {"const": "passed"},
+        "worktree_secret_scan": {"const": "passed"},
+        "object_integrity_check": {"const": "passed"},
+        "expected_delta_matched": {"const": true},
+        "bootstrap_is_ancestor": {"const": true},
+        "linear_candidate_range": {"const": true}
+      }
+    },
+    "github": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authenticated_owner",
+        "target_repository_exists",
+        "public_author_identity_match"
+      ],
+      "properties": {
+        "authenticated_owner": {"const": true},
+        "target_repository_exists": {"const": false},
+        "public_author_identity_match": {"const": true}
+      }
+    },
+    "owner_approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reference", "name", "module_path", "capture_only"],
+      "properties": {
+        "reference": {"type": "string", "minLength": 1},
+        "name": {"const": true},
+        "module_path": {"const": true},
+        "capture_only": {"const": true}
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent_push_permitted", "required_actor"],
+      "properties": {
+        "agent_push_permitted": {"const": false},
+        "required_actor": {"const": "human"}
+      }
+    }
+  },
+  "$defs": {
+    "object_id": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "object": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "tree"],
+      "properties": {
+        "commit": {"$ref": "#/$defs/object_id"},
+        "tree": {"$ref": "#/$defs/object_id"}
+      }
+    }
+  }
+}
