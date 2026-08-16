@@ -506,7 +506,7 @@ func verifyTree(ctx context.Context, repo gitx.Repo, environment []string, tree 
 		commandCtx, cancel := context.WithTimeout(ctx, timeout)
 		cmd := process.CommandContext(commandCtx, command.Argv[0], command.Argv[1:]...)
 		cmd.Dir = directory
-		cmd.Env = append(os.Environ(), "WIP_CANDIDATE_TREE="+tree)
+		cmd.Env = verificationEnvironment(tree)
 		output := &boundedBuffer{limit: maxVerifyOutput}
 		cmd.Stdout, cmd.Stderr = output, output
 		runErr := cmd.Run()
@@ -524,6 +524,27 @@ func verifyTree(ctx context.Context, repo gitx.Repo, environment []string, tree 
 		}
 	}
 	return nil
+}
+
+func verificationEnvironment(tree string) []string {
+	blocked := map[string]bool{
+		"GIT_INDEX_FILE":     true,
+		"WIP_AGENT":          true,
+		"WIP_CANDIDATE_TREE": true,
+		"WIP_COMMIT_OBJECT":  true,
+		"WIP_LANE":           true,
+		"WIP_SESSION":        true,
+		"WIP_TARGET_REF":     true,
+	}
+	inherited := gitx.Environment(nil)
+	environment := make([]string, 0, len(inherited)+1)
+	for _, entry := range inherited {
+		name, _, _ := strings.Cut(entry, "=")
+		if !blocked[strings.ToUpper(name)] {
+			environment = append(environment, entry)
+		}
+	}
+	return append(environment, "WIP_CANDIDATE_TREE="+tree)
 }
 
 type boundedBuffer struct {

@@ -103,6 +103,34 @@ func TestDryRunDoesNotInventSplitParentCommits(t *testing.T) {
 	}
 }
 
+func TestVerificationEnvironmentDoesNotInheritCaptureIdentity(t *testing.T) {
+	for name, value := range map[string]string{
+		"GIT_INDEX_FILE":     "/foreign/index",
+		"WIP_AGENT":          "foreign-agent",
+		"WIP_CANDIDATE_TREE": "foreign-tree",
+		"WIP_COMMIT_OBJECT":  "foreign-commit",
+		"WIP_LANE":           "foreign-lane",
+		"WIP_SESSION":        "foreign-session",
+		"WIP_TARGET_REF":     "refs/heads/wip/foreign/lane",
+	} {
+		t.Setenv(name, value)
+	}
+	environment := verificationEnvironment("candidate-tree")
+	values := map[string]string{}
+	for _, entry := range environment {
+		name, value, _ := strings.Cut(entry, "=")
+		values[strings.ToUpper(name)] = value
+	}
+	for _, name := range []string{"GIT_INDEX_FILE", "WIP_AGENT", "WIP_COMMIT_OBJECT", "WIP_LANE", "WIP_SESSION", "WIP_TARGET_REF"} {
+		if _, exists := values[name]; exists {
+			t.Fatalf("verification inherited %s", name)
+		}
+	}
+	if values["WIP_CANDIDATE_TREE"] != "candidate-tree" {
+		t.Fatalf("candidate tree = %q", values["WIP_CANDIDATE_TREE"])
+	}
+}
+
 func TestOversizedIntentFailsBeforeRefPublication(t *testing.T) {
 	repo := engineTestRepo(t)
 	head := engineGit(t, repo.Root, "rev-parse", "HEAD")
