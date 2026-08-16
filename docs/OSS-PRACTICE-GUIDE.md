@@ -26,6 +26,7 @@ Use each source for its documented purpose:
 | Does development follow secure defaults and review practices? | OpenSSF secure-development guide and NIST SSDF |
 | Is a dependency suitable and securely usable? | OpenSSF evaluation guide |
 | Can Git environment or configuration change command behavior? | Pro Git and the installed Git manual |
+| How must hosted branch, security, and provenance controls work? | Current GitHub repository and security documentation |
 
 Review the exact source, not only its title or table of contents. Record the
 review date and source revision in `OSS-SOURCES.json`.
@@ -127,6 +128,10 @@ environment.
 
 Use least privilege and multi-factor authentication for repository access.
 Require review and hosted tests on protected branches.
+Select required checks from the names reported by the first hosted pull
+request. Do not infer those names from local workflow labels. Follow
+[HOSTED-SETUP.md](HOSTED-SETUP.md) for current repository settings and retained
+evidence.
 
 Before a stable release, review OpenSSF Scorecard and Best Practices criteria.
 Record the SBOM decision and every accepted supply-chain gap.
@@ -152,6 +157,7 @@ it. Do not imply active support after maintenance ends.
 | Threat model and secure defaults | `THREAT-MODEL.md`, adversarial tests | Independent security review |
 | Split capture and exact publication | Private index, receipts, lease fencing, exact ref compare-and-swap | Independent shared and worktree exercises |
 | Release integrity | Deterministic builder, checksums, pinned workflow, attestations | Hosted execution and clean consumer verification |
+| Hosted controls | Pinned workflows and `docs/HOSTED-SETUP.md` | Owner-approved repository settings and hosted receipts |
 | Supply-chain posture | Dependency review, vulnerability scan, secret scan | Scorecard review, Best Practices review, and SBOM decision |
 | Project health | Redacted beta evidence contract | Public response and maintainer-load measurements |
 

@@ -55,6 +55,11 @@ is proposed. It does not authorize publication.
 - Deterministic six-target archives, checksums, and release receipt.
 - Tag-only artifact-attestation workflow with immutable action references.
 - State compatibility, upgrade, and downgrade policy.
+- A proposed capture-to-landing KEP that keeps the beta capture-only and
+  defines fail-closed requirements for any future landing command.
+- A redacted independent beta exercise protocol and machine-checkable receipt
+  schema.
+- A human-gated hosted-repository setup and evidence runbook.
 - Fail-closed tests for unsupported state directories and record schemas.
 - Symlink-escape and dual-domain creation-race tests.
 - Concurrent first-use directory and no-clobber publication tests.
@@ -71,11 +76,15 @@ is proposed. It does not authorize publication.
    has no remote.
 3. Run the prepared CI on hosted Linux, macOS, and Windows workers. Local cross
    compilation is not a substitute for Windows runtime tests.
-4. Require pull-request review and passing CI on the default branch.
-5. Enable private vulnerability reporting and dependency alerts.
+4. Follow [HOSTED-SETUP.md](HOSTED-SETUP.md) to require pull-request review and
+   the observed passing CI checks on the default branch.
+5. Enable private vulnerability reporting, dependency alerts, and secret
+   scanning as described in the hosted setup runbook.
 6. Approve a Code of Conduct and configure confidential conduct reporting
    before soliciting public contributions.
-7. Ask at least one independent user to test shared and worktree flows.
+7. Ask at least one independent user to follow
+   [BETA-EXERCISE.md](BETA-EXERCISE.md) for shared and worktree flows. Retain a
+   redacted receipt that passes [BETA-EXERCISE.schema.json](BETA-EXERCISE.schema.json).
 8. Run a clean public-module installation smoke test.
 9. Create and push `v0.1.0-beta.1` only after every tracked public-beta gate
    passes. Check that the hosted release attestation succeeds.

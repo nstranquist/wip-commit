@@ -65,6 +65,9 @@ timestamp, target names, sizes, and digests.
 
 Complete the owner, hosted-CI, repository-settings, and independent-user gates
 in the public-beta tracker. Record the evidence before tag creation.
+Use [HOSTED-SETUP.md](HOSTED-SETUP.md) for the hosted controls. Require a
+non-author receipt produced with [BETA-EXERCISE.md](BETA-EXERCISE.md) and
+validated against [BETA-EXERCISE.schema.json](BETA-EXERCISE.schema.json).
 
 Create one signed tag at the approved commit:
 

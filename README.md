@@ -341,6 +341,13 @@ archives and the human-gated tag procedure. The publication summary is in
 evidence tracker are in
 [docs/OSS-PUBLIC-BETA.md](docs/OSS-PUBLIC-BETA.md).
 
+The beta remains capture-only. [KEP-0001](docs/KEP-0001-capture-to-landing-boundary.md)
+defines the safety boundary for a possible future landing command without
+authorizing its implementation. Non-authors can use the redacted
+[beta exercise](docs/BETA-EXERCISE.md) to produce independent evidence.
+Repository owners can use the human-gated
+[hosted setup runbook](docs/HOSTED-SETUP.md) after they approve publication.
+
 Project authority and succession are in [GOVERNANCE.md](GOVERNANCE.md).
 Current support and safe incident-reporting guidance are in
 [SUPPORT.md](SUPPORT.md). Security reports use [SECURITY.md](SECURITY.md).

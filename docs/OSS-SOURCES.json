@@ -82,6 +82,63 @@
         "Git configuration boundaries",
         "subprocess environment design"
       ]
+    },
+    {
+      "id": "github-repository-rulesets",
+      "title": "GitHub Docs: Managing rulesets for a repository",
+      "authority": "official-product-documentation",
+      "url": "https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets",
+      "reviewed_revision": "live documentation, reviewed 2026-08-16",
+      "use_for": [
+        "default-branch protection",
+        "pull-request and review requirements",
+        "required hosted checks",
+        "force-push and deletion controls"
+      ]
+    },
+    {
+      "id": "github-private-vulnerability-reporting",
+      "title": "GitHub Docs: Configuring private vulnerability reporting",
+      "authority": "official-product-documentation",
+      "url": "https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/configure-vulnerability-reporting/configure-for-a-repository",
+      "reviewed_revision": "live documentation, reviewed 2026-08-16",
+      "use_for": [
+        "confidential vulnerability intake",
+        "repository security settings"
+      ]
+    },
+    {
+      "id": "github-dependabot-alerts",
+      "title": "GitHub Docs: Configuring Dependabot alerts",
+      "authority": "official-product-documentation",
+      "url": "https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/configure-dependabot-alerts",
+      "reviewed_revision": "live documentation, reviewed 2026-08-16",
+      "use_for": [
+        "dependency alerts",
+        "repository dependency security settings"
+      ]
+    },
+    {
+      "id": "github-secret-scanning",
+      "title": "GitHub Docs: Enabling secret scanning",
+      "authority": "official-product-documentation",
+      "url": "https://docs.github.com/en/code-security/how-tos/secure-your-secrets/detect-secret-leaks/enable-secret-scanning",
+      "reviewed_revision": "live documentation, reviewed 2026-08-16",
+      "use_for": [
+        "hosted secret scanning",
+        "push-protection availability"
+      ]
+    },
+    {
+      "id": "github-artifact-attestations",
+      "title": "GitHub Docs: Artifact attestations",
+      "authority": "official-product-documentation",
+      "url": "https://docs.github.com/en/actions/concepts/security/artifact-attestations",
+      "reviewed_revision": "live documentation, reviewed 2026-08-16",
+      "use_for": [
+        "release provenance",
+        "consumer-side attestation verification"
+      ]
     }
   ],
   "refresh_triggers": [

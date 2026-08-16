@@ -170,10 +170,19 @@ must honor leases. Hooks and `verify` commands remain trusted repository code.
 8. Add a state-schema compatibility and migration policy.
 9. Add governance and support policies that state the current single-maintainer
    model and do not imply a service level or contributor community.
-10. Run the complete local gate with `GOWORK=off`.
-11. Scan the complete history and worktree for secrets.
+10. Record the capture-only beta boundary and future landing requirements in
+    [KEP-0001](KEP-0001-capture-to-landing-boundary.md).
+11. Add the redacted [independent beta exercise](BETA-EXERCISE.md), its
+    [receipt schema](BETA-EXERCISE.schema.json), and the human-gated
+    [hosted setup runbook](HOSTED-SETUP.md).
+12. Run the complete local gate with `GOWORK=off`.
+13. Scan the complete history and worktree for secrets.
 
 ### Phase 3: create the hosted candidate
+
+Follow [HOSTED-SETUP.md](HOSTED-SETUP.md) and retain its redacted evidence.
+The exact required CI check names come from the first hosted pull request.
+Do not guess them from workflow job labels.
 
 1. Create the public repository only after the owner authorizes it.
 2. Push `main` without a release tag.
@@ -190,9 +199,12 @@ Windows locks, process cleanup, or atomic replacement.
 
 ### Phase 4: prove the beta
 
-1. Ask an independent tester to run shared and worktree setup.
-2. Ask the tester to capture a split plan and reconcile an interrupted plan.
-3. Record redacted results without repository paths or commit messages.
+1. Ask a non-author to follow [BETA-EXERCISE.md](BETA-EXERCISE.md).
+2. Require all six scenarios, including shared and worktree split capture,
+   failure isolation, duplicate refusal, and reconciliation.
+3. Validate the redacted receipt against
+   [BETA-EXERCISE.schema.json](BETA-EXERCISE.schema.json). Do not accept
+   repository paths, branch names, commit messages, file names, or contents.
 4. Fix every data-loss or foreign-content defect before release.
 5. Repeat the hosted matrix after each release change.
 

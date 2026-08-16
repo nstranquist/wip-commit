@@ -35,3 +35,9 @@ conduct report in a public issue.
 Read [docs/OSS-PRACTICE-GUIDE.md](docs/OSS-PRACTICE-GUIDE.md) before changing
 public scope, governance, security, dependencies, support, or release policy.
 Review its official source register when a listed trigger applies.
+
+An author-run rehearsal does not close the independent beta gate. A non-author
+must follow [docs/BETA-EXERCISE.md](docs/BETA-EXERCISE.md). Validate the result
+against [docs/BETA-EXERCISE.schema.json](docs/BETA-EXERCISE.schema.json), then
+return the redacted receipt. Do not put repository paths, branch names, commit
+messages, file names, or source contents in that receipt.

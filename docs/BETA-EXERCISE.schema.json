@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nstranquist/wip-commit/docs/BETA-EXERCISE.schema.json",
+  "title": "wip-commit independent beta exercise receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "candidate_commit",
+    "candidate_tree",
+    "wip_version",
+    "tester_kind",
+    "environment",
+    "started_at",
+    "finished_at",
+    "scenarios",
+    "privacy",
+    "overall"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "candidate_commit": {"type": "string", "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$"},
+    "candidate_tree": {"type": "string", "pattern": "^[0-9a-f]{40}(?:[0-9a-f]{24})?$"},
+    "wip_version": {"type": "string", "pattern": "^0\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"},
+    "tester_kind": {"enum": ["independent", "maintainer"]},
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "arch", "git_version", "filesystem", "paths_redacted"],
+      "properties": {
+        "os": {"type": "string", "minLength": 1, "maxLength": 40},
+        "arch": {"type": "string", "minLength": 1, "maxLength": 40},
+        "git_version": {"type": "string", "minLength": 1, "maxLength": 80},
+        "filesystem": {"type": "string", "minLength": 1, "maxLength": 80},
+        "paths_redacted": {"const": true}
+      }
+    },
+    "started_at": {"type": "string", "format": "date-time"},
+    "finished_at": {"type": "string", "format": "date-time"},
+    "scenarios": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "outcome",
+          "observed_code",
+          "head_preserved",
+          "index_preserved",
+          "unexpected_ref_update"
+        ],
+        "properties": {
+          "id": {
+            "enum": [
+              "shared-split",
+              "overlap-refusal",
+              "verify-failure",
+              "duplicate-refusal",
+              "worktree-split",
+              "reconcile-idempotency",
+              "install-binary",
+              "install-skill"
+            ]
+          },
+          "outcome": {"enum": ["passed", "failed", "blocked"]},
+          "observed_code": {"type": "string", "minLength": 1, "maxLength": 80},
+          "head_preserved": {"type": "boolean"},
+          "index_preserved": {"type": "boolean"},
+          "unexpected_ref_update": {"type": "boolean"},
+          "note": {"type": "string", "maxLength": 400}
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"id": {"enum": ["shared-split", "worktree-split", "reconcile-idempotency", "install-binary", "install-skill"]}}},
+            "then": {"properties": {"observed_code": {"const": "OK"}}}
+          },
+          {
+            "if": {"properties": {"id": {"const": "overlap-refusal"}}},
+            "then": {"properties": {"observed_code": {"const": "LEASE_CONFLICT"}}}
+          },
+          {
+            "if": {"properties": {"id": {"const": "verify-failure"}}},
+            "then": {"properties": {"observed_code": {"const": "VERIFY_FAILED"}}}
+          },
+          {
+            "if": {"properties": {"id": {"const": "duplicate-refusal"}}},
+            "then": {"properties": {"observed_code": {"enum": ["EMPTY_COMMIT_GROUP", "EMPTY_SELECTION"]}}}
+          }
+        ]
+      },
+      "allOf": [
+        {
+          "contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "shared-split"}}},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "overlap-refusal"}}},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "verify-failure"}}},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "duplicate-refusal"}}},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "worktree-split"}}},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "reconcile-idempotency"}}},
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "install-binary"}}},
+          "minContains": 0,
+          "maxContains": 1
+        },
+        {
+          "contains": {"type": "object", "required": ["id"], "properties": {"id": {"const": "install-skill"}}},
+          "minContains": 0,
+          "maxContains": 1
+        }
+      ]
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contains_repository_path",
+        "contains_file_content",
+        "contains_commit_message",
+        "contains_remote_url",
+        "contains_username",
+        "contains_credential"
+      ],
+      "properties": {
+        "contains_repository_path": {"const": false},
+        "contains_file_content": {"const": false},
+        "contains_commit_message": {"const": false},
+        "contains_remote_url": {"const": false},
+        "contains_username": {"const": false},
+        "contains_credential": {"const": false}
+      }
+    },
+    "overall": {"enum": ["passed", "failed", "blocked"]}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"overall": {"const": "passed"}}},
+      "then": {
+        "properties": {
+          "scenarios": {
+            "items": {
+              "properties": {
+                "outcome": {"const": "passed"},
+                "head_preserved": {"const": true},
+                "index_preserved": {"const": true},
+                "unexpected_ref_update": {"const": false}
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

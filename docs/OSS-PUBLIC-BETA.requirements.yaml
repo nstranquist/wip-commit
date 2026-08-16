@@ -130,6 +130,7 @@
       "human_gate": true,
       "acceptance": "main requires pull requests, review, required CI, and blocks force pushes and deletion.",
       "evidence": [
+        {"kind": "prepared-runbook", "value": "docs/HOSTED-SETUP.md defines the authority boundary, ruleset sequence, observed-check-name rule, and evidence receipt.", "observed_on": "2026-08-16"},
         {"kind": "gap", "value": "No remote is configured in the local checkout.", "observed_on": "2026-08-14"}
       ]
     },
@@ -142,7 +143,8 @@
       "human_gate": true,
       "acceptance": "Private vulnerability reporting, dependency alerts, secret scanning, and security notifications are enabled.",
       "evidence": [
-        {"kind": "prepared-policy", "value": "SECURITY.md and .github/ISSUE_TEMPLATE/config.yml", "observed_on": "2026-08-14"}
+        {"kind": "prepared-policy", "value": "SECURITY.md and .github/ISSUE_TEMPLATE/config.yml", "observed_on": "2026-08-14"},
+        {"kind": "prepared-runbook", "value": "docs/HOSTED-SETUP.md defines the current GitHub security-setting sequence and evidence receipt.", "observed_on": "2026-08-16"}
       ]
     },
     {
@@ -169,7 +171,8 @@
       "human_gate": true,
       "acceptance": "A non-author tests shared setup, worktree setup, split capture, failure behavior, and reconciliation.",
       "evidence": [
-        {"kind": "gap", "value": "No independent beta receipt exists.", "observed_on": "2026-08-14"}
+        {"kind": "prepared-protocol", "value": "docs/BETA-EXERCISE.md and docs/BETA-EXERCISE.schema.json define six required scenarios and a redacted machine-checkable receipt.", "observed_on": "2026-08-16"},
+        {"kind": "gap", "value": "No non-author beta receipt exists.", "observed_on": "2026-08-16"}
       ]
     },
     {
@@ -389,6 +392,18 @@
       "acceptance": "A candidate verification command does not inherit the host WIP lane, agent, session, target ref, commit object, source index, or stale candidate-tree value. It receives only the current WIP_CANDIDATE_TREE value from wip.",
       "evidence": [
         {"kind": "test", "value": "TestVerificationEnvironmentDoesNotInheritCaptureIdentity and the self-hosted VERIFY_FAILED isolation receipt in docs/DOGFOOD.md", "observed_on": "2026-08-16"}
+      ]
+    },
+    {
+      "id": "OSS-031",
+      "gate": "public-beta",
+      "title": "Define the capture-to-landing boundary",
+      "status": "verified",
+      "owner": "maintainer",
+      "human_gate": false,
+      "acceptance": "The beta remains capture-only. A KEP defines future exact fast-forward landing for unchecked targets, refuses checked-out targets unless a worktree-aware adapter owns them, and requires recovery, privacy, lock, backup-ref, and receipt gates before implementation.",
+      "evidence": [
+        {"kind": "artifact", "value": "docs/KEP-0001-capture-to-landing-boundary.md", "observed_on": "2026-08-16"}
       ]
     }
   ]
