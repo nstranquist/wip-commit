@@ -161,12 +161,9 @@ func Run(ctx context.Context, options Options) (result Result, err error) {
 	}
 	result.SourceHead, result.SourceWorktree = head, options.Repo.Root
 
-	indexRoot := filepath.Join(options.Repo.GitDir, "wip", "indexes")
-	if err := os.MkdirAll(indexRoot, 0o700); err != nil {
-		return result, fail.Wrap("TEMP_INDEX_FAILED", err)
-	}
-	if err := os.Chmod(indexRoot, 0o700); err != nil {
-		return result, fail.Wrap("TEMP_INDEX_FAILED", err)
+	indexRoot, err := preparePrivateIndexRoot(options.Repo.GitDir)
+	if err != nil {
+		return result, err
 	}
 	preHook, err := prepareHook(ctx, options.Repo, indexRoot, "pre-commit")
 	if err != nil {
@@ -238,8 +235,15 @@ func Run(ctx context.Context, options Options) (result Result, err error) {
 		if err := verifyTree(ctx, options.Repo, environment, tree, group.Verify, options.DefaultVerifyTimeout); err != nil {
 			return result, err
 		}
-		repairs, _ := options.Repo.NULPaths(ctx, nil, "diff", "--no-renames", "--name-only", "-z", preHookTree, tree)
-		planned := PlannedCommit{Index: groupIndex + 1, Message: group.Message, Parent: parentCommit, Tree: tree, ChangedPaths: changed, VerifyCount: len(group.Verify), Repairs: len(repairs)}
+		repairs, repairsErr := options.Repo.NULPaths(ctx, nil, "diff", "--no-renames", "--name-only", "-z", preHookTree, tree)
+		if repairsErr != nil {
+			return result, fail.Wrap("PRIVATE_INDEX_FAILED", repairsErr)
+		}
+		plannedParent := parentCommit
+		if options.DryRun && groupIndex > 0 {
+			plannedParent = ""
+		}
+		planned := PlannedCommit{Index: groupIndex + 1, Message: group.Message, Parent: plannedParent, Tree: tree, ChangedPaths: changed, VerifyCount: len(group.Verify), Repairs: len(repairs)}
 		if !options.DryRun {
 			commit, commitErr := options.Repo.Text(ctx, environment, "commit-tree", tree, "-p", parentCommit, "-m", group.Message)
 			if commitErr != nil {
@@ -306,6 +310,33 @@ func Run(ctx context.Context, options Options) (result Result, err error) {
 		}
 	}
 	return result, nil
+}
+
+func preparePrivateIndexRoot(gitDir string) (string, error) {
+	root, err := os.OpenRoot(gitDir)
+	if err != nil {
+		return "", fail.Wrap("TEMP_INDEX_FAILED", err)
+	}
+	defer func() { _ = root.Close() }()
+	for _, directory := range []string{"wip", "wip/indexes"} {
+		info, statErr := root.Lstat(directory)
+		if errors.Is(statErr, os.ErrNotExist) {
+			if mkdirErr := root.Mkdir(directory, 0o700); mkdirErr != nil && !errors.Is(mkdirErr, os.ErrExist) {
+				return "", fail.Wrap("TEMP_INDEX_FAILED", mkdirErr)
+			}
+			info, statErr = root.Lstat(directory)
+		}
+		if statErr != nil {
+			return "", fail.Wrap("TEMP_INDEX_FAILED", statErr)
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return "", fail.Errorf("TEMP_INDEX_FAILED", "%s is not a regular private-index directory", directory)
+		}
+		if chmodErr := root.Chmod(directory, 0o700); chmodErr != nil {
+			return "", fail.Wrap("TEMP_INDEX_FAILED", chmodErr)
+		}
+	}
+	return filepath.Join(gitDir, "wip", "indexes"), nil
 }
 
 func normalizeGroups(repo gitx.Repo, input []Group, allowWIP bool) ([]Group, []string, error) {

@@ -23,6 +23,25 @@ type Repo struct {
 	GitDir    string
 }
 
+var isolatedRepositoryEnvironment = map[string]bool{
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES": true,
+	"GIT_COMMON_DIR":                   true,
+	"GIT_CONFIG":                       true,
+	"GIT_CONFIG_COUNT":                 true,
+	"GIT_CONFIG_PARAMETERS":            true,
+	"GIT_DIR":                          true,
+	"GIT_GRAFT_FILE":                   true,
+	"GIT_IMPLICIT_WORK_TREE":           true,
+	"GIT_NAMESPACE":                    true,
+	"GIT_NO_REPLACE_OBJECTS":           true,
+	"GIT_OBJECT_DIRECTORY":             true,
+	"GIT_PREFIX":                       true,
+	"GIT_QUARANTINE_PATH":              true,
+	"GIT_REPLACE_REF_BASE":             true,
+	"GIT_SHALLOW_FILE":                 true,
+	"GIT_WORK_TREE":                    true,
+}
+
 func Discover(ctx context.Context, directory string) (Repo, error) {
 	if directory == "" {
 		var err error
@@ -110,6 +129,12 @@ func (repo Repo) NULPaths(ctx context.Context, env []string, args ...string) ([]
 	return out, nil
 }
 
+// Environment binds child Git commands to the discovered repository. It keeps
+// the caller's active index unless extra supplies a private GIT_INDEX_FILE.
+func Environment(extra []string) []string {
+	return mergedEnvironment(extra)
+}
+
 func (repo Repo) Exit(ctx context.Context, env []string, args ...string) (int, error) {
 	cmd := process.CommandContext(ctx, "git", append([]string{"-C", repo.Root}, args...)...)
 	cmd.Env = mergedEnvironment(env)
@@ -124,6 +149,29 @@ func (repo Repo) Exit(ctx context.Context, env []string, args ...string) (int, e
 		return exitErr.ExitCode(), nil
 	}
 	return -1, fmt.Errorf("git %s: %s: %w", strings.Join(args, " "), strings.TrimSpace(stderr.String()), err)
+}
+
+// CheckStagedDiff runs Git's staged whitespace check. Git uses exit status 2
+// when the diff contains whitespace errors. Other failures are infrastructure
+// errors and must not look like a completed check.
+func (repo Repo) CheckStagedDiff(ctx context.Context) (bool, error) {
+	cmd := process.CommandContext(ctx, "git", "-C", repo.Root, "diff", "--cached", "--check")
+	cmd.Env = mergedEnvironment(nil)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 2 {
+		return false, nil
+	}
+	detail := strings.TrimSpace(stderr.String())
+	if detail == "" {
+		detail = err.Error()
+	}
+	return false, fmt.Errorf("git diff --cached --check: %s", detail)
 }
 
 func (repo Repo) IndexEntries(ctx context.Context, env []string) (map[string]string, error) {
@@ -201,5 +249,28 @@ func commandRaw(ctx context.Context, dir string, env []string, args ...string) (
 }
 
 func mergedEnvironment(extra []string) []string {
-	return append(append([]string(nil), os.Environ()...), extra...)
+	environment := make([]string, 0, len(os.Environ())+len(extra))
+	for _, entry := range os.Environ() {
+		if !isolatesRepositoryEnvironment(environmentName(entry)) {
+			environment = append(environment, entry)
+		}
+	}
+	for _, entry := range extra {
+		if !isolatesRepositoryEnvironment(environmentName(entry)) {
+			environment = append(environment, entry)
+		}
+	}
+	return environment
+}
+
+func environmentName(entry string) string {
+	name, _, _ := strings.Cut(entry, "=")
+	return strings.ToUpper(name)
+}
+
+func isolatesRepositoryEnvironment(name string) bool {
+	if isolatedRepositoryEnvironment[name] {
+		return true
+	}
+	return strings.HasPrefix(name, "GIT_CONFIG_KEY_") || strings.HasPrefix(name, "GIT_CONFIG_VALUE_")
 }

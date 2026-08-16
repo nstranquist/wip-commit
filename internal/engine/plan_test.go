@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/nstranquist/wip-commit/internal/fail"
@@ -61,6 +64,79 @@ func TestRunSplitPlanPreservesHeadAndFullIndex(t *testing.T) {
 	}
 	if _, clean, err := ValidateApplied(context.Background(), repo, result.PlanID, result.PlanDigest, target, result.FinalCommit); err != nil || !clean {
 		t.Fatalf("completed validation clean=%v err=%v", clean, err)
+	}
+}
+
+func TestDryRunDoesNotInventSplitParentCommits(t *testing.T) {
+	repo := engineTestRepo(t)
+	write(t, repo.Root, "core.txt", "new core\n")
+	write(t, repo.Root, "docs.txt", "new docs\n")
+	engineGit(t, repo.Root, "add", "core.txt", "docs.txt")
+	head := engineGit(t, repo.Root, "rev-parse", "HEAD")
+	index := engineGitRaw(t, repo.Root, "ls-files", "-s", "-z")
+	target := "refs/heads/wip/agent/dry-run-parents"
+	engineGit(t, repo.Root, "update-ref", target, head, "")
+
+	result, err := Run(context.Background(), Options{
+		Repo: repo, TargetRef: target, ExpectedRef: head, ExpectedSourceHead: head,
+		AllowedPaths: []string{"core.txt", "docs.txt"},
+		Groups: []Group{
+			{Message: "fix(core): preview core change", Files: []string{"core.txt"}},
+			{Message: "docs(guide): preview docs change", Files: []string{"docs.txt"}},
+		},
+		DryRun: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Commits) != 2 || result.Commits[0].Parent != head || result.Commits[1].Parent != "" {
+		t.Fatalf("dry-run parents = %#v", result.Commits)
+	}
+	if result.Commits[0].Commit != "" || result.Commits[1].Commit != "" || result.RefUpdated {
+		t.Fatalf("dry-run published commit evidence: %#v", result)
+	}
+	if got := engineGit(t, repo.Root, "rev-parse", target); got != head {
+		t.Fatalf("dry-run moved ref: %s -> %s", head, got)
+	}
+	if got := engineGitRaw(t, repo.Root, "ls-files", "-s", "-z"); got != index {
+		t.Fatal("dry-run changed source index")
+	}
+}
+
+func TestOversizedIntentFailsBeforeRefPublication(t *testing.T) {
+	repo := engineTestRepo(t)
+	head := engineGit(t, repo.Root, "rev-parse", "HEAD")
+	target := "refs/heads/wip/agent/oversized-intent"
+	engineGit(t, repo.Root, "update-ref", target, head, "")
+	paths := make([]string, 6_000)
+	for index := range paths {
+		paths[index] = fmt.Sprintf("generated/%04d/%080d.txt", index, index)
+	}
+	result := Result{
+		TargetRef:         target,
+		ExpectedRef:       head,
+		FinalCommit:       strings.Repeat("b", len(head)),
+		SourceHead:        head,
+		SourceIndexDigest: "sha256:" + strings.Repeat("c", 64),
+		FinalTree:         strings.Repeat("d", len(head)),
+		HookDigest:        "sha256:" + strings.Repeat("e", 64),
+		RequestedPaths:    paths,
+		Commits: []PlannedCommit{{
+			Index: 1, Message: "feat(records): exercise bounded intent", Parent: head,
+			Commit: strings.Repeat("b", len(head)), Tree: strings.Repeat("d", len(head)), ChangedPaths: paths,
+		}},
+	}
+	if _, err := newIntent(result, paths); fail.Code(err) != "INTENT_WRITE_FAILED" {
+		t.Fatalf("oversized intent error = %v (%s)", err, fail.Code(err))
+	}
+	if got := engineGit(t, repo.Root, "rev-parse", target); got != head {
+		t.Fatalf("oversized intent moved ref: %s -> %s", head, got)
+	}
+	intentRoot := filepath.Join(repo.CommonDir, "wip", "v1", "intents")
+	if entries, err := os.ReadDir(intentRoot); err == nil && len(entries) != 0 {
+		t.Fatalf("oversized intent left durable records: %#v", entries)
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
 	}
 }
 
@@ -217,6 +293,79 @@ func TestVerifyDirectoryCannotFollowSymlinkOutsideCandidate(t *testing.T) {
 	}
 }
 
+func TestPrivateIndexDirectoryCannotFollowSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires platform-specific privileges")
+	}
+	for _, test := range []struct {
+		name string
+		link string
+	}{
+		{name: "state root", link: "wip"},
+		{name: "index directory", link: "wip/indexes"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repo := engineTestRepo(t)
+			outside := t.TempDir()
+			link := filepath.Join(repo.GitDir, filepath.FromSlash(test.link))
+			if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, link); err != nil {
+				t.Fatal(err)
+			}
+			write(t, repo.Root, "core.txt", "new core\n")
+			engineGit(t, repo.Root, "add", "core.txt")
+			head := engineGit(t, repo.Root, "rev-parse", "HEAD")
+			target := "refs/heads/wip/agent/index-symlink"
+			engineGit(t, repo.Root, "update-ref", target, head, "")
+			_, err := Run(context.Background(), Options{
+				Repo: repo, TargetRef: target, ExpectedRef: head, ExpectedSourceHead: head,
+				AllowedPaths: []string{"core.txt"},
+				Groups:       []Group{{Message: "fix(index): reject escaped private index", Files: []string{"core.txt"}}},
+			})
+			if fail.Code(err) != "TEMP_INDEX_FAILED" {
+				t.Fatalf("error = %v (%s)", err, fail.Code(err))
+			}
+			if got := engineGit(t, repo.Root, "rev-parse", target); got != head {
+				t.Fatalf("target moved despite escaped private index: %s", got)
+			}
+			entries, readErr := os.ReadDir(outside)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("private-index files escaped Git directory: %#v", entries)
+			}
+		})
+	}
+}
+
+func TestPrivateIndexDirectoryCreationConvergesConcurrently(t *testing.T) {
+	gitDirectory := t.TempDir()
+	const workers = 16
+	start := make(chan struct{})
+	errorsByWorker := make([]error, workers)
+	paths := make([]string, workers)
+	var wait sync.WaitGroup
+	for index := 0; index < workers; index++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			<-start
+			paths[index], errorsByWorker[index] = preparePrivateIndexRoot(gitDirectory)
+		}()
+	}
+	close(start)
+	wait.Wait()
+	wanted := filepath.Join(gitDirectory, "wip", "indexes")
+	for index, err := range errorsByWorker {
+		if err != nil || paths[index] != wanted {
+			t.Fatalf("worker %d path=%q err=%v", index, paths[index], err)
+		}
+	}
+}
+
 func TestIntentDigestAndCompletedRefAreRevalidated(t *testing.T) {
 	repo := engineTestRepo(t)
 	write(t, repo.Root, "core.txt", "new core\n")
@@ -279,6 +428,42 @@ func TestFutureIntentSchemaRequiresMigration(t *testing.T) {
 	}
 	if _, _, err := LoadIntent(repo, result.PlanID, result.PlanDigest); fail.Code(err) != "MIGRATION_REQUIRED" {
 		t.Fatalf("future intent error = %v (%s)", err, fail.Code(err))
+	}
+}
+
+func TestLoadIntentRejectsSelfConsistentInvalidStructure(t *testing.T) {
+	repo := engineTestRepo(t)
+	write(t, repo.Root, "core.txt", "new core\n")
+	engineGit(t, repo.Root, "add", "core.txt")
+	head := engineGit(t, repo.Root, "rev-parse", "HEAD")
+	target := "refs/heads/wip/agent/invalid-intent"
+	engineGit(t, repo.Root, "update-ref", target, head, "")
+	result, err := Run(context.Background(), Options{
+		Repo: repo, TargetRef: target, ExpectedRef: head, ExpectedSourceHead: head,
+		AllowedPaths: []string{"core.txt"},
+		Groups:       []Group{{Message: "fix(intent): reject invalid structure", Files: []string{"core.txt"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, path, err := LoadIntent(repo, result.PlanID, result.PlanDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent.Commits[0].ChangedPaths = []string{"../outside"}
+	intent.PlanDigest, err = digestIntent(intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.MarshalIndent(intent, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(body, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadIntent(repo, result.PlanID, intent.PlanDigest); fail.Code(err) != "INVALID_INTENT" {
+		t.Fatalf("invalid self-consistent intent error = %v (%s)", err, fail.Code(err))
 	}
 }
 

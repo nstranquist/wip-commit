@@ -12,7 +12,10 @@ var fold = cases.Fold()
 
 func Key(path string) string {
 	path = filepath.ToSlash(filepath.Clean(path))
-	return norm.NFC.String(fold.String(norm.NFC.String(path)))
+	folded := fold.String(norm.NFC.String(path))
+	// Unicode case folding uses uppercase forms for some Cherokee characters.
+	// Lowercasing the folded form gives every supported path an idempotent key.
+	return norm.NFC.String(strings.ToLower(folded))
 }
 
 func Overlap(left, right string) bool {

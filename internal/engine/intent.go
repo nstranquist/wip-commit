@@ -18,6 +18,7 @@ import (
 	"github.com/nstranquist/wip-commit/internal/fail"
 	"github.com/nstranquist/wip-commit/internal/gitx"
 	"github.com/nstranquist/wip-commit/internal/pathid"
+	"github.com/nstranquist/wip-commit/internal/recordjson"
 	"github.com/nstranquist/wip-commit/internal/safeio"
 	"github.com/nstranquist/wip-commit/internal/strictjson"
 )
@@ -28,6 +29,12 @@ const (
 )
 
 var planIDPattern = regexp.MustCompile(`^plan-[0-9a-f]{24}$`)
+
+var (
+	intentIdentifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+	intentObjectPattern     = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
+	intentDigestPattern     = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+)
 
 type Intent struct {
 	SchemaVersion     int             `json:"schema_version"`
@@ -58,11 +65,8 @@ type ReconcileResult struct {
 
 func newIntent(result Result, allowed []string) (Intent, error) {
 	now := time.Now().UTC()
-	entropy := strings.Join([]string{result.TargetRef, result.ExpectedRef, result.FinalCommit, result.SourceIndexDigest}, "\x00")
-	sum := sha256.Sum256([]byte(entropy))
 	intent := Intent{
 		SchemaVersion:     intentSchemaVersion,
-		PlanID:            "plan-" + hex.EncodeToString(sum[:12]),
 		State:             "prepared",
 		TargetRef:         result.TargetRef,
 		ExpectedOld:       result.ExpectedRef,
@@ -77,12 +81,16 @@ func newIntent(result Result, allowed []string) (Intent, error) {
 		CreatedAt:         now,
 		UpdatedAt:         now,
 	}
+	intent.PlanID = canonicalIntentID(intent.TargetRef, intent.ExpectedOld, intent.ExpectedNew, intent.SourceIndexDigest)
 	sort.Strings(intent.AllowedPaths)
 	digest, err := digestIntent(intent)
 	if err != nil {
 		return Intent{}, err
 	}
 	intent.PlanDigest = digest
+	if err := validateIntentRecordCapacity(intent); err != nil {
+		return Intent{}, err
+	}
 	return intent, nil
 }
 
@@ -103,11 +111,11 @@ func createIntent(repo gitx.Repo, intent Intent) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	body, err := json.MarshalIndent(intent, "", "  ")
+	body, err := marshalIntentRecord(intent)
 	if err != nil {
-		return "", fail.Wrap("INTENT_WRITE_FAILED", err)
+		return "", err
 	}
-	err = atomicfile.Create(path, append(body, '\n'), 0o600)
+	err = atomicfile.CreateWithTempDir(path, filepath.Join(repo.CommonDir, "wip", "v1", "locks"), body, 0o600)
 	if err == nil {
 		return path, nil
 	}
@@ -156,7 +164,118 @@ func LoadIntent(repo gitx.Repo, planID, expectedDigest string) (Intent, string, 
 	if intent.State != "prepared" && intent.State != "applied" && intent.State != "complete" {
 		return intent, path, fail.New("INVALID_INTENT", "plan intent state is invalid")
 	}
+	if err := validateIntentRecord(repo, intent); err != nil {
+		return intent, path, err
+	}
 	return intent, path, nil
+}
+
+func validateIntentRecord(repo gitx.Repo, intent Intent) error {
+	if !intentDigestPattern.MatchString(intent.PlanDigest) || !intentDigestPattern.MatchString(intent.SourceIndexDigest) || !intentDigestPattern.MatchString(intent.HookDigest) {
+		return fail.New("INVALID_INTENT", "plan intent digest fields are invalid")
+	}
+	if !intentObjectPattern.MatchString(intent.ExpectedOld) || !intentObjectPattern.MatchString(intent.ExpectedNew) || !intentObjectPattern.MatchString(intent.SourceHead) || !intentObjectPattern.MatchString(intent.FinalTree) || intent.ExpectedOld == intent.ExpectedNew {
+		return fail.New("INVALID_INTENT", "plan intent object identities are invalid")
+	}
+	if !validIntentTargetRef(intent.TargetRef) {
+		return fail.New("INVALID_INTENT", "plan intent target ref is invalid")
+	}
+	if intent.CreatedAt.IsZero() || intent.UpdatedAt.IsZero() || intent.UpdatedAt.Before(intent.CreatedAt) {
+		return fail.New("INVALID_INTENT", "plan intent timestamps are invalid")
+	}
+	wantedID := canonicalIntentID(intent.TargetRef, intent.ExpectedOld, intent.ExpectedNew, intent.SourceIndexDigest)
+	if intent.PlanID != wantedID {
+		return fail.New("INVALID_INTENT", "plan intent id does not match its immutable publication identity")
+	}
+	if err := validateIntentPaths(repo, intent.RequestedPaths, "requested"); err != nil {
+		return err
+	}
+	if err := validateIntentPaths(repo, intent.AllowedPaths, "allowed"); err != nil {
+		return err
+	}
+	for _, requested := range intent.RequestedPaths {
+		if !pathid.Covered(requested, intent.AllowedPaths) {
+			return fail.New("INVALID_INTENT", "plan intent requested paths exceed its allowed paths")
+		}
+	}
+	if len(intent.Commits) == 0 || len(intent.Commits) > maxCommitGroups {
+		return fail.New("INVALID_INTENT", "plan intent commit count is outside the safety bounds")
+	}
+	cursor := intent.ExpectedOld
+	seenPaths := map[string]bool{}
+	for index, planned := range intent.Commits {
+		if planned.Index != index+1 || planned.Parent != cursor || !intentObjectPattern.MatchString(planned.Parent) || !intentObjectPattern.MatchString(planned.Commit) || !intentObjectPattern.MatchString(planned.Tree) {
+			return fail.Errorf("INVALID_INTENT", "plan intent commit %d identity or parent chain is invalid", index+1)
+		}
+		if err := ValidateMessage(planned.Message, true); err != nil {
+			return fail.Wrap("INVALID_INTENT", fmt.Errorf("commit %d message: %w", index+1, err))
+		}
+		if planned.VerifyCount < 0 || planned.VerifyCount > maxVerifyCommands || planned.Repairs < 0 {
+			return fail.Errorf("INVALID_INTENT", "plan intent commit %d counters are invalid", index+1)
+		}
+		if err := validateIntentPaths(repo, planned.ChangedPaths, fmt.Sprintf("commit %d changed", index+1)); err != nil {
+			return err
+		}
+		for _, path := range planned.ChangedPaths {
+			key := pathid.Key(path)
+			if seenPaths[key] || !pathid.Covered(path, intent.RequestedPaths) || !pathid.Covered(path, intent.AllowedPaths) {
+				return fail.Errorf("INVALID_INTENT", "plan intent commit %d path set is duplicated or out of scope", index+1)
+			}
+			seenPaths[key] = true
+		}
+		cursor = planned.Commit
+	}
+	last := intent.Commits[len(intent.Commits)-1]
+	if cursor != intent.ExpectedNew || last.Tree != intent.FinalTree {
+		return fail.New("INVALID_INTENT", "plan intent result does not match its final commit")
+	}
+	return nil
+}
+
+func validateIntentPaths(repo gitx.Repo, paths []string, label string) error {
+	if len(paths) == 0 || len(paths) > maxPlannedPaths {
+		return fail.New("INVALID_INTENT", "plan intent "+label+" path count is outside the safety bounds")
+	}
+	canonical, err := repo.NormalizePaths(paths)
+	if err != nil || !sameOrderedStrings(canonical, paths) {
+		return fail.New("INVALID_INTENT", "plan intent "+label+" paths are not canonical")
+	}
+	return nil
+}
+
+func validIntentTargetRef(ref string) bool {
+	remainder := strings.TrimPrefix(ref, "refs/heads/wip/")
+	if remainder == ref {
+		return false
+	}
+	parts := strings.Split(remainder, "/")
+	if len(parts) != 2 {
+		return false
+	}
+	for _, part := range parts {
+		if !intentIdentifierPattern.MatchString(part) || strings.Contains(part, "..") || strings.HasSuffix(part, ".") || strings.HasSuffix(part, ".lock") {
+			return false
+		}
+	}
+	return true
+}
+
+func canonicalIntentID(targetRef, expectedOld, expectedNew, sourceIndexDigest string) string {
+	entropy := strings.Join([]string{targetRef, expectedOld, expectedNew, sourceIndexDigest}, "\x00")
+	sum := sha256.Sum256([]byte(entropy))
+	return "plan-" + hex.EncodeToString(sum[:12])
+}
+
+func sameOrderedStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func MarkIntent(repo gitx.Repo, planID, expectedDigest, state string) (Intent, error) {
@@ -169,14 +288,31 @@ func MarkIntent(repo gitx.Repo, planID, expectedDigest, state string) (Intent, e
 		return Intent{}, fail.Errorf("INVALID_INTENT_STATE", "cannot move plan intent from %s to %s", intent.State, state)
 	}
 	intent.State, intent.UpdatedAt = state, time.Now().UTC()
-	body, err := json.MarshalIndent(intent, "", "  ")
+	body, err := marshalIntentRecord(intent)
 	if err != nil {
-		return Intent{}, fail.Wrap("INTENT_WRITE_FAILED", err)
+		return Intent{}, err
 	}
-	if err := atomicfile.Write(path, append(body, '\n'), 0o600); err != nil {
+	if err := atomicfile.WriteWithTempDir(path, filepath.Join(repo.CommonDir, "wip", "v1", "locks"), body, 0o600); err != nil {
 		return Intent{}, fail.Wrap("INTENT_WRITE_FAILED", err)
 	}
 	return intent, nil
+}
+
+func marshalIntentRecord(intent Intent) ([]byte, error) {
+	return recordjson.Marshal(intent, maxIntentBytes, "INTENT_WRITE_FAILED", "plan intent")
+}
+
+func validateIntentRecordCapacity(intent Intent) error {
+	maximum := intent
+	maximum.State = "complete"
+	maximum.CreatedAt = maximumRecordTimestamp()
+	maximum.UpdatedAt = maximum.CreatedAt
+	_, err := marshalIntentRecord(maximum)
+	return err
+}
+
+func maximumRecordTimestamp() time.Time {
+	return time.Date(2000, time.December, 31, 23, 59, 59, 123456789, time.UTC)
 }
 
 // ValidateApplied verifies every immutable receipt field against Git objects.

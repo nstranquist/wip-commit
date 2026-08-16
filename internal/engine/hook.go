@@ -160,8 +160,7 @@ func hooksDigest(hooks ...boundHook) string {
 }
 
 func hookEnvironment(index, target, object string) []string {
-	environment := append([]string(nil), os.Environ()...)
-	environment = append(environment, "GIT_INDEX_FILE="+index, "WIP_TARGET_REF="+target)
+	environment := gitx.Environment([]string{"GIT_INDEX_FILE=" + index, "WIP_TARGET_REF=" + target})
 	if strings.TrimSpace(object) != "" {
 		environment = append(environment, "WIP_COMMIT_OBJECT="+object)
 	}

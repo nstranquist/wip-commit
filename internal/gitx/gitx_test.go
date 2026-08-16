@@ -5,15 +5,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestDiscoverAndNormalizePathsFailClosed(t *testing.T) {
 	directory := t.TempDir()
-	command := exec.Command("git", "-C", directory, "init", "-b", "main")
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v\n%s", err, output)
-	}
+	runGit(t, directory, "init", "-b", "main")
 	repo, err := Discover(context.Background(), directory)
 	if err != nil {
 		t.Fatal(err)
@@ -35,4 +33,117 @@ func TestDiscoverAndNormalizePathsFailClosed(t *testing.T) {
 	if _, err := os.Stat(repo.GitDir); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestCheckStagedDiffDistinguishesWhitespaceFromGitFailure(t *testing.T) {
+	t.Run("clean", func(t *testing.T) {
+		repo, file := initializedRepo(t)
+		if err := os.WriteFile(file, []byte("clean\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, repo.Root, "add", "tracked.txt")
+
+		passed, err := repo.CheckStagedDiff(context.Background())
+		if err != nil || !passed {
+			t.Fatalf("CheckStagedDiff() = %v, %v; want true, nil", passed, err)
+		}
+	})
+
+	t.Run("whitespace", func(t *testing.T) {
+		repo, file := initializedRepo(t)
+		if err := os.WriteFile(file, []byte("trailing whitespace \n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, repo.Root, "add", "tracked.txt")
+
+		passed, err := repo.CheckStagedDiff(context.Background())
+		if err != nil || passed {
+			t.Fatalf("CheckStagedDiff() = %v, %v; want false, nil", passed, err)
+		}
+	})
+
+	t.Run("git failure", func(t *testing.T) {
+		repo, _ := initializedRepo(t)
+		indexPath := filepath.Join(repo.GitDir, "index")
+		if err := os.Remove(indexPath); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(indexPath, 0o700); err != nil {
+			t.Fatal(err)
+		}
+
+		passed, err := repo.CheckStagedDiff(context.Background())
+		if err == nil || passed {
+			t.Fatalf("CheckStagedDiff() = %v, %v; want false and an error", passed, err)
+		}
+	})
+}
+
+func TestDiscoverIgnoresInheritedRepositoryRoutingEnvironment(t *testing.T) {
+	first, _ := initializedRepo(t)
+	second, _ := initializedRepo(t)
+	firstHead := gitText(t, first.Root, "rev-parse", "HEAD")
+
+	t.Setenv("GIT_DIR", second.GitDir)
+	t.Setenv("GIT_WORK_TREE", second.Root)
+	t.Setenv("GIT_COMMON_DIR", second.CommonDir)
+	t.Setenv("GIT_OBJECT_DIRECTORY", filepath.Join(second.CommonDir, "objects"))
+	t.Setenv("GIT_NAMESPACE", "foreign")
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "core.worktree")
+	t.Setenv("GIT_CONFIG_VALUE_0", second.Root)
+
+	discovered, err := Discover(context.Background(), first.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if discovered.Root != first.Root || discovered.CommonDir != first.CommonDir || discovered.GitDir != first.GitDir {
+		t.Fatalf("Discover() = %#v, want %#v", discovered, first)
+	}
+	head, err := discovered.Text(context.Background(), nil, "rev-parse", "HEAD")
+	if err != nil || head != firstHead {
+		t.Fatalf("repository HEAD = %q, %v; want %q", head, err, firstHead)
+	}
+	for _, entry := range Environment(nil) {
+		if isolatesRepositoryEnvironment(environmentName(entry)) {
+			t.Fatalf("isolated variable survived: %s", strings.SplitN(entry, "=", 2)[0])
+		}
+	}
+}
+
+func initializedRepo(t *testing.T) (Repo, string) {
+	t.Helper()
+	directory := t.TempDir()
+	runGit(t, directory, "init", "-b", "main")
+	runGit(t, directory, "config", "user.name", "WIP Test")
+	runGit(t, directory, "config", "user.email", "wip-test@example.invalid")
+	file := filepath.Join(directory, "tracked.txt")
+	if err := os.WriteFile(file, []byte("base\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, directory, "add", "tracked.txt")
+	runGit(t, directory, "commit", "-m", "base")
+	repo, err := Discover(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return repo, file
+}
+
+func runGit(t *testing.T, directory string, args ...string) {
+	t.Helper()
+	command := exec.Command("git", append([]string{"-C", directory}, args...)...)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, output)
+	}
+}
+
+func gitText(t *testing.T, directory string, args ...string) string {
+	t.Helper()
+	command := exec.Command("git", append([]string{"-C", directory}, args...)...)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, output)
+	}
+	return strings.TrimSpace(string(output))
 }
