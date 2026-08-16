@@ -80,7 +80,7 @@
           },
           {
             "if": {"properties": {"id": {"const": "overlap-refusal"}}},
-            "then": {"properties": {"observed_code": {"const": "LEASE_CONFLICT"}}}
+            "then": {"properties": {"observed_code": {"const": "PATH_LEASE_CONFLICT"}}}
           },
           {
             "if": {"properties": {"id": {"const": "verify-failure"}}},

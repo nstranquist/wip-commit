@@ -1,0 +1,91 @@
+{
+  "schema_version": "1.0.0",
+  "candidate_commit": "e3efaf27f75389f5440ef8211dadd707848f9714",
+  "candidate_tree": "401897e80bfd5542e63d19386263a593d80f47d2",
+  "wip_version": "0.1.0-beta.1",
+  "tester_kind": "maintainer",
+  "environment": {
+    "os": "darwin",
+    "arch": "arm64",
+    "git_version": "2.55.0",
+    "filesystem": "APFS",
+    "paths_redacted": true
+  },
+  "started_at": "2026-08-16T22:07:03Z",
+  "finished_at": "2026-08-16T22:09:53Z",
+  "scenarios": [
+    {
+      "id": "shared-split",
+      "outcome": "passed",
+      "observed_code": "OK",
+      "head_preserved": true,
+      "index_preserved": true,
+      "unexpected_ref_update": false
+    },
+    {
+      "id": "overlap-refusal",
+      "outcome": "passed",
+      "observed_code": "PATH_LEASE_CONFLICT",
+      "head_preserved": true,
+      "index_preserved": true,
+      "unexpected_ref_update": false
+    },
+    {
+      "id": "verify-failure",
+      "outcome": "passed",
+      "observed_code": "VERIFY_FAILED",
+      "head_preserved": true,
+      "index_preserved": true,
+      "unexpected_ref_update": false
+    },
+    {
+      "id": "duplicate-refusal",
+      "outcome": "passed",
+      "observed_code": "EMPTY_COMMIT_GROUP",
+      "head_preserved": true,
+      "index_preserved": true,
+      "unexpected_ref_update": false
+    },
+    {
+      "id": "worktree-split",
+      "outcome": "passed",
+      "observed_code": "OK",
+      "head_preserved": true,
+      "index_preserved": true,
+      "unexpected_ref_update": false
+    },
+    {
+      "id": "reconcile-idempotency",
+      "outcome": "passed",
+      "observed_code": "OK",
+      "head_preserved": true,
+      "index_preserved": true,
+      "unexpected_ref_update": false
+    },
+    {
+      "id": "install-binary",
+      "outcome": "passed",
+      "observed_code": "OK",
+      "head_preserved": true,
+      "index_preserved": true,
+      "unexpected_ref_update": false
+    },
+    {
+      "id": "install-skill",
+      "outcome": "passed",
+      "observed_code": "OK",
+      "head_preserved": true,
+      "index_preserved": true,
+      "unexpected_ref_update": false
+    }
+  ],
+  "privacy": {
+    "contains_repository_path": false,
+    "contains_file_content": false,
+    "contains_commit_message": false,
+    "contains_remote_url": false,
+    "contains_username": false,
+    "contains_credential": false
+  },
+  "overall": "passed"
+}

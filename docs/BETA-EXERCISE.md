@@ -58,8 +58,9 @@ Record scenario ID `shared-split`.
 1. Keep the first shared lane active.
 2. Create a second lane with another agent and session ID.
 3. Claim one path that the first lane owns.
-4. Verify that the command returns `LEASE_CONFLICT`.
-5. Verify that no second lease or unexpected ref was published.
+4. Verify that the command returns `PATH_LEASE_CONFLICT`.
+5. Verify that the failed claim did not add the overlapping path, move either
+   lane ref, or publish an unexpected lease.
 
 Record scenario ID `overlap-refusal`.
 

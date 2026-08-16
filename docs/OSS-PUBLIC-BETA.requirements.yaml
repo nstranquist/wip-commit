@@ -172,6 +172,7 @@
       "acceptance": "A non-author tests shared setup, worktree setup, split capture, failure behavior, and reconciliation.",
       "evidence": [
         {"kind": "prepared-protocol", "value": "docs/BETA-EXERCISE.md and docs/BETA-EXERCISE.schema.json define six required scenarios and a redacted machine-checkable receipt.", "observed_on": "2026-08-16"},
+        {"kind": "maintainer-rehearsal", "value": "docs/BETA-EXERCISE.maintainer-2026-08-16.json passes the protocol and schema but does not satisfy the non-author acceptance rule.", "observed_on": "2026-08-16"},
         {"kind": "gap", "value": "No non-author beta receipt exists.", "observed_on": "2026-08-16"}
       ]
     },

@@ -127,3 +127,77 @@ The program fulfilled the shared-checkout capture contract during this
 exercise. It also exposed an important product rule: safety checks can reject a
 poor split, but a maintainer must still review semantic intent and dependency
 closure.
+
+## 2026-08-16 isolated candidate and beta exercise
+
+This exercise used a source-current `v0.1.0-beta.1` binary. It captured the
+reviewed OSS changes and then ran the public beta protocol in a new repository.
+
+Evidence scope: local maintainer evidence. The clean-room receipt does not
+replace the required non-author receipt, hosted CI, or hosted repository
+settings.
+
+### Reviewed candidate split
+
+The dry-run and applied plan used the same five groups:
+
+1. `67fcc41364ffe237f16d30e034fc699f60224555` — `test(cli): isolate ambient WIP identity`
+2. `c073e29880d8faa347281800c7aadaef6397a901` — `test(engine): verify applied receipt evidence`
+3. `32349513594cfe2fbf4b3b504ae349e2b5feb9f1` — `test(gitx): cover exact Git output helpers`
+4. `9a4b03bafefe961bc89a87b2629cc8ac72d06af5` — `test(release): reject unsafe source states`
+5. `e3efaf27f75389f5440ef8211dadd707848f9714` — `docs(oss): define beta evidence and landing gates`
+
+The plan ID was `plan-a432b3b1ad844c6b944c99ad`. Its digest was
+`sha256:84c3e5bca6d1cdd4ba5d0fac47e81bcca01b05fe668960c249f9a0416e9a328c`.
+The final tree was `401897e80bfd5542e63d19386263a593d80f47d2`.
+
+The detached source `HEAD` stayed at
+`7248dff5fc973dff8aa3ccf85010f7125633552f`. The complete source index file
+kept the same SHA-256 digest. The final lane tree equaled the staged tree. Two
+reconciliation runs returned the same already-complete receipt. An exact
+repeat returned `EMPTY_COMMIT_GROUP` without moving the lane ref.
+
+### Test-harness correction
+
+The first complete test run inherited the maintainer's active `WIP_LANE`,
+`WIP_AGENT`, and `WIP_SESSION`. Eleven in-process CLI tests then selected the
+wrong identity and returned `LANE_NOT_ACTIVE`.
+
+The CLI test helper now clears ambient identity for disposable fixtures. A
+separate test preserves coverage of the intentional environment defaults. The
+complete CLI suite then passed with a deliberately foreign host identity.
+
+### Protocol corrections
+
+Review found that the first receipt schema did not require six distinct
+scenario IDs. It could accept repeated IDs with different result objects. The
+schema now requires each mandatory ID exactly once and permits each optional
+installation ID at most once. A passing receipt also requires every scenario
+to pass, both source states to stay preserved, and no unexpected ref update.
+
+The clean-room run found that overlapping claims return
+`PATH_LEASE_CONFLICT`, not `LEASE_CONFLICT`. The protocol and schema now use
+the implemented typed code. The run also confirmed that a failed verification
+preserves the later staged change. The duplicate-refusal procedure therefore
+restores the prior staged snapshot explicitly before it checks for an empty
+group.
+
+### Clean-room result
+
+All six mandatory scenarios passed in a disposable repository with no remote
+and repository-local test identity:
+
+- shared two-commit split capture.
+- overlapping path refusal.
+- failed candidate verification isolation.
+- duplicate group refusal.
+- linked-worktree two-commit split capture.
+- idempotent receipt reconciliation.
+
+Binary and portable-skill installation also passed in new temporary
+directories. The installed binary reported `0.1.0-beta.1`, and both installed
+skill files were byte-equal to the source bundle.
+
+The redacted maintainer receipt is
+[BETA-EXERCISE.maintainer-2026-08-16.json](BETA-EXERCISE.maintainer-2026-08-16.json).
+It validates the protocol without closing the independent beta gate.
