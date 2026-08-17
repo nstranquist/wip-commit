@@ -126,7 +126,22 @@ func TestConcurrentSharedLanesCaptureDisjointPaths(t *testing.T) {
 			t.Fatalf("decode %s output %q: %v; stderr=%s", captured.lane, captured.stdout, err, captured.stderr)
 		}
 		if captured.code != 0 || !output.OK {
-			t.Fatalf("%s capture: code=%d output=%#v stderr=%s", captured.lane, captured.code, output, captured.stderr)
+			errorCode, errorMessage := "", ""
+			if output.Error != nil {
+				errorCode, errorMessage = output.Error.Code, output.Error.Message
+			}
+			data, marshalErr := json.Marshal(output.Data)
+			if marshalErr != nil {
+				data = []byte("<could not encode data: " + marshalErr.Error() + ">")
+			}
+			var recovery engine.Result
+			if output.Data != nil {
+				_ = json.Unmarshal(data, &recovery)
+			}
+			t.Fatalf("%s capture: code=%d error_code=%q error_message=%q recovery={ref_updated:%t plan_id:%q plan_digest:%q intent_path:%q intent_state:%q final_commit:%q} data=%s stdout=%q stderr=%q",
+				captured.lane, captured.code, errorCode, errorMessage,
+				recovery.RefUpdated, recovery.PlanID, recovery.PlanDigest, recovery.IntentPath, recovery.IntentState, recovery.FinalCommit,
+				data, captured.stdout, captured.stderr)
 		}
 		var result engine.Result
 		decodeData(t, output.Data, &result)
