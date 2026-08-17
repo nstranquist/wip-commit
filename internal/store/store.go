@@ -331,6 +331,9 @@ func (store Store) LaneLock(id string, wait time.Duration) (*filelock.Lock, erro
 	return lock, nil
 }
 
+// The registry fence serializes operational lane and lease records. Windows
+// can reject an open while another process atomically replaces a record. A
+// caller that also needs a lane lock must acquire the lane lock first.
 func (store Store) registryLock(wait time.Duration) (*filelock.Lock, error) {
 	lock, err := filelock.Acquire(filepath.Join(store.Root, "locks", "leases.lock"), wait)
 	if err != nil {
@@ -394,7 +397,7 @@ func (store Store) Create(ctx context.Context, options CreateOptions) (Lane, err
 	}
 	candidate := Lane{SchemaVersion: SchemaVersion, ID: options.ID, Agent: options.Agent, Session: options.Session, Mode: options.Mode, Ref: ref, BaseRef: options.BaseRef, BaseSHA: base, CurrentSHA: base, Worktree: worktree, State: "creating"}
 	if _, statErr := os.Stat(store.lanePath(options.ID)); statErr == nil {
-		existing, loadErr := store.Load(options.ID)
+		existing, loadErr := store.loadLane(options.ID)
 		if loadErr != nil {
 			return Lane{}, loadErr
 		}
@@ -444,7 +447,7 @@ func (store Store) Claim(id, agent, session string, paths []string) (Lease, erro
 		return Lease{}, err
 	}
 	defer func() { _ = lock.Release() }()
-	lane, err := store.Load(id)
+	lane, err := store.loadLane(id)
 	if err != nil {
 		return Lease{}, err
 	}
@@ -538,7 +541,7 @@ func (store Store) Renew(id, agent, session string) ([]Lease, error) {
 		return nil, err
 	}
 	defer func() { _ = lock.Release() }()
-	lane, err := store.Load(id)
+	lane, err := store.loadLane(id)
 	if err != nil {
 		return nil, err
 	}
@@ -580,6 +583,15 @@ func (store Store) Renew(id, agent, session string) ([]Lease, error) {
 }
 
 func (store Store) Current(agent, session, id string) (Status, error) {
+	registry, err := store.registryLock(0)
+	if err != nil {
+		return Status{}, err
+	}
+	defer func() { _ = registry.Release() }()
+	return store.currentLocked(agent, session, id)
+}
+
+func (store Store) currentLocked(agent, session, id string) (Status, error) {
 	entries, err := readRecordEntries(filepath.Join(store.Root, "lanes"))
 	if err != nil {
 		return Status{}, fail.Wrap("STORE_FAILED", err)
@@ -590,7 +602,7 @@ func (store Store) Current(agent, session, id string) (Status, error) {
 		if entryErr != nil {
 			return Status{}, entryErr
 		}
-		lane, loadErr := store.Load(fileID)
+		lane, loadErr := store.loadLane(fileID)
 		if loadErr != nil {
 			return Status{}, loadErr
 		}
@@ -613,11 +625,20 @@ func (store Store) Current(agent, session, id string) (Status, error) {
 		sort.Strings(ids)
 		return Status{}, fail.New("LANE_AMBIGUOUS", "multiple lanes match; select one: "+strings.Join(ids, ", "))
 	}
-	return store.Status(matches[0].ID)
+	return store.statusLocked(matches[0].ID)
 }
 
 func (store Store) Status(id string) (Status, error) {
-	lane, err := store.Load(id)
+	registry, err := store.registryLock(0)
+	if err != nil {
+		return Status{}, err
+	}
+	defer func() { _ = registry.Release() }()
+	return store.statusLocked(id)
+}
+
+func (store Store) statusLocked(id string) (Status, error) {
+	lane, err := store.loadLane(id)
 	if err != nil {
 		return Status{}, err
 	}
@@ -626,6 +647,15 @@ func (store Store) Status(id string) (Status, error) {
 }
 
 func (store Store) Load(id string) (Lane, error) {
+	registry, err := store.registryLock(0)
+	if err != nil {
+		return Lane{}, err
+	}
+	defer func() { _ = registry.Release() }()
+	return store.loadLane(id)
+}
+
+func (store Store) loadLane(id string) (Lane, error) {
 	if err := validateID(id, "lane"); err != nil {
 		return Lane{}, err
 	}
@@ -647,6 +677,15 @@ func (store Store) Load(id string) (Lane, error) {
 }
 
 func (store Store) LoadLease(id string) (Lease, error) {
+	registry, err := store.registryLock(0)
+	if err != nil {
+		return Lease{}, err
+	}
+	defer func() { _ = registry.Release() }()
+	return store.loadLease(id)
+}
+
+func (store Store) loadLease(id string) (Lease, error) {
 	if err := validateID(id, "lease"); err != nil {
 		return Lease{}, err
 	}
@@ -668,6 +707,15 @@ func (store Store) LoadLease(id string) (Lease, error) {
 }
 
 func (store Store) ActivePaths(id string) ([]string, error) {
+	registry, err := store.registryLock(0)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = registry.Release() }()
+	return store.activePathsLocked(id)
+}
+
+func (store Store) activePathsLocked(id string) ([]string, error) {
 	leases, err := store.leases(id, true)
 	if err != nil {
 		return nil, err
@@ -686,7 +734,7 @@ func (store Store) ValidateCapture(ctx context.Context, expected Lane, expectedP
 		return err
 	}
 	defer func() { _ = registry.Release() }()
-	current, err := store.Load(expected.ID)
+	current, err := store.loadLane(expected.ID)
 	if err != nil {
 		return err
 	}
@@ -722,7 +770,7 @@ func (store Store) RefreshCaptureLease(ctx context.Context, expected Lane, expec
 		return err
 	}
 	defer func() { _ = registry.Release() }()
-	current, err := store.Load(expected.ID)
+	current, err := store.loadLane(expected.ID)
 	if err != nil {
 		return err
 	}
@@ -940,7 +988,12 @@ func (store Store) validateCaptureIdentity(ctx context.Context, current, expecte
 }
 
 func (store Store) RecordCommit(ctx context.Context, id, commit string) error {
-	lane, err := store.Load(id)
+	registry, err := store.registryLock(0)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = registry.Release() }()
+	lane, err := store.loadLane(id)
 	if err != nil {
 		return err
 	}
@@ -980,7 +1033,7 @@ func (store Store) Release(id, agent, session string, abort bool) error {
 		return err
 	}
 	defer func() { _ = registry.Release() }()
-	lane, err := store.Load(id)
+	lane, err := store.loadLane(id)
 	if err != nil {
 		return err
 	}
@@ -1041,7 +1094,7 @@ func (store Store) worktreeConflict(id, worktree string, mode Mode) (string, err
 		if entryErr != nil {
 			return "", entryErr
 		}
-		lane, loadErr := store.Load(fileID)
+		lane, loadErr := store.loadLane(fileID)
 		if loadErr != nil {
 			return "", loadErr
 		}
@@ -1064,7 +1117,7 @@ func (store Store) leases(laneID string, activeOnly bool) ([]Lease, error) {
 		if entryErr != nil {
 			return nil, entryErr
 		}
-		lease, loadErr := store.LoadLease(fileID)
+		lease, loadErr := store.loadLease(fileID)
 		if loadErr != nil {
 			return nil, loadErr
 		}

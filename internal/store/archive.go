@@ -51,6 +51,11 @@ func (store Store) ArchiveCandidates(before time.Time) ([]ArchiveCandidate, erro
 	if before.IsZero() {
 		return nil, fail.New("INVALID_ARGS", "archive cutoff cannot be zero")
 	}
+	registry, err := store.registryLock(0)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = registry.Release() }()
 	entries, err := readRecordEntries(filepath.Join(store.Root, "lanes"))
 	if err != nil {
 		return nil, err
@@ -61,7 +66,7 @@ func (store Store) ArchiveCandidates(before time.Time) ([]ArchiveCandidate, erro
 			return nil, fail.New("ARCHIVE_REFUSED", "lane record directory contains an unexpected entry: "+entry.Name())
 		}
 		id := strings.TrimSuffix(entry.Name(), ".json")
-		candidate, eligible, err := store.archiveCandidate(id, before)
+		candidate, eligible, err := store.archiveCandidateLocked(id, before)
 		if err != nil {
 			return nil, err
 		}
@@ -77,8 +82,8 @@ func (store Store) ArchiveCandidates(before time.Time) ([]ArchiveCandidate, erro
 	return candidates, nil
 }
 
-func (store Store) archiveCandidate(id string, before time.Time) (ArchiveCandidate, bool, error) {
-	lane, err := store.Load(id)
+func (store Store) archiveCandidateLocked(id string, before time.Time) (ArchiveCandidate, bool, error) {
+	lane, err := store.loadLane(id)
 	if err != nil {
 		return ArchiveCandidate{}, false, err
 	}
@@ -169,7 +174,7 @@ func (store Store) archiveLocked(ctx context.Context, receipt ArchiveReceipt, re
 	if !resume {
 		// Rebuild only the exact reviewed records under every relevant lock.
 		for _, candidate := range receipt.Candidates {
-			fresh, eligible, err := store.archiveCandidate(candidate.LaneID, receipt.Before)
+			fresh, eligible, err := store.archiveCandidateLocked(candidate.LaneID, receipt.Before)
 			if err != nil {
 				return ArchiveReceipt{}, err
 			}
