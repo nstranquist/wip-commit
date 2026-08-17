@@ -32,6 +32,8 @@ Planned first prerelease: `v0.1.0-beta.1`.
 
 ### Changed
 
+- Operational lane and lease reads now use the same registry fence as atomic
+  record replacement. This prevents Windows sharing violations during capture.
 - Unsupported state-directory, lane, lease, intent, and profile schemas now
   fail with `MIGRATION_REQUIRED` before the command changes state.
 - The minimum build toolchain is Go 1.25.12. This patched floor excludes
