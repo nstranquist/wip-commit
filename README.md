@@ -51,6 +51,33 @@ go install github.com/nstranquist/wip-commit/cmd/wip@v0.1.0-beta.1
 
 Before you run that command, verify that the tag exists at that public address.
 
+## Quick start
+
+Build the current checkout, then start the setup wizard inside the Git
+repository where you want to capture work:
+
+```text
+go build -trimpath -o ./bin/wip ./cmd/wip
+./bin/wip init
+```
+
+The wizard prints the lane environment command. Load it in the agent shell,
+stage only owned paths, review the proposed groups, and capture them:
+
+```text
+eval "$(./bin/wip env --lane <lane-id>)"
+git add -- <owned-path>...
+./bin/wip plan
+./bin/wip commit
+./bin/wip release
+```
+
+Use a linked worktree when one agent should own the complete checkout. Use
+shared mode when cooperating agents need disjoint path leases in one checkout.
+Automation should pass an exact JSON plan. Start with
+[examples/shared-split-plan.json](examples/shared-split-plan.json) and replace
+every message, path, and verification command with reviewed project values.
+
 ## Use the agent skill
 
 The portable skill is in [skills/wip-commit](skills/wip-commit). Install that
@@ -136,7 +163,27 @@ The command uses `git worktree add --detach`. It refuses to replace an existing
 directory. If an existing directory contains a matching linked worktree at the
 requested base, the command reuses it.
 
-## Capture work
+## Configuration
+
+`wip` has no repository configuration file and no background service. The
+`wip init` command records the selected lane, worktree, owner, and path leases
+below the repository's common Git directory. Linked worktrees therefore share
+one coordination domain.
+
+Use `--repo-dir` to select a repository without changing directories. Use
+`--json` when a program needs typed results. `wip env` exports `WIP_LANE`,
+`WIP_AGENT`, and `WIP_SESSION` for later commands. An explicit
+`GIT_INDEX_FILE` selects the caller's source index; other inherited
+repository-routing variables do not override the selected repository.
+
+Commit plans hold per-group verification commands and optional timeouts. The
+default verification and hook timeout is two minutes, and the maximum is 24
+hours. Keep secrets and machine-specific paths out of plan files and commit
+messages.
+
+## Usage
+
+### Capture work
 
 Load the lane identity in each agent shell:
 
@@ -317,6 +364,32 @@ Reconciliation compares the target ref, every parent, tree, message, changed pat
 allowed scope, and final tree before it updates lane metadata. Exact retries are
 idempotent.
 
+## Troubleshooting
+
+Start with structured state evidence:
+
+```text
+wip --json doctor
+wip --json status
+```
+
+Do not stash, reset, clean, delete state, or force-update a lane ref during
+recovery. Common actions are:
+
+- `LANE_NOT_ACTIVE`: run `wip init`, or load the exact lane identity.
+- `PATH_LEASE_CONFLICT`: select disjoint paths or wait for the owner to release
+  its lease.
+- `SOURCE_INDEX_MOVED`: inspect the selected staged paths and rerun the complete
+  plan.
+- `LOCK_TIMEOUT`: inspect active lanes, wait for the current operation, and
+  retry.
+- `ref_updated: true`: preserve `plan_id` and `plan_digest`, then run the exact
+  `wip reconcile` command.
+
+[The error and recovery guide](docs/ERRORS.md) lists every typed code and its
+required action. [SUPPORT.md](SUPPORT.md) explains what evidence is safe to
+include in a report.
+
 ## Safety scope
 
 `wip` protects coordination between cooperating local processes. It does not
@@ -355,6 +428,7 @@ changes. These procedures do not authorize a push or release tag.
 Project authority and succession are in [GOVERNANCE.md](GOVERNANCE.md).
 Current support and safe incident-reporting guidance are in
 [SUPPORT.md](SUPPORT.md). Security reports use [SECURITY.md](SECURITY.md).
+Community participation follows [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 The [open source practice guide](docs/OSS-PRACTICE-GUIDE.md) maps official
 guidance to project rules and records when maintainers must review it again.
 Local self-hosting receipts and safe-failure results are in
