@@ -1,0 +1,24 @@
+[
+  {
+    "message": "fix(parser): preserve source error locations",
+    "files": [
+      "internal/parser"
+    ],
+    "verify": [
+      {
+        "argv": [
+          "go",
+          "test",
+          "./internal/parser"
+        ],
+        "timeout_ms": 120000
+      }
+    ]
+  },
+  {
+    "message": "docs(parser): explain source error locations",
+    "files": [
+      "docs/parser.md"
+    ]
+  }
+]
