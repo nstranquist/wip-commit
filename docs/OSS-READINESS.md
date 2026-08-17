@@ -75,8 +75,8 @@ capture-only scope. It does not authorize a release tag.
 - Enabled dependency alerts, security updates, secret scanning, push
   protection, and private vulnerability reporting.
 - A clean public-module installation smoke test for the exact untagged commit.
-- A proposed hosted-correction receipt KEP for the finding that occurred after
-  the first push.
+- An accepted hosted-correction KEP, source-bound fail-closed command, schema,
+  test matrix, and finalized private receipt for the first hosted correction.
 - Fail-closed tests for unsupported state directories and record schemas.
 - Symlink-escape and dual-domain creation-race tests.
 - Concurrent first-use directory and no-clobber publication tests.
@@ -88,17 +88,15 @@ capture-only scope. It does not authorize a release tag.
 
 ## Required before the public beta tag
 
-1. Implement and run the correction receipt in
-   [KEP-0002](KEP-0002-hosted-candidate-correction.md).
-2. Verify the maintainer's personal security-alert notifications.
-3. Approve a Code of Conduct and configure confidential conduct reporting.
-4. Ask at least one independent user to follow
+1. Verify the maintainer's personal security-alert notifications.
+2. Approve a Code of Conduct and configure confidential conduct reporting.
+3. Ask at least one independent user to follow
    [BETA-EXERCISE.md](BETA-EXERCISE.md) for shared and worktree flows. Retain a
    redacted receipt that passes [BETA-EXERCISE.schema.json](BETA-EXERCISE.schema.json).
-5. Obtain explicit owner approval for `v0.1.0-beta.1`.
-6. Create the signed tag only after every tracked public-beta gate passes.
-7. Verify the hosted archives, checksums, and attestations.
-8. Install the final tag through the public Go module path.
+4. Obtain explicit owner approval for `v0.1.0-beta.1`.
+5. Create the signed tag only after every tracked public-beta gate passes.
+6. Verify the hosted archives, checksums, and attestations.
+7. Install the final tag through the public Go module path.
 
 ## Required before a stable release
 
