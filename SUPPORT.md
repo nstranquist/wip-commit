@@ -19,9 +19,10 @@ credentials in a report.
 For a security issue, follow [SECURITY.md](SECURITY.md). Do not report a
 suspected vulnerability in a public issue.
 
-A confidential conduct-reporting channel is not configured in this local
-checkout. The public-beta plan requires the owner to configure that channel and
-approve a Code of Conduct before the project solicits public contributions.
+Community participation follows [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Use
+the repository host's private reporting form on the Security tab for a
+confidential conduct report. Start the title with `Code of Conduct:`. Do not
+put a conduct report in a public issue.
 
 ## Report a capture problem
 

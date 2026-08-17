@@ -326,7 +326,8 @@
       "human_gate": true,
       "acceptance": "Before public contributions are solicited, the owner approves a Code of Conduct, names its enforcement responsibility, and configures a confidential conduct-reporting path.",
       "evidence": [
-        {"kind": "gap", "value": "No approved Code of Conduct or confidential conduct-reporting channel exists in this local checkout.", "observed_on": "2026-08-16"}
+        {"kind": "configuration", "value": "GitHub private vulnerability reporting is enabled and supplies the confidential repository channel named in SUPPORT.md and the proposed Code of Conduct.", "observed_on": "2026-08-17"},
+        {"kind": "human-gate", "value": "CODE_OF_CONDUCT.md names the repository owner as moderator and adapts Contributor Covenant 3.0. Owner review and merge remain required before contributions are solicited.", "observed_on": "2026-08-17"}
       ]
     },
     {
