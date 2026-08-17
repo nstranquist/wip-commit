@@ -10,6 +10,7 @@ import (
 func TestPortableSkillContract(t *testing.T) {
 	skillPath := filepath.Join("skills", "wip-commit", "SKILL.md")
 	body := readOSSTestFile(t, skillPath)
+	body = strings.ReplaceAll(body, "\r\n", "\n")
 
 	parts := strings.SplitN(body, "---\n", 3)
 	if len(parts) != 3 || parts[0] != "" {

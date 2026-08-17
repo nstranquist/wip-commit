@@ -13,5 +13,8 @@ docs/PUBLICATION-HANDOFF.schema.json
 docs/RELEASE.md
 go.mod
 oss_plan_test.go
+oss_skill_test.go
 scripts/publication-handoff/main.go
 scripts/publication-handoff/main_test.go
+scripts/release/main.go
+scripts/release/main_test.go

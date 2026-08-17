@@ -31,7 +31,7 @@ const (
 
 var (
 	semverTagPattern = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
-	versionPattern   = regexp.MustCompile(`(?m)^var version = "([^"]+)"$`)
+	versionPattern   = regexp.MustCompile(`(?m)^var version = "([^"]+)"\r?$`)
 	supportedTargets = []target{
 		{OS: "darwin", Arch: "amd64"},
 		{OS: "darwin", Arch: "arm64"},

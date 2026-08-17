@@ -247,6 +247,26 @@ func TestSourceVersionAndExclusiveFileCreation(t *testing.T) {
 	}
 }
 
+func TestSourceVersionAcceptsWindowsLineEndings(t *testing.T) {
+	root := t.TempDir()
+	commandDir := filepath.Join(root, "cmd", "wip")
+	if err := os.MkdirAll(commandDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(commandDir, "main.go")
+	body := []byte("package main\r\n\r\nvar version = \"0.1.0-beta.1\"\r\n")
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	version, err := sourceVersion(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != "0.1.0-beta.1" {
+		t.Fatalf("source version = %q", version)
+	}
+}
+
 func TestRequireCleanFailsClosed(t *testing.T) {
 	repository := t.TempDir()
 	releaseGit(t, repository, "init", "-b", "main")
