@@ -3,15 +3,18 @@
 ## Current decision
 
 The project has a public source repository with active hosted controls. This
-agent-facing change is locally publish-ready for a `v0.1.0-beta.1` candidate.
-It is not released or publicly launched. The evidence does not support an
-adoption or stable `v1.0.0` claim.
+repository's historical source candidates have passing hosted checks. The
+agent-facing candidate is locally publish-ready, but it has not passed its own
+protected hosted checks. No public beta tag or GitHub release exists. The
+evidence does not support a released, launched, adopted, or stable claim.
 
 The detailed release decision and current evidence are in
 [OSS-PUBLIC-BETA.md](OSS-PUBLIC-BETA.md) and
-[OSS-PUBLIC-BETA.requirements.yaml](OSS-PUBLIC-BETA.requirements.yaml). The plan
-is accepted. The approval fixes the name, module path, and capture-only scope.
-It does not authorize an agent push or a release tag.
+[OSS-PUBLIC-BETA.requirements.yaml](OSS-PUBLIC-BETA.requirements.yaml). Public
+execution evidence is in [PUBLICATION-EVIDENCE.md](PUBLICATION-EVIDENCE.md).
+
+The plan is accepted. The approval fixes the name, module path, and
+capture-only scope. It does not authorize a release tag.
 
 The live public-source and hosted-control check is in
 [HOSTED-STATUS-2026-08-18.md](HOSTED-STATUS-2026-08-18.md).
@@ -75,6 +78,15 @@ The live public-source and hosted-control check is in
   schema.
 - A human-gated hosted-repository setup and evidence runbook.
 - A fail-closed pre-first-push receipt and exact human publication handoff.
+- Passing hosted Linux, macOS, Windows, race, lint, and dependency-review
+  checks on the exact public source candidate.
+- An active no-bypass `main` ruleset with rebase-only pull requests, review,
+  provider-bound checks, linear history, and ref protections.
+- Enabled dependency alerts, security updates, secret scanning, push
+  protection, and private vulnerability reporting.
+- A clean public-module installation smoke test for the exact untagged commit.
+- A proposed hosted-correction receipt KEP for the finding that occurred after
+  the first push.
 - Fail-closed tests for unsupported state directories and record schemas.
 - Symlink-escape and dual-domain creation-race tests.
 - Concurrent first-use directory and no-clobber publication tests.
@@ -89,16 +101,18 @@ The live public-source and hosted-control check is in
 1. Run the exact agent-facing candidate through the protected pull-request
    path. Require hosted Linux, macOS, Windows, race, lint, and dependency-review
    checks. Local cross-compilation is not a Windows runtime test.
-2. Verify the maintainer's personal security-alert notifications.
-3. Approve a Code of Conduct and configure confidential conduct reporting
+2. Implement and run the correction receipt in
+   [KEP-0002](KEP-0002-hosted-candidate-correction.md).
+3. Verify the maintainer's personal security-alert notifications.
+4. Approve a Code of Conduct and configure confidential conduct reporting
    before soliciting public contributions.
-4. Ask at least one independent user to follow
+5. Ask at least one independent user to follow
    [BETA-EXERCISE.md](BETA-EXERCISE.md) for shared and worktree flows. Retain a
    redacted receipt that passes [BETA-EXERCISE.schema.json](BETA-EXERCISE.schema.json).
-5. Obtain explicit owner approval for `v0.1.0-beta.1`.
-6. Create and push the signed tag only after every tracked public-beta gate
+6. Obtain explicit owner approval for `v0.1.0-beta.1`.
+7. Create and push the signed tag only after every tracked public-beta gate
    passes. Check that the hosted release attestation succeeds.
-7. Verify the published archives and checksums. Install the final tag through
+8. Verify the published archives and checksums. Install the final tag through
    the public Go module path.
 
 ## Required before a stable release
@@ -119,5 +133,7 @@ The live public-source and hosted-control check is in
 ## Publication boundary
 
 The source repository, history, ruleset, and hosted security settings are
-public. No tag, release, announcement, or adoption evidence exists. This local
-candidate does not authorize a push or change any hosted state.
+public, and the active ruleset requires reviewed pull requests for later `main`
+updates. No tag, release, announcement, or adoption evidence exists. Do not
+infer those states from public source availability. This local candidate does
+not authorize a push or any hosted-state change.

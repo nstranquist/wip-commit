@@ -28,10 +28,24 @@ The owner approved a capture-only public beta with these boundaries:
 - Keep branch landing, merging, pushing, and remote coordination out of scope.
 - Use `v0.1.0-beta.1` only after all public-beta gates pass.
 
+## Hosted state on 2026-08-17
+
+The public source repository now exists at
+[`nstranquist/wip-commit`](https://github.com/nstranquist/wip-commit).
+Commit `206fa8b6a1dde1d97081133e4d447c0881849922` passed the hosted candidate and
+final `main` checks.
+
+The active `main` ruleset and security settings passed the hosted setup audit.
+[PUBLICATION-EVIDENCE.md](PUBLICATION-EVIDENCE.md) contains the public record.
+
+No beta tag or GitHub release exists. The independent beta, conduct, correction
+receipt, security-notification, tag-approval, and tagged-install gates remain.
+
 This approval fixes the repository name, module path, and capture-only scope.
 It does not approve a release tag. The owner separately completed the first
-source publication. The historical authority boundary is in
-[PUBLICATION-HANDOFF.md](PUBLICATION-HANDOFF.md).
+source publication through the first-push handoff on 2026-08-17. The historical
+authority boundary remains in
+[PUBLICATION-HANDOFF.md](PUBLICATION-HANDOFF.md); do not run it again.
 
 ## Why this plan exists
 
@@ -45,7 +59,7 @@ adding a YAML dependency.
 
 Use these status values:
 
-- `verified`: Local evidence passed on the recorded source.
+- `verified`: Recorded local or hosted evidence passed on the exact source.
 - `prepared`: The repository artifact exists, but hosted evidence is absent.
 - `planned`: Owner-controlled implementation work remains.
 - `human-gated`: An owner decision or external mutation is required.
