@@ -38,8 +38,8 @@ final `main` checks.
 The active `main` ruleset and security settings passed the hosted setup audit.
 [PUBLICATION-EVIDENCE.md](PUBLICATION-EVIDENCE.md) contains the public record.
 
-No beta tag or GitHub release exists. The independent beta, conduct, correction
-receipt, security-notification, tag-approval, and tagged-install gates remain.
+No beta tag or GitHub release exists. The independent beta, conduct,
+security-notification, tag-approval, and tagged-install gates remain.
 
 This approval fixes the repository name, module path, and capture-only scope.
 It does not approve a release tag. The owner separately completed the first
@@ -103,6 +103,8 @@ The owner-controlled repository work is complete. The checkout now contains:
   versions.
 - an exact minimum Go 1.25.12 gate that excludes reachable standard-library
   vulnerabilities found in Go 1.25.0.
+- a source-bound, fail-closed hosted-correction command, schema, negative test
+  matrix, and finalized private receipt for the first corrected candidate.
 
 Two clean six-target rehearsals produced equal directory trees. Every recorded
 archive checksum passed, and the native archive reported the target version.

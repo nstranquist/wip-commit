@@ -85,8 +85,8 @@ The live public-source and hosted-control check is in
 - Enabled dependency alerts, security updates, secret scanning, push
   protection, and private vulnerability reporting.
 - A clean public-module installation smoke test for the exact untagged commit.
-- A proposed hosted-correction receipt KEP for the finding that occurred after
-  the first push.
+- An accepted hosted-correction KEP, source-bound fail-closed command, schema,
+  test matrix, and finalized private receipt for the first hosted correction.
 - Fail-closed tests for unsupported state directories and record schemas.
 - Symlink-escape and dual-domain creation-race tests.
 - Concurrent first-use directory and no-clobber publication tests.
@@ -101,18 +101,16 @@ The live public-source and hosted-control check is in
 1. Run the exact agent-facing candidate through the protected pull-request
    path. Require hosted Linux, macOS, Windows, race, lint, and dependency-review
    checks. Local cross-compilation is not a Windows runtime test.
-2. Implement and run the correction receipt in
-   [KEP-0002](KEP-0002-hosted-candidate-correction.md).
-3. Verify the maintainer's personal security-alert notifications.
-4. Approve a Code of Conduct and configure confidential conduct reporting
+2. Verify the maintainer's personal security-alert notifications.
+3. Approve a Code of Conduct and configure confidential conduct reporting
    before soliciting public contributions.
-5. Ask at least one independent user to follow
+4. Ask at least one independent user to follow
    [BETA-EXERCISE.md](BETA-EXERCISE.md) for shared and worktree flows. Retain a
    redacted receipt that passes [BETA-EXERCISE.schema.json](BETA-EXERCISE.schema.json).
-6. Obtain explicit owner approval for `v0.1.0-beta.1`.
-7. Create and push the signed tag only after every tracked public-beta gate
+5. Obtain explicit owner approval for `v0.1.0-beta.1`.
+6. Create and push the signed tag only after every tracked public-beta gate
    passes. Check that the hosted release attestation succeeds.
-8. Verify the published archives and checksums. Install the final tag through
+7. Verify the published archives and checksums. Install the final tag through
    the public Go module path.
 
 ## Required before a stable release
