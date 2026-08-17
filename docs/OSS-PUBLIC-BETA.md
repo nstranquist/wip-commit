@@ -148,6 +148,8 @@ The public beta must retain these properties:
     symmetric across Unicode case pairs and component boundaries.
 24. Inherited Git variables cannot redirect repository discovery, refs, object
     storage, or prepared hooks away from the selected canonical checkout.
+25. Operational lane and lease reads use the record-replacement registry
+    fence, including the final durable commit receipt.
 
 The threat model remains part of the release contract. Cooperating processes
 must honor leases. Hooks and `verify` commands remain trusted repository code.
