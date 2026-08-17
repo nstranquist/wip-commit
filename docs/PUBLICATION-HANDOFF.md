@@ -27,8 +27,9 @@ Pull request 1 closed without a merge commit. Then `main` moved by a direct
 fast-forward.
 
 The pre-first-push command cannot validate this correction because the target
-now exists. [KEP-0002](KEP-0002-hosted-candidate-correction.md) defines the
-source-current correction receipt that remains required before the tag.
+now exists. The `finalized` procedure in
+[PUBLICATION-CORRECTION.md](PUBLICATION-CORRECTION.md) verified the completed
+sequence and produced the required private correction receipt.
 
 ## Boundary
 

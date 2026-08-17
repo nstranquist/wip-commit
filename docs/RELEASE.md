@@ -78,6 +78,9 @@ Use [PUBLICATION-HANDOFF.md](PUBLICATION-HANDOFF.md) for the first push and
 [HOSTED-SETUP.md](HOSTED-SETUP.md) for the hosted controls. Require a
 non-author receipt produced with [BETA-EXERCISE.md](BETA-EXERCISE.md) and
 validated against [BETA-EXERCISE.schema.json](BETA-EXERCISE.schema.json).
+If hosted checks require a candidate change, use
+[PUBLICATION-CORRECTION.md](PUBLICATION-CORRECTION.md) from a clean verifier
+checkout before another `main` update.
 
 Before the tag, move the release notes from `Unreleased` to a
 `0.1.0-beta.1` section with the actual tag date. Add the release comparison

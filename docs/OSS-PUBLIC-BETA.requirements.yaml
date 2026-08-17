@@ -444,13 +444,14 @@
       "id": "OSS-034",
       "gate": "public-beta",
       "title": "Bind hosted candidate corrections",
-      "status": "planned",
+      "status": "verified",
       "owner": "maintainer",
       "human_gate": false,
-      "acceptance": "A fail-closed Go command binds each post-first-push correction to the old and new candidates, complete path manifest, local checks, remote candidate ref, unmerged pull request, required hosted runs, and final tree in one immutable private receipt before main moves.",
+      "acceptance": "A fail-closed Go command binds each post-first-push correction to the old and new candidates, exact verifier source, complete path manifest, local checks, remote candidate and main refs, unmerged pull request, required hosted runs, provider-bound checks, complete no-bypass ruleset controls, and final tree in one immutable private receipt. The pre-main phase verifies the state before main moves. The finalized phase records an observed completed bootstrap sequence without claiming earlier receipt creation.",
       "evidence": [
-        {"kind": "kep", "value": "docs/KEP-0002-hosted-candidate-correction.md defines the receipt contract, sequence, failure behavior, and test plan.", "observed_on": "2026-08-17"},
-        {"kind": "gap", "value": "The first receipt binds ed3f1fadfbc74eb0aa41ef8b90e41f403213d33d, while public main is 206fa8b6a1dde1d97081133e4d447c0881849922 after a hosted correction. No source command validates this correction flow yet.", "observed_on": "2026-08-17"}
+        {"kind": "artifact", "value": "scripts/publication-correction, docs/PUBLICATION-CORRECTION.md, docs/PUBLICATION-CORRECTION.schema.json, and accepted KEP-0002 implement the typed no-overwrite correction contract.", "observed_on": "2026-08-17"},
+        {"kind": "test", "value": "The correction matrix covers both success phases, exact clean verifier provenance, multiple linear commits, manifest drift, merge commits, object corruption, identity drift, remote and pull-request mismatch, run and check failure, each required ruleset control, secret scans, timeouts, unsafe output, no-overwrite behavior, redaction, deterministic encoding, and schema shape.", "observed_on": "2026-08-17"},
+        {"kind": "receipt", "value": "The validated finalized private receipt bound verifier commit 6f36147f24f614cff0c7010533d864f8d9ad7628, candidate correction ed3f1fadfbc74eb0aa41ef8b90e41f403213d33d to 206fa8b6a1dde1d97081133e4d447c0881849922, tree c0dd6638adcdc231840ad06406dc9f0caa38e45d, 20 bootstrap paths, 5 correction paths, 4 hosted runs, 6 required checks, the complete no-bypass ruleset contract, and GitHub Actions integration 15368. Its SHA-256 digest is 77db44ba2bfa6f007186ace931f38444521d8a29cf48bd945e07a801eda36a9a.", "observed_on": "2026-08-17"}
       ]
     }
   ]

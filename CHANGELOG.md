@@ -19,6 +19,8 @@ Planned first prerelease: `v0.1.0-beta.1`.
   committer identities, object integrity, owner approval, and secret scans.
 - Human-only publication handoff for the first hosted pull request, exact CI
   check discovery, direct bootstrap fast-forward, and protected-branch setup.
+- Fail-closed hosted-correction receipts that bind exact verifier source, local
+  history, remote refs, pull-request state, no-bypass rulesets, and checks.
 - Shared-checkout and detached linked-worktree lanes.
 - Exact staged-subset capture through private Git indexes.
 - All-or-nothing split plans with one final ref compare-and-swap.

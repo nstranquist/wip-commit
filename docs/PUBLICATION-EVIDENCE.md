@@ -36,6 +36,39 @@ The corrected commit passed these runs:
 - [final `main` push](https://github.com/nstranquist/wip-commit/actions/runs/31996220707).
 - [dependency graph](https://github.com/nstranquist/wip-commit/actions/runs/31996222126).
 
+## Source-current correction receipt
+
+The command in
+[PUBLICATION-CORRECTION.md](PUBLICATION-CORRECTION.md) verified the completed
+bootstrap sequence. It used the explicit `finalized` phase.
+
+The private receipt bound:
+
+- the immutable first receipt digest.
+- bootstrap `b276204385636c5a8ac338491565bd4894255217`.
+- old candidate `ed3f1fadfbc74eb0aa41ef8b90e41f403213d33d`.
+- final candidate `206fa8b6a1dde1d97081133e4d447c0881849922`.
+- final tree `c0dd6638adcdc231840ad06406dc9f0caa38e45d`.
+- verifier commit `6f36147f24f614cff0c7010533d864f8d9ad7628` and tree
+  `e9559e5fc7fa7083e471acb7d9e72e10b9c3110a`.
+- verifier command and schema SHA-256 digests.
+- one merge-free correction commit.
+- the complete 20-path bootstrap delta.
+- the complete 5-path correction delta.
+- four successful hosted runs.
+- six successful checks from GitHub Actions integration `15368`.
+- closed pull request 1 with `merged: false`.
+- final candidate and `main` refs at the same commit.
+- the active no-bypass ruleset and all review, history, and update controls.
+
+The receipt passed
+[PUBLICATION-CORRECTION.schema.json](PUBLICATION-CORRECTION.schema.json). Its
+SHA-256 digest is
+`77db44ba2bfa6f007186ace931f38444521d8a29cf48bd945e07a801eda36a9a`.
+
+The private file remains outside the repository. The public record contains no
+identity value, local path, token, private report, or raw security log.
+
 ## Required checks
 
 All required checks came from GitHub Actions integration `15368`.
@@ -103,8 +136,6 @@ the tagged-install gate.
 
 Do not create `v0.1.0-beta.1` until all these gates pass:
 
-- Implement the source-current correction receipt in
-  [KEP-0002](KEP-0002-hosted-candidate-correction.md).
 - Obtain a valid receipt from one independent beta tester.
 - Approve a Code of Conduct and a confidential conduct-reporting path.
 - Verify the maintainer's security-alert notifications.
