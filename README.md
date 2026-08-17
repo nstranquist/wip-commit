@@ -348,8 +348,9 @@ authorizing its implementation. Non-authors can use the redacted
 [beta exercise](docs/BETA-EXERCISE.md) to produce independent evidence.
 Repository owners can use the human-gated
 [publication handoff](docs/PUBLICATION-HANDOFF.md) and
-[hosted setup runbook](docs/HOSTED-SETUP.md). These procedures do not authorize
-a push or release tag.
+[hosted setup runbook](docs/HOSTED-SETUP.md). Use the
+[correction receipt](docs/PUBLICATION-CORRECTION.md) after a hosted candidate
+changes. These procedures do not authorize a push or release tag.
 
 Project authority and succession are in [GOVERNANCE.md](GOVERNANCE.md).
 Current support and safe incident-reporting guidance are in
