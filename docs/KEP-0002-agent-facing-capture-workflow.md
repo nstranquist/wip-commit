@@ -103,6 +103,15 @@ identity validation.
 leases. A handoff for a released lane also remains a pure read. Expired active
 leases remain fail-closed and require a new claim.
 
+The released-lane read acquires the existing regular lane lock without
+creating a directory or rewriting lock metadata. A missing or replaced lock
+fails closed.
+
+The equivalent `--observe=true` and `-observe` forms also select pure reads.
+An explicit `--observe=false` keeps normal renewal. `env` checks the lane's
+canonical worktree before renewal and returns `WORKTREE_MISMATCH` from another
+checkout without changing a lease.
+
 Every successful lane JSON envelope contains a `context` object. The context
 includes the earliest expiry, remaining milliseconds, and renewal result.
 
@@ -111,6 +120,10 @@ includes the earliest expiry, remaining milliseconds, and renewal result.
 The handoff validates the durable intent and every Git object in its chain. It
 contains the lane ref, tip, parent, base, and final tree. It also contains the
 ordered messages and path sets.
+
+Intent selection, receipt validation, active-lease renewal, and status
+construction use one lane lock. Completed intents do not bypass Git-object
+validation.
 
 The handoff omits agent IDs, session IDs, absolute paths, remote URLs, and file
 contents. It sets `capture_only` to `true` and `landing_authorized` to `false`.
@@ -129,8 +142,9 @@ wip --json plan --out plan.json
 wip --json capture --plan plan.json
 ```
 
-Use `--final` to release the lane after handoff validation. The command still
-does not land or delete a ref.
+Use `--final` to release the lane after handoff validation. The command keeps
+the lane lock through validation and release. It still does not land or delete
+a ref.
 
 ## Compatibility
 
@@ -186,6 +200,12 @@ Rejected. A legacy array does not bind source, lease, lane, or policy state.
 - Status tests cover pending, captured, foreign, empty-lease, and observe states.
 - Policy tests cover default, override, strict configuration, and safety-only use.
 - Compatibility tests preserve version 1 profile and intent digests.
+- Deterministic contention tests prove that final release and active handoff
+  keep the lane lock after receipt validation.
+- Released-handoff tests prove that lock acquisition preserves the existing
+  lock bytes and does not create a missing lock or parent directory.
+- Real command fixtures validate against every published capture schema.
+- Worktree tests prove that `env` fails before renewal in another checkout.
 - Full race, vet, workflow, and dogfood evidence belongs in `docs/DOGFOOD.md`.
 
 ## Decision log

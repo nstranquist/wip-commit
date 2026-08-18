@@ -142,6 +142,10 @@ The command uses `git worktree add --detach`. It refuses to replace an existing
 directory. If an existing directory contains a matching linked worktree at the
 requested base, the command reuses it.
 
+The success output reports the linked worktree. Continue the workflow in that
+checkout. `wip env` and all other lane commands reject a different checkout
+with `WORKTREE_MISMATCH` before they renew a lease.
+
 ## Capture work
 
 Load the lane identity in each agent shell:
@@ -236,12 +240,15 @@ The result contains the capture receipt and a typed handoff. The handoff is
 capture-only evidence. It does not authorize landing, merging, or pushing.
 
 Use `wip capture --final --plan plan.json` to release the lane after handoff
-validation. The lane ref and commits remain.
+validation. The command holds the lane lock from validation through release.
+The lane ref and commits remain.
 
 The v2 plan schema is [docs/PLAN.schema.json](docs/PLAN.schema.json). The
 operational status and handoff schemas are
 [docs/STATUS.schema.json](docs/STATUS.schema.json) and
 [docs/HANDOFF.schema.json](docs/HANDOFF.schema.json).
+The test suite validates real command data against all four schemas and checks
+that strict schemas reject invalid data.
 
 `wip commit` remains a compatibility and interactive command. It accepts the
 reviewed v2 plan or the legacy plan array. `wip capture` accepts only v2.
@@ -275,6 +282,11 @@ messages. Policy checks finish before hooks and verification commands run.
 Leases last 15 minutes without authenticated lane use. `status`, `env`,
 `claim`, `plan`, `commit`, `capture`, and `handoff` renew the complete active
 set. A handoff for a released lane stays read-only.
+It locks the existing lane lock file without creating or rewriting lock
+metadata.
+
+For a pure read, use `--observe`, `--observe=true`, or `-observe` with `status`
+and `env`. `--observe=false` keeps normal renewal behavior.
 
 Manual renewal remains available:
 
@@ -305,7 +317,9 @@ wip --json handoff --lane parser-errors
 ```
 
 The handoff omits agent IDs, session IDs, absolute worktree paths, remote URLs,
-and file contents. It sets `landing_authorized` to `false`.
+and file contents. It sets `landing_authorized` to `false`. Intent selection,
+receipt validation, active-lease renewal, and status construction use one lane
+lock.
 
 When the task is complete, release the coordination state:
 

@@ -104,6 +104,10 @@ expected old object ID. The source `HEAD`, selected index digest, hook snapshots
 lane cursor, lane identity, worktree binding, and active lease set are checked
 again at the publication boundary.
 
+Handoff validation and final release use the same lane lock. Another lane
+transaction cannot change the cursor, intent selection, or lease links between
+the validated handoff and release.
+
 ### Crash recovery
 
 Lane creation writes a `creating` manifest before it creates the ref. An exact
@@ -124,7 +128,17 @@ success. This receipt permits exact reconciliation after the ref moved.
 ### Capture handoff
 
 The handoff command accepts only a complete intent whose ref and Git objects
-pass receipt validation. Its ordered entries come from that durable intent.
+pass receipt validation. A completed intent still rechecks every parent, tree,
+message, path set, scope, and final tree against Git. Its ordered entries come
+from that durable intent.
+
+The command holds the lane lock while it selects the intent, validates the
+receipt, renews an active lease, and builds status. A failed renewal does not
+emit a successful handoff.
+
+A released-lane handoff opens and locks the existing regular lock file without
+creating directories or rewriting owner metadata. A missing, replaced, or
+non-regular lock file fails closed.
 
 The handoff omits agent IDs, session IDs, absolute paths, remote URLs, and file
 contents. It states that the receipt does not authorize landing.

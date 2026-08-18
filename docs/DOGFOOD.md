@@ -1,5 +1,105 @@
 # Dogfood evidence
 
+## 2026-08-18 atomic finalization and schema review
+
+This exercise used a source-current binary in the isolated
+`feat/agent-facing-capture-v2` linked worktree. It tested the review corrections
+against real repository state.
+
+Evidence scope: local maintainer evidence. This exercise does not prove hosted
+CI, branch landing, a public release, or independent adoption.
+
+### Review corrections
+
+The final guided capture now keeps one lane lock from handoff validation through
+lane release. The active handoff command also selects and validates the intent,
+renews the lease, and builds status under one lane lock. Completed intents still
+validate every Git parent, tree, message, path set, scope, and final tree.
+
+Additional corrections bind `wip env` to the lane worktree before renewal and
+recognize every supported Boolean spelling of `--observe`. Initialization now
+requires an interactive worktree destination and reports where to continue
+after create or reuse.
+
+Deterministic contention tests paused after handoff validation. A competing
+lane lock returned `LOCK_TIMEOUT` for both active handoff and final capture.
+Wrong-worktree and observe tests proved that rejected or observing calls did
+not change lease timestamps.
+
+The released-handoff regression compared the lane lock before and after the
+command. The bytes were identical. Unit tests also proved that released
+handoff locking does not create a missing lock file or parent directory. The
+tests reject directories, symlinks, and replaced lock paths. They also prove
+that the read-only acquisition still waits for an existing owner.
+
+Real plan, status, legacy-plan, and handoff command data passed the published
+Draft 2020-12 schemas. A deliberately incomplete handoff with an unknown field
+was rejected.
+
+### Race-gate correction
+
+The first required three-count race run found a timing defect in the existing
+heartbeat test. The test slept near lease expiry. Race instrumentation
+sometimes moved execution past the deadline. Its failure path also left the
+test heartbeat running.
+
+The first correction polled the lease for a new timestamp. A later race run
+correctly hit the fail-closed stable-file check during atomic lease replacement.
+The final test uses an internal observer that fires only after a completed
+background refresh. It does not add a retry or weaken the production reader.
+
+Ten targeted heartbeat race repetitions passed. After the released-handoff
+lock correction, ten file-lock repetitions and five CLI contention repetitions
+also passed. The final `go test -race -count=3 ./...` run passed all packages.
+The CLI package completed in 157.817 seconds.
+
+The final local gate matrix also passed `go test ./...`, `go vet ./...`,
+`actionlint`, `golangci-lint run ./...`, `go mod verify`, and
+`govulncheck@v1.7.0 ./...`. The vulnerability scan found no reachable known
+vulnerability.
+
+### Reviewed repository capture
+
+The source `HEAD` stayed at
+`1194d4564c1009f81d486000734756e787956ed1`. Status reported 21 exact capture
+candidates and no foreign staged paths. The reviewed three-group plan ran a
+focused gate for the boundary change and full repository tests for the schema
+and documentation groups.
+
+The private chain was:
+
+1. `f47cedc0b69c46933c2872f552aa5f84f78d0177` — `fix(capture): harden agent workflow boundaries`
+2. `8d3764881ebc60eefa0e96845cabd8194379a4da` — `test(schema): validate published command contracts`
+3. `a6f7dee2049672baa78d61cc149e8f983ce3e033` — `docs(capture): explain atomic agent handoff workflow`
+
+Receipt evidence:
+
+- Lane: `refs/heads/wip/codex/agent-facing-v2-atomic-final`.
+- Plan ID: `plan-185477327d1cc03e1e04037e`.
+- Capture intent digest:
+  `sha256:e7edfba90386fb2a2c8b9c34f2e7844a92c92843d15b1ef8ef5f1607e412c873`.
+- Reviewed plan digest:
+  `sha256:5f339fd8cfcbe621ab170067dfcea023a4d5e6e61827e9ae3d1de5f785c26e41`.
+- Source-index digest:
+  `sha256:028fe1582dfea7c4609f05ca2804dd4d80ccc1dd0d973a789f3dc636b2488a39`.
+- Final tree: `f3223a96009d9fed401c33bb6fd7745aec60bc61`.
+- Every group-specific verification command passed.
+- The handoff set `capture_only` to true and `landing_authorized` to false.
+
+The final reviewed capture added this evidence file and used `--final`:
+
+- Commit: `e356d9f489ec2ff256dfef424a762a867defe858`.
+- Plan ID: `plan-1c61a7a787b31eb9d3b35560`.
+- Capture intent digest:
+  `sha256:4fbd19cc3d180cd223dd912508002db964b2d5f849b7ced4cbac909f8a599ca1`.
+- Reviewed plan digest:
+  `sha256:cd600afae3cd847d34b42792e39d942cecb708ca361232865689bc4b369d93ec`.
+- Final tree: `d285e5e57bf9491d2067222a7e38fa280e9b8d3c`.
+- `lane_released` was true, and the final context had no lease expiry.
+
+The source `HEAD` remained unchanged. The lane ref and all four private commits
+remain available. No command landed, merged, pushed, or deleted the lane ref.
+
 ## 2026-08-18 reviewed guided capture
 
 This exercise used a source-current binary in a linked worktree. It captured

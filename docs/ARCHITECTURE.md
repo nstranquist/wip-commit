@@ -104,6 +104,10 @@ No command acquires those locks in the opposite order. Different lanes can run
 capture work in parallel. One lane is serialized. An initialization-intent
 lock is acquired by itself when a completed step is recorded.
 
+An active handoff holds the lane lock through intent selection, validation,
+lease renewal, and status construction. A final guided capture keeps its lane
+lock through handoff creation and lane and lease release.
+
 ## Lane state
 
 ```text
@@ -139,6 +143,9 @@ a cross-lane path overlap.
 Authenticated `status`, `env`, `claim`, `plan`, and `handoff` also renew the
 complete active lease set. `status --observe` and `env --observe` remain pure
 reads. A handoff for a released lane does not renew leases.
+
+`env` compares the canonical lane worktree with the current repository root.
+A mismatch stops the command and leaves the lease unchanged.
 
 A heartbeat failure remains authoritative after the ref update. The failed
 result includes `ref_updated`, `plan_id`, `plan_digest`, and the applied intent
@@ -275,8 +282,29 @@ contains a stable lease context for all successful lane commands.
 The handoff loader validates a complete intent and every commit object. The
 output contains refs, object IDs, messages, path sets, and plan digests.
 
+The completed-intent path does not skip Git-object validation. The handoff
+command holds the lane lock from intent selection through active-lease renewal
+and status construction. `capture --final` keeps the same lock through handoff
+validation and release.
+
+For a released lane, handoff acquires the existing regular lane lock without
+creating state or rewriting the lock owner record. It verifies the opened file
+against the path before and after lock acquisition.
+
 The output contains no agent ID, session ID, absolute path, remote URL, or file
 content. It explicitly states that capture does not authorize landing.
 
 See [HANDOFF.schema.json](HANDOFF.schema.json) and
 [KEP-0002](KEP-0002-agent-facing-capture-workflow.md).
+
+## Schema contract validation
+
+Tests validate real plan, status, legacy-plan, and handoff command data against
+the published Draft 2020-12 schemas. They also require a strict schema to reject
+invalid data.
+
+The test-only validator is `github.com/santhosh-tekuri/jsonschema/v6` version
+6.0.3. The dependency uses Apache-2.0 and supports Go 1.21 and newer. Version
+6.0.3 was the current stable release on the 2026-08-18 review date. Tests load
+only repository schema files. They do not enable remote schema loading in the
+product runtime.

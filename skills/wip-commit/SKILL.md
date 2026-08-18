@@ -64,6 +64,10 @@ wip --json init \
 Repeat `--path` for each disjoint claim. If `PATH_LEASE_CONFLICT` occurs, do
 not override it. Narrow the claim or wait for the owner to release it.
 
+Initialization can create a linked worktree. Continue in the exact worktree
+reported by the command. Run `wip env` and all later lane commands there. A
+call from another checkout fails before lease renewal.
+
 Load the saved identity in an interactive shell:
 
 ```text
@@ -114,7 +118,8 @@ capture.
 
 Authenticated `status`, `env`, `claim`, `plan`, `commit`, `capture`, and
 `handoff` renew the complete active lease set. A released-lane handoff remains
-a pure read. Use `wip claim --path <path>` before staging a newly owned path.
+a pure read. Use `--observe` for a status or environment read that must not
+renew. Use `wip claim --path <path>` before staging a newly owned path.
 
 ## Check the result
 
@@ -147,6 +152,10 @@ wip release
 Release removes the active coordination claim and preserves the lane ref and
 commits. It does not land or merge them. Give the typed handoff to the
 repository's separate review and landing process.
+
+For the last capture, `wip --json capture --final --plan <plan.json>` performs
+the validated handoff and lane release under one lane lock. It does not
+authorize landing.
 
 Run `wip doctor` before you archive old state. Use `wip archive` without
 `--apply` first. Reuse the exact cutoff and plan digest only after review. If

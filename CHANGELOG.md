@@ -38,6 +38,8 @@ Planned first prerelease: `v0.1.0-beta.1`.
   lane release.
 - Named `conventional-v1` and `safety-only-v1` message policies.
 - Automatic complete-set lease renewal on ordinary authenticated lane use.
+- Runtime validation of real command data against the published capture JSON
+  Schemas.
 - Version 1 profile and intent compatibility without immutable digest changes.
 
 ### Changed
@@ -45,6 +47,12 @@ Planned first prerelease: `v0.1.0-beta.1`.
 - Unsupported state-directory, lane, lease, intent, and profile schemas now
   fail with `MIGRATION_REQUIRED` before the command changes state.
 - Interactive initialization now recommends one linked worktree per task.
+- Worktree initialization now requires a destination and reports where to
+  continue. `env` rejects another checkout before lease renewal.
+- Handoff validation, active renewal, and final guided release now keep one
+  continuous lane lock. Completed receipts always revalidate Git objects.
+- Released-lane handoff locks existing state without rewriting lock metadata
+  or creating missing lock paths.
 - Commit-message naming checks now run as lane policy before hooks. The capture
   kernel keeps only message byte, size, and subject safety checks.
 - The minimum build toolchain is Go 1.25.12. This patched floor excludes
