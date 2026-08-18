@@ -58,6 +58,25 @@ The final local gate matrix also passed `go test ./...`, `go vet ./...`,
 `govulncheck@v1.7.0 ./...`. The vulnerability scan found no reachable known
 vulnerability.
 
+`git fsck --strict --no-dangling` also passed. Gitleaks scanned the complete
+82-commit history and the final worktree. Both scans found no leak.
+
+### Protected landing review
+
+A read-only remote audit found `origin/main` at
+`4cf003bebbfd9c6281578ea9ef1b679dae67078f`. Pull request
+[#7](https://github.com/nstranquist/wip-commit/pull/7) remained open at
+`bfb720d9870f9f63d4c4110f9ee84aafc6d6a361`.
+
+The pull request and this branch both change the architecture and store lock
+model. A read-only three-tree preview found textual conflicts in
+`docs/ARCHITECTURE.md` and `internal/store/store.go`. During landing, preserve
+the pull request's state-registry read fence and this branch's continuous
+lane-lock transaction. Run the Windows concurrency stress test and the complete
+gate matrix on the combined candidate.
+
+No command pushed, merged, closed, or changed the pull request.
+
 ### Reviewed repository capture
 
 The source `HEAD` stayed at
