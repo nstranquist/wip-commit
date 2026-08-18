@@ -42,16 +42,16 @@ changes. If setup stops, use the reported resume command. It pins the absolute
 repository and worktree paths and the exact base commit. A matching partial
 skill installation is resumable.
 
-When agents edit the same checkout, accept the recommended `shared` mode. When
-the task has a dedicated linked worktree, use `worktree` mode. Both modes use
-the same private-index capture transaction and write only to an agent-owned
-local ref.
+Use the recommended `worktree` mode for one agent per task. Use `shared` mode
+only when lanes must use the same checkout and index. Both modes use the same
+private-index capture transaction.
 
 For automation, make the identity and paths explicit:
 
 ```text
 wip --json init \
-  --mode shared \
+  --mode worktree \
+  --create-worktree <absolute-worktree-path> \
   --lane <task-slug> \
   --agent <agent-id> \
   --session <session-id> \
@@ -88,40 +88,48 @@ git add -- <owned-path>
 Inspect the staged names and diff before capture. Foreign staged entries can
 remain in the source index.
 
-Run `wip --json plan` for a read-only component split proposal. Review each
-group for semantic intent and dependency closure. The proposed prefix is a
-naming hint, not a commit message.
-
-Use split commits by default. Interactive work can run `wip commit` and accept
-or refine the proposed groups. Automation must use a reviewed JSON plan:
+Run the operational status before each plan:
 
 ```text
-wip --json commit --plan <plan.json>
+wip --json status
+wip --json plan --out <plan.json>
 ```
 
-Each group needs a distinct Conventional Commit message and an exact file
-list. Add bounded commands in `verify` to the group that owns the affected code.
-When one commit is a deliberate, coherent unit, use `--single --message`.
+Review each group for intent and dependency closure. Add a message to every
+group. Then set the top-level `state` to `reviewed`.
+
+Capture the reviewed plan:
+
+```text
+wip --json capture --plan <plan.json>
+```
+
+Each group needs an exact file list. The lane profile selects the message
+policy. Add bounded `verify` commands to the group that owns the code.
+
+Use `wip commit --single --message` only for a deliberate one-commit
+compatibility capture. Do not use it in the guided automation path.
 Read [references/automation.md](references/automation.md) before an automated
 capture.
 
-For long editing work, run `wip renew` before the 15-minute lease expires. Use
-`wip claim --path <path>` before staging a newly owned path. `wip commit`
-snapshots and renews the lane's complete active lease set during long hooks and
-verification commands.
+Authenticated `status`, `env`, `claim`, `plan`, `commit`, `capture`, and
+`handoff` renew the complete active lease set. A released-lane handoff remains
+a pure read. Use `wip claim --path <path>` before staging a newly owned path.
 
 ## Check the result
 
-For a complete capture, require all of these facts in the JSON result:
+For a complete guided capture, require all of these facts in the JSON result:
 
 - `ok` is `true`.
-- `ref_updated` is `true`.
-- `gate_outcome` is `passed`.
-- `intent_state` is `complete`.
+- `data.capture.ref_updated` is `true`.
+- `data.capture.gate_outcome` is `passed`.
+- `data.capture.intent_state` is `complete`.
+- `data.handoff.capture_only` is `true`.
+- `data.handoff.landing_authorized` is `false`.
+- `data.handoff.reviewed_plan_digest` is non-empty.
 
-Also check that the reported groups, paths, messages, old commit, new
-commit, and lane ref match the reviewed plan. A successful capture leaves the
-captured entries staged in the source index by design.
+Check that the handoff ref, tip, tree, messages, and paths match the reviewed
+plan. A successful capture leaves captured entries staged by design.
 
 If a failed result reports `ref_updated: true`, preserve its exact `plan_id`
 and `plan_digest`. Run `wip reconcile` with both values. Do not edit an intent
@@ -130,15 +138,15 @@ ref did not move.
 
 ## Finish without landing
 
-Run `wip status`, record the lane ref and new commit, and then run:
+Run `wip --json handoff` to validate the complete capture receipt. Then run:
 
 ```text
 wip release
 ```
 
 Release removes the active coordination claim and preserves the lane ref and
-commits. It does not land, merge, or push them. Hand the exact ref and commit
-to the repository's separate review and landing process.
+commits. It does not land or merge them. Give the typed handoff to the
+repository's separate review and landing process.
 
 Run `wip doctor` before you archive old state. Use `wip archive` without
 `--apply` first. Reuse the exact cutoff and plan digest only after review. If
