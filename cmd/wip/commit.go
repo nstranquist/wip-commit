@@ -13,8 +13,8 @@ import (
 	"github.com/nstranquist/wip-commit/internal/engine"
 	"github.com/nstranquist/wip-commit/internal/fail"
 	"github.com/nstranquist/wip-commit/internal/pathid"
+	"github.com/nstranquist/wip-commit/internal/policy"
 	"github.com/nstranquist/wip-commit/internal/store"
-	"github.com/nstranquist/wip-commit/internal/strictjson"
 )
 
 const maxPlanBytes = 1 << 20
@@ -24,54 +24,83 @@ type commitOptions struct {
 	plan, message                           string
 	paths                                   stringList
 	single, allowWIP, dryRun, noInteractive bool
+	final                                   bool
 	hookTimeout, verifyTimeout, lockWait    time.Duration
 }
 
 func (application app) runCommit(ctx context.Context, laneStore store.Store, args []string) int {
-	set := application.flagSet("commit")
+	return application.runCaptureTransaction(ctx, laneStore, args, false)
+}
+
+func (application app) runCapture(ctx context.Context, laneStore store.Store, args []string) int {
+	return application.runCaptureTransaction(ctx, laneStore, args, true)
+}
+
+func (application app) runCaptureTransaction(ctx context.Context, laneStore store.Store, args []string, guided bool) int {
+	action := "commit"
+	if guided {
+		action = "capture"
+	}
+	set := application.flagSet(action)
 	options := commitOptions{}
 	options.identity.bind(set)
 	set.StringVar(&options.plan, "plan", "", "strict JSON split plan file, or - for stdin")
 	set.BoolVar(&options.single, "single", false, "explicitly capture one commit instead of the split default")
-	set.StringVar(&options.message, "message", "", "single-commit Conventional Commit message")
+	set.StringVar(&options.message, "message", "", "single-commit message under the bound lane policy")
 	set.Var(&options.paths, "path", "staged path scope for --single (repeatable)")
 	set.BoolVar(&options.allowWIP, "allow-wip", false, "explicitly authorize the wip: commit prefix")
 	set.BoolVar(&options.dryRun, "dry-run", false, "run all gates without creating commits or moving the lane ref")
 	set.BoolVar(&options.noInteractive, "non-interactive", false, "fail instead of prompting for a split plan")
+	set.BoolVar(&options.final, "final", false, "release the lane after a validated capture handoff")
 	set.DurationVar(&options.hookTimeout, "hook-timeout", engine.DefaultHookTimeout, "pre/post-commit hook timeout")
 	set.DurationVar(&options.verifyTimeout, "verify-timeout", engine.DefaultVerifyTimeout, "default verify command timeout")
 	set.DurationVar(&options.lockWait, "lock-wait", 0, "time to wait for the lane lock")
 	if err := set.Parse(args); err != nil {
-		return application.failure("commit", fail.Wrap("INVALID_ARGS", err), nil, 2)
+		return application.failure(action, fail.Wrap("INVALID_ARGS", err), nil, 2)
 	}
 	if err := noArgs(set); err != nil {
-		return application.failure("commit", err, nil, 2)
+		return application.failure(action, err, nil, 2)
+	}
+	if guided && (options.plan == "" || options.single || options.message != "" || len(options.paths) > 0 || options.noInteractive || options.dryRun) {
+		return application.failure(action, fail.New("REVIEWED_PLAN_REQUIRED", "capture requires one reviewed v2 --plan and does not accept --single, --message, --path, --non-interactive, or --dry-run"), nil, 2)
+	}
+	if !guided && options.final {
+		return application.failure(action, fail.New("INVALID_ARGS", "--final is available only with wip capture"), nil, 2)
 	}
 	if options.lockWait < 0 {
-		return application.failure("commit", fail.New("INVALID_ARGS", "--lock-wait cannot be negative"), nil, 2)
+		return application.failure(action, fail.New("INVALID_ARGS", "--lock-wait cannot be negative"), nil, 2)
 	}
 	status, err := resolveStatus(laneStore, options.identity)
 	if err != nil {
-		return application.failure("commit", err, nil, 1)
+		return application.failure(action, err, nil, 1)
 	}
 	lock, err := laneStore.LaneLock(status.Lane.ID, options.lockWait)
 	if err != nil {
-		return application.failure("commit", err, nil, 1)
+		return application.failure(action, err, nil, 1)
 	}
-	defer func() { _ = lock.Release() }()
+	lockHeld := true
+	defer func() {
+		if lockHeld {
+			_ = lock.Release()
+		}
+	}()
 	lane, err := laneStore.Load(status.Lane.ID)
 	if err != nil {
-		return application.failure("commit", err, nil, 1)
+		return application.failure(action, err, nil, 1)
 	}
 	if lane.State != "active" || lane.Agent != status.Lane.Agent || lane.Session != status.Lane.Session || lane.Worktree != laneStore.Repo.Root {
-		return application.failure("commit", fail.New("LANE_MOVED", "lane identity, state, or worktree changed before capture"), nil, 1)
+		return application.failure(action, fail.New("LANE_MOVED", "lane identity, state, or worktree changed before capture"), nil, 1)
+	}
+	saved, err := loadProfile(laneStore, lane.ID)
+	if err != nil {
+		return application.failure(action, err, nil, 1)
 	}
 	allowed, err := laneStore.ActivePaths(lane.ID)
 	if err != nil {
-		return application.failure("commit", err, nil, 1)
+		return application.failure(action, err, nil, 1)
 	}
 	if len(allowed) == 0 {
-		return application.failure("commit", fail.New("LEASE_REQUIRED", "claim or renew paths before capture"), nil, 1)
+		return application.failure(action, fail.New("LEASE_REQUIRED", "claim or renew paths before capture"), nil, 1)
 	}
 	heartbeat := application.leaseHeartbeat
 	if heartbeat == nil {
@@ -79,7 +108,7 @@ func (application app) runCommit(ctx context.Context, laneStore store.Store, arg
 	}
 	captureCtx, stopHeartbeat, err := heartbeat(ctx, laneStore, lane, allowed)
 	if err != nil {
-		return application.failure("commit", err, nil, 1)
+		return application.failure(action, err, nil, 1)
 	}
 	heartbeatStopped := false
 	stop := func() error {
@@ -90,12 +119,18 @@ func (application app) runCommit(ctx context.Context, laneStore store.Store, arg
 		return stopHeartbeat()
 	}
 	defer func() { _ = stop() }()
-	groups, err := application.resolveGroups(captureCtx, laneStore, lane.CurrentSHA, allowed, options)
+	resolved, err := application.resolveGroups(captureCtx, laneStore, lane, allowed, saved.MessagePolicy, options)
 	if err != nil {
 		if heartbeatErr := stop(); heartbeatErr != nil {
-			return application.failure("commit", heartbeatErr, nil, 1)
+			return application.failure(action, heartbeatErr, nil, 1)
 		}
-		return application.failure("commit", err, nil, 2)
+		return application.failure(action, err, nil, 2)
+	}
+	if guided && !resolved.Reviewed {
+		if heartbeatErr := stop(); heartbeatErr != nil {
+			return application.failure(action, heartbeatErr, nil, 1)
+		}
+		return application.failure(action, fail.New("REVIEWED_PLAN_REQUIRED", "capture requires the reviewed v2 plan schema; legacy arrays remain commit-only"), nil, 2)
 	}
 	hookOutput := application.stdout
 	if application.jsonMode {
@@ -106,8 +141,11 @@ func (application app) runCommit(ctx context.Context, laneStore store.Store, arg
 		TargetRef:            lane.Ref,
 		ExpectedRef:          lane.CurrentSHA,
 		ExpectedSourceHead:   lane.BaseSHA,
+		ExpectedIndexDigest:  resolved.ExpectedIndexDigest,
 		AllowedPaths:         allowed,
-		Groups:               groups,
+		Groups:               resolved.Groups,
+		ReviewPlanDigest:     resolved.ReviewDigest,
+		MessagePolicy:        resolved.Policy,
 		AllowWIP:             options.allowWIP,
 		DryRun:               options.dryRun,
 		HookTimeout:          options.hookTimeout,
@@ -120,18 +158,18 @@ func (application app) runCommit(ctx context.Context, laneStore store.Store, arg
 	})
 	heartbeatErr := stop()
 	if heartbeatErr != nil {
-		return application.failure("commit", heartbeatErr, result, 1)
+		return application.failure(action, heartbeatErr, result, 1)
 	}
 	if err != nil {
-		return application.failure("commit", err, result, 1)
+		return application.failure(action, err, result, 1)
 	}
 	if !options.dryRun {
 		if err := laneStore.RecordCommit(ctx, lane.ID, result.FinalCommit); err != nil {
-			return application.failure("commit", err, result, 1)
+			return application.failure(action, err, result, 1)
 		}
 		intent, markErr := engine.MarkIntent(laneStore.Repo, result.PlanID, result.PlanDigest, "complete")
 		if markErr != nil {
-			return application.failure("commit", markErr, result, 1)
+			return application.failure(action, markErr, result, 1)
 		}
 		result.IntentState = intent.State
 	}
@@ -141,7 +179,49 @@ func (application app) runCommit(ctx context.Context, laneStore store.Store, arg
 	} else {
 		human += " -> " + result.FinalCommit
 	}
-	return application.success("commit", result, human)
+	if !guided {
+		laneContext, contextErr := laneContextFor(ctx, laneStore, lane.ID, renewalStatus{Attempted: true, Succeeded: true})
+		if contextErr != nil {
+			return application.failure(action, contextErr, result, 1)
+		}
+		return application.successWithContext(action, result, human, laneContext)
+	}
+	current, err := laneStore.Load(lane.ID)
+	if err != nil {
+		return application.failure(action, err, result, 1)
+	}
+	handoff, err := buildCaptureHandoff(ctx, laneStore, current, result.PlanID, result.PlanDigest)
+	if err != nil {
+		return application.failure(action, err, result, 1)
+	}
+	guidedResult := guidedCaptureResult{Capture: result, Handoff: handoff}
+	if options.final {
+		if err := lock.Release(); err != nil {
+			return application.failure(action, fail.Wrap("LOCK_RELEASE_FAILED", err), guidedResult, 1)
+		}
+		lockHeld = false
+		if err := laneStore.Release(current.ID, current.Agent, current.Session, false); err != nil {
+			return application.failure(action, err, guidedResult, 1)
+		}
+		guidedResult.LaneReleased = true
+		current, err = laneStore.Load(current.ID)
+		if err != nil {
+			return application.failure(action, err, guidedResult, 1)
+		}
+	}
+	status, statusErr := laneStore.Status(current.ID)
+	if statusErr != nil {
+		return application.failure(action, statusErr, guidedResult, 1)
+	}
+	operational, inspectErr := buildOperationalStatus(ctx, laneStore, status, renewalStatus{Attempted: true, Succeeded: true})
+	if inspectErr != nil {
+		return application.failure(action, inspectErr, guidedResult, 1)
+	}
+	human = fmt.Sprintf("captured %d reviewed commit(s) on %s and emitted a capture-only handoff", len(result.Commits), result.TargetRef)
+	if options.final {
+		human += "; lane released"
+	}
+	return application.successWithContext(action, guidedResult, human, operational.context())
 }
 
 func startLeaseHeartbeat(parent context.Context, laneStore store.Store, lane store.Lane, allowed []string) (context.Context, func() error, error) {
@@ -188,10 +268,10 @@ func startLeaseHeartbeat(parent context.Context, laneStore store.Store, lane sto
 	return captureCtx, stop, nil
 }
 
-func (application app) resolveGroups(ctx context.Context, laneStore store.Store, laneCommit string, allowed []string, options commitOptions) ([]engine.Group, error) {
+func (application app) resolveGroups(ctx context.Context, laneStore store.Store, lane store.Lane, allowed []string, messagePolicy policy.Receipt, options commitOptions) (resolvedCommitPlan, error) {
 	if options.plan != "" {
 		if options.single || options.message != "" || len(options.paths) > 0 {
-			return nil, fail.New("INVALID_ARGS", "--plan cannot be combined with --single, --message, or --path")
+			return resolvedCommitPlan{}, fail.New("INVALID_ARGS", "--plan cannot be combined with --single, --message, or --path")
 		}
 		var reader io.Reader
 		if options.plan == "-" {
@@ -199,38 +279,56 @@ func (application app) resolveGroups(ctx context.Context, laneStore store.Store,
 		} else {
 			file, err := os.Open(options.plan)
 			if err != nil {
-				return nil, fail.Wrap("INVALID_PLAN", err)
+				return resolvedCommitPlan{}, fail.Wrap("INVALID_PLAN", err)
 			}
 			defer func() { _ = file.Close() }()
 			reader = file
 		}
-		return decodePlan(reader)
+		resolved, err := decodeCommitPlan(reader)
+		if err != nil {
+			return resolvedCommitPlan{}, err
+		}
+		if resolved.Reviewed {
+			return validateReviewedPlan(ctx, laneStore, lane, allowed, resolved.Plan, options.allowWIP)
+		}
+		messages := make([]string, 0, len(resolved.Groups))
+		for _, group := range resolved.Groups {
+			messages = append(messages, group.Message)
+		}
+		if err := policy.ValidateMessages(messagePolicy, messages, options.allowWIP); err != nil {
+			return resolvedCommitPlan{}, err
+		}
+		return resolved, nil
 	}
 	if options.single {
 		if strings.TrimSpace(options.message) == "" {
-			return nil, fail.New("INVALID_ARGS", "--single requires --message")
+			return resolvedCommitPlan{}, fail.New("INVALID_ARGS", "--single requires --message")
 		}
-		selected, err := selectedStaged(ctx, laneStore, laneCommit, allowed, options.paths)
+		if err := policy.Validate(messagePolicy, options.message, options.allowWIP); err != nil {
+			return resolvedCommitPlan{}, err
+		}
+		selected, err := selectedStaged(ctx, laneStore, lane.CurrentSHA, allowed, options.paths)
 		if err != nil {
-			return nil, err
+			return resolvedCommitPlan{}, err
 		}
-		return []engine.Group{{Message: options.message, Files: selected}}, nil
+		return resolvedCommitPlan{Groups: []engine.Group{{Message: options.message, Files: selected}}}, nil
 	}
 	if options.message != "" || len(options.paths) > 0 {
-		return nil, fail.New("SPLIT_PLAN_REQUIRED", "use --single to opt out, or omit --message and --path for the interactive split planner")
+		return resolvedCommitPlan{}, fail.New("SPLIT_PLAN_REQUIRED", "use --single to opt out, or omit --message and --path for the interactive split planner")
 	}
 	if options.noInteractive {
-		return nil, fail.New("SPLIT_PLAN_REQUIRED", "non-interactive capture requires --plan or an explicit --single")
+		return resolvedCommitPlan{}, fail.New("SPLIT_PLAN_REQUIRED", "non-interactive capture requires --plan or an explicit --single")
 	}
-	selected, err := selectedStaged(ctx, laneStore, laneCommit, allowed, nil)
+	selected, err := selectedStaged(ctx, laneStore, lane.CurrentSHA, allowed, nil)
 	if err != nil {
-		return nil, err
+		return resolvedCommitPlan{}, err
 	}
 	promptOutput := application.stdout
 	if application.jsonMode {
 		promptOutput = application.stderr
 	}
-	return interactiveGroups(selected, options.allowWIP, prompt{reader: bufio.NewReader(application.stdin), out: promptOutput})
+	groups, err := interactiveGroups(selected, messagePolicy, options.allowWIP, prompt{reader: bufio.NewReader(application.stdin), out: promptOutput})
+	return resolvedCommitPlan{Groups: groups}, err
 }
 
 func decodePlan(reader io.Reader) ([]engine.Group, error) {
@@ -241,14 +339,7 @@ func decodePlan(reader io.Reader) ([]engine.Group, error) {
 	if len(body) > maxPlanBytes {
 		return nil, fail.Errorf("INVALID_PLAN", "plan exceeds %d bytes", maxPlanBytes)
 	}
-	var groups []engine.Group
-	if err := strictjson.Decode(body, &groups); err != nil {
-		return nil, fail.Wrap("INVALID_PLAN", err)
-	}
-	if len(groups) == 0 {
-		return nil, fail.New("INVALID_PLAN", "plan must contain at least one commit group")
-	}
-	return groups, nil
+	return decodeLegacyPlan(body)
 }
 
 func selectedStaged(ctx context.Context, laneStore store.Store, laneCommit string, allowed []string, requested []string) ([]string, error) {
@@ -295,7 +386,7 @@ func selectedStaged(ctx context.Context, laneStore store.Store, laneCommit strin
 	return selected, nil
 }
 
-func interactiveGroups(paths []string, allowWIP bool, prompter prompt) ([]engine.Group, error) {
+func interactiveGroups(paths []string, messagePolicy policy.Receipt, allowWIP bool, prompter prompt) ([]engine.Group, error) {
 	proposals := proposeSplitGroups(paths)
 	_, _ = fmt.Fprintln(prompter.out, "Proposed split groups (one ref update after every group passes):")
 	for _, proposal := range proposals {
@@ -316,7 +407,7 @@ func interactiveGroups(paths []string, allowWIP bool, prompter prompt) ([]engine
 			if err != nil {
 				return nil, err
 			}
-			if err := engine.ValidateMessage(message, allowWIP); err != nil {
+			if err := policy.Validate(messagePolicy, message, allowWIP); err != nil {
 				_, _ = fmt.Fprintf(prompter.out, "%s: %s\n", fail.Code(err), err)
 				continue
 			}
@@ -368,7 +459,11 @@ func (application app) runReconcile(ctx context.Context, laneStore store.Store, 
 	}
 	result := engine.ReconcileResult{PlanID: intent.PlanID, PlanDigest: intent.PlanDigest, Commit: intent.ExpectedNew, IntentState: intent.State, AlreadyClean: alreadyClean}
 	if alreadyClean {
-		return application.success("reconcile", result, "plan is already fully reconciled")
+		laneContext, contextErr := laneContextFor(ctx, laneStore, lane.ID, renewalStatus{})
+		if contextErr != nil {
+			return application.failure("reconcile", contextErr, result, 1)
+		}
+		return application.successWithContext("reconcile", result, "plan is already fully reconciled", laneContext)
 	}
 	if lane.CurrentSHA != intent.ExpectedNew {
 		if err := laneStore.RecordCommit(ctx, lane.ID, intent.ExpectedNew); err != nil {
@@ -386,5 +481,9 @@ func (application app) runReconcile(ctx context.Context, laneStore store.Store, 
 		return application.failure("reconcile", err, result, 1)
 	}
 	result.IntentState = intent.State
-	return application.success("reconcile", result, "reconciled lane "+lane.ID+" to "+intent.ExpectedNew)
+	laneContext, contextErr := laneContextFor(ctx, laneStore, lane.ID, renewalStatus{})
+	if contextErr != nil {
+		return application.failure("reconcile", contextErr, result, 1)
+	}
+	return application.successWithContext("reconcile", result, "reconciled lane "+lane.ID+" to "+intent.ExpectedNew, laneContext)
 }

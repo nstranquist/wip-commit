@@ -2,35 +2,51 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/nstranquist/wip-commit/internal/atomicfile"
+	"github.com/nstranquist/wip-commit/internal/engine"
 	"github.com/nstranquist/wip-commit/internal/fail"
+	"github.com/nstranquist/wip-commit/internal/policy"
 	"github.com/nstranquist/wip-commit/internal/store"
 )
 
 type splitProposal struct {
-	Key             string   `json:"key"`
-	SuggestedScope  string   `json:"suggested_scope"`
-	SuggestedPrefix string   `json:"suggested_prefix"`
-	Rationale       string   `json:"rationale"`
-	Files           []string `json:"files"`
+	Key             string                 `json:"key"`
+	SuggestedScope  string                 `json:"suggested_scope"`
+	SuggestedPrefix string                 `json:"suggested_prefix"`
+	Rationale       string                 `json:"rationale"`
+	Message         string                 `json:"message"`
+	Files           []string               `json:"files"`
+	Verify          []engine.VerifyCommand `json:"verify,omitempty"`
 }
 
 type planProposal struct {
-	SchemaVersion string          `json:"schema_version"`
-	Lane          string          `json:"lane"`
-	StagedPaths   []string        `json:"staged_paths"`
-	Groups        []splitProposal `json:"groups"`
-	Instruction   string          `json:"instruction"`
+	SchemaVersion     string          `json:"schema_version"`
+	State             string          `json:"state"`
+	Lane              string          `json:"lane"`
+	TargetRef         string          `json:"target_ref"`
+	LaneTip           string          `json:"lane_tip"`
+	SourceHead        string          `json:"source_head"`
+	SourceIndexDigest string          `json:"source_index_digest"`
+	LeaseDigest       string          `json:"lease_digest"`
+	MessagePolicy     policy.Receipt  `json:"message_policy"`
+	StagedPaths       []string        `json:"staged_paths"`
+	Groups            []splitProposal `json:"groups"`
+	Instruction       string          `json:"instruction"`
 }
 
 func (application app) runPlan(ctx context.Context, laneStore store.Store, args []string) int {
 	set := application.flagSet("plan")
 	var identity identityFlags
 	var paths stringList
+	out := set.String("out", "", "write the draft plan without overwriting an existing file")
 	identity.bind(set)
 	set.Var(&paths, "path", "leased staged scope to include (repeatable; default all leased staged paths)")
 	if err := set.Parse(args); err != nil {
@@ -43,6 +59,13 @@ func (application app) runPlan(ctx context.Context, laneStore store.Store, args 
 	if err != nil {
 		return application.failure("plan", err, nil, 1)
 	}
+	if _, err := laneStore.Renew(status.Lane.ID, status.Lane.Agent, status.Lane.Session); err != nil {
+		return application.failure("plan", err, nil, 1)
+	}
+	status, err = laneStore.Status(status.Lane.ID)
+	if err != nil {
+		return application.failure("plan", err, nil, 1)
+	}
 	allowed, err := laneStore.ActivePaths(status.Lane.ID)
 	if err != nil {
 		return application.failure("plan", err, nil, 1)
@@ -51,14 +74,51 @@ func (application app) runPlan(ctx context.Context, laneStore store.Store, args 
 	if err != nil {
 		return application.failure("plan", err, nil, 1)
 	}
-	proposal := planProposal{
-		SchemaVersion: "1.0.0",
-		Lane:          status.Lane.ID,
-		StagedPaths:   selected,
-		Groups:        proposeSplitGroups(selected),
-		Instruction:   "Review dependency closure, move any cross-cutting file into its best-fit group, then write one distinct Conventional Commit message per group in a commit plan.",
+	saved, err := loadProfile(laneStore, status.Lane.ID)
+	if err != nil {
+		return application.failure("plan", err, nil, 1)
 	}
-	return application.success("plan", proposal, formatPlanProposal(proposal))
+	entries, err := laneStore.Repo.IndexEntries(ctx, nil)
+	if err != nil {
+		return application.failure("plan", fail.Wrap("GIT_FAILED", err), nil, 1)
+	}
+	proposal := planProposal{
+		SchemaVersion:     reviewPlanSchemaVersion,
+		State:             "draft",
+		Lane:              status.Lane.ID,
+		TargetRef:         status.Lane.Ref,
+		LaneTip:           status.Lane.CurrentSHA,
+		SourceHead:        status.Lane.BaseSHA,
+		SourceIndexDigest: engine.SelectedIndexDigest(entries, selected),
+		LeaseDigest:       leaseScopeDigest(status.Leases, time.Now().UTC()),
+		MessagePolicy:     saved.MessagePolicy,
+		StagedPaths:       selected,
+		Groups:            proposeSplitGroups(selected),
+		Instruction:       "Review every path group, add a non-empty message to each group, then change state from draft to reviewed. Capture rejects stale bindings and draft plans.",
+	}
+	if strings.TrimSpace(*out) != "" {
+		body, marshalErr := json.MarshalIndent(proposal, "", "  ")
+		if marshalErr != nil {
+			return application.failure("plan", fail.Wrap("PLAN_WRITE_FAILED", marshalErr), nil, 1)
+		}
+		path, absoluteErr := filepath.Abs(*out)
+		if absoluteErr != nil {
+			return application.failure("plan", fail.Wrap("PLAN_WRITE_FAILED", absoluteErr), nil, 1)
+		}
+		if writeErr := atomicfile.Create(path, append(body, '\n'), 0o600); writeErr != nil {
+			if errors.Is(writeErr, atomicfile.ErrExists) {
+				writeErr = fail.New("PLAN_EXISTS", "refusing to overwrite existing plan: "+path)
+			} else {
+				writeErr = fail.Wrap("PLAN_WRITE_FAILED", writeErr)
+			}
+			return application.failure("plan", writeErr, nil, 1)
+		}
+	}
+	operational, err := buildOperationalStatus(ctx, laneStore, status, renewalStatus{Attempted: true, Succeeded: true})
+	if err != nil {
+		return application.failure("plan", err, proposal, 1)
+	}
+	return application.successWithContext("plan", proposal, formatPlanProposal(proposal), operational.context())
 }
 
 func proposeSplitGroups(paths []string) []splitProposal {

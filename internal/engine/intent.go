@@ -18,14 +18,16 @@ import (
 	"github.com/nstranquist/wip-commit/internal/fail"
 	"github.com/nstranquist/wip-commit/internal/gitx"
 	"github.com/nstranquist/wip-commit/internal/pathid"
+	"github.com/nstranquist/wip-commit/internal/policy"
 	"github.com/nstranquist/wip-commit/internal/recordjson"
 	"github.com/nstranquist/wip-commit/internal/safeio"
 	"github.com/nstranquist/wip-commit/internal/strictjson"
 )
 
 const (
-	intentSchemaVersion = 1
-	maxIntentBytes      = 1 << 20
+	intentSchemaVersion       = 2
+	legacyIntentSchemaVersion = 1
+	maxIntentBytes            = 1 << 20
 )
 
 var planIDPattern = regexp.MustCompile(`^plan-[0-9a-f]{24}$`)
@@ -40,6 +42,8 @@ type Intent struct {
 	SchemaVersion     int             `json:"schema_version"`
 	PlanID            string          `json:"plan_id"`
 	PlanDigest        string          `json:"plan_digest"`
+	ReviewPlanDigest  string          `json:"review_plan_digest,omitempty"`
+	MessagePolicy     *policy.Receipt `json:"message_policy,omitempty"`
 	State             string          `json:"state"`
 	TargetRef         string          `json:"target_ref"`
 	ExpectedOld       string          `json:"expected_old"`
@@ -63,10 +67,67 @@ type ReconcileResult struct {
 	AlreadyClean bool   `json:"already_clean"`
 }
 
+type IntentSummary struct {
+	PlanID           string          `json:"plan_id"`
+	PlanDigest       string          `json:"plan_digest"`
+	ReviewPlanDigest string          `json:"review_plan_digest,omitempty"`
+	State            string          `json:"state"`
+	ExpectedNew      string          `json:"expected_new"`
+	MessagePolicy    *policy.Receipt `json:"message_policy,omitempty"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
+}
+
+// LatestIntent returns the newest validated capture intent for targetRef.
+func LatestIntent(repo gitx.Repo, targetRef string) (*IntentSummary, error) {
+	directory := filepath.Join(repo.CommonDir, "wip", "v1", "intents")
+	entries, err := os.ReadDir(directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fail.Wrap("INTENT_READ_FAILED", err)
+	}
+	if len(entries) > 10_000 {
+		return nil, fail.New("INTENT_READ_FAILED", "intent directory exceeds 10000 entries")
+	}
+	var latest *IntentSummary
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		id := strings.TrimSuffix(entry.Name(), ".json")
+		if !planIDPattern.MatchString(id) {
+			return nil, fail.New("INTENT_READ_FAILED", "intent directory contains an invalid record name")
+		}
+		intent, _, loadErr := LoadIntent(repo, id, "")
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		if intent.TargetRef != targetRef {
+			continue
+		}
+		candidate := &IntentSummary{PlanID: intent.PlanID, PlanDigest: intent.PlanDigest, ReviewPlanDigest: intent.ReviewPlanDigest, State: intent.State, ExpectedNew: intent.ExpectedNew, MessagePolicy: intent.MessagePolicy, CreatedAt: intent.CreatedAt, UpdatedAt: intent.UpdatedAt}
+		if latest == nil || candidate.CreatedAt.After(latest.CreatedAt) || candidate.CreatedAt.Equal(latest.CreatedAt) && candidate.PlanID > latest.PlanID {
+			latest = candidate
+		}
+	}
+	return latest, nil
+}
+
 func newIntent(result Result, allowed []string) (Intent, error) {
 	now := time.Now().UTC()
+	schemaVersion := legacyIntentSchemaVersion
+	var messagePolicy *policy.Receipt
+	if result.ReviewPlanDigest != "" {
+		schemaVersion = intentSchemaVersion
+		if result.MessagePolicy != nil {
+			receipt := *result.MessagePolicy
+			messagePolicy = &receipt
+		}
+	}
 	intent := Intent{
-		SchemaVersion:     intentSchemaVersion,
+		SchemaVersion:     schemaVersion,
 		State:             "prepared",
 		TargetRef:         result.TargetRef,
 		ExpectedOld:       result.ExpectedRef,
@@ -75,6 +136,8 @@ func newIntent(result Result, allowed []string) (Intent, error) {
 		SourceIndexDigest: result.SourceIndexDigest,
 		FinalTree:         result.FinalTree,
 		HookDigest:        result.HookDigest,
+		ReviewPlanDigest:  result.ReviewPlanDigest,
+		MessagePolicy:     messagePolicy,
 		RequestedPaths:    append([]string(nil), result.RequestedPaths...),
 		AllowedPaths:      append([]string(nil), allowed...),
 		Commits:           append([]PlannedCommit(nil), result.Commits...),
@@ -148,8 +211,8 @@ func LoadIntent(repo gitx.Repo, planID, expectedDigest string) (Intent, string, 
 	if err := strictjson.Decode(body, &intent); err != nil {
 		return intent, path, fail.Wrap("INTENT_READ_FAILED", err)
 	}
-	if intent.SchemaVersion != intentSchemaVersion {
-		return intent, path, fail.Errorf("MIGRATION_REQUIRED", "intent schema version %d is unsupported; this wip release supports version %d", intent.SchemaVersion, intentSchemaVersion)
+	if intent.SchemaVersion != legacyIntentSchemaVersion && intent.SchemaVersion != intentSchemaVersion {
+		return intent, path, fail.Errorf("MIGRATION_REQUIRED", "intent schema version %d is unsupported; this wip release supports versions %d and %d", intent.SchemaVersion, legacyIntentSchemaVersion, intentSchemaVersion)
 	}
 	if intent.PlanID != planID || !planIDPattern.MatchString(intent.PlanID) {
 		return intent, path, fail.New("INVALID_INTENT", "plan intent identity is invalid")
@@ -173,6 +236,21 @@ func LoadIntent(repo gitx.Repo, planID, expectedDigest string) (Intent, string, 
 func validateIntentRecord(repo gitx.Repo, intent Intent) error {
 	if !intentDigestPattern.MatchString(intent.PlanDigest) || !intentDigestPattern.MatchString(intent.SourceIndexDigest) || !intentDigestPattern.MatchString(intent.HookDigest) {
 		return fail.New("INVALID_INTENT", "plan intent digest fields are invalid")
+	}
+	if intent.SchemaVersion == legacyIntentSchemaVersion {
+		if intent.ReviewPlanDigest != "" || intent.MessagePolicy != nil {
+			return fail.New("INVALID_INTENT", "legacy plan intent contains unsupported review binding")
+		}
+	} else {
+		if !intentDigestPattern.MatchString(intent.ReviewPlanDigest) {
+			return fail.New("INVALID_INTENT", "plan intent reviewed-plan digest is invalid")
+		}
+		if intent.MessagePolicy == nil {
+			return fail.New("INVALID_INTENT", "plan intent message policy is missing")
+		}
+		if err := policy.ValidateReceipt(*intent.MessagePolicy); err != nil {
+			return fail.Wrap("INVALID_INTENT", err)
+		}
 	}
 	if !intentObjectPattern.MatchString(intent.ExpectedOld) || !intentObjectPattern.MatchString(intent.ExpectedNew) || !intentObjectPattern.MatchString(intent.SourceHead) || !intentObjectPattern.MatchString(intent.FinalTree) || intent.ExpectedOld == intent.ExpectedNew {
 		return fail.New("INVALID_INTENT", "plan intent object identities are invalid")
@@ -207,7 +285,7 @@ func validateIntentRecord(repo gitx.Repo, intent Intent) error {
 		if planned.Index != index+1 || planned.Parent != cursor || !intentObjectPattern.MatchString(planned.Parent) || !intentObjectPattern.MatchString(planned.Commit) || !intentObjectPattern.MatchString(planned.Tree) {
 			return fail.Errorf("INVALID_INTENT", "plan intent commit %d identity or parent chain is invalid", index+1)
 		}
-		if err := ValidateMessage(planned.Message, true); err != nil {
+		if err := ValidateMessageSafety(planned.Message); err != nil {
 			return fail.Wrap("INVALID_INTENT", fmt.Errorf("commit %d message: %w", index+1, err))
 		}
 		if planned.VerifyCount < 0 || planned.VerifyCount > maxVerifyCommands || planned.Repairs < 0 {

@@ -18,6 +18,7 @@ import (
 	"github.com/nstranquist/wip-commit/internal/fail"
 	"github.com/nstranquist/wip-commit/internal/gitx"
 	"github.com/nstranquist/wip-commit/internal/pathid"
+	"github.com/nstranquist/wip-commit/internal/policy"
 	"github.com/nstranquist/wip-commit/internal/process"
 )
 
@@ -60,6 +61,9 @@ type Options struct {
 	TargetRef            string
 	ExpectedRef          string
 	ExpectedSourceHead   string
+	ExpectedIndexDigest  string
+	ReviewPlanDigest     string
+	MessagePolicy        policy.Receipt
 	AllowedPaths         []string
 	Groups               []Group
 	AllowWIP             bool
@@ -89,12 +93,32 @@ type Result struct {
 	PublicationScope  string          `json:"publication_scope,omitempty"`
 	PlanID            string          `json:"plan_id,omitempty"`
 	PlanDigest        string          `json:"plan_digest,omitempty"`
+	ReviewPlanDigest  string          `json:"review_plan_digest,omitempty"`
+	MessagePolicy     *policy.Receipt `json:"message_policy,omitempty"`
 	IntentPath        string          `json:"intent_path,omitempty"`
 	IntentState       string          `json:"intent_state,omitempty"`
 }
 
 func Run(ctx context.Context, options Options) (result Result, err error) {
 	result.SchemaVersion, result.DryRun, result.GateOutcome = ResultSchemaVersion, options.DryRun, "failed"
+	result.ReviewPlanDigest = options.ReviewPlanDigest
+	boundPlan := strings.TrimSpace(options.ReviewPlanDigest) != "" || options.MessagePolicy != (policy.Receipt{}) || strings.TrimSpace(options.ExpectedIndexDigest) != ""
+	if boundPlan && (strings.TrimSpace(options.ReviewPlanDigest) == "" || options.MessagePolicy == (policy.Receipt{}) || strings.TrimSpace(options.ExpectedIndexDigest) == "") {
+		return result, fail.New("INVALID_PLAN_BINDING", "reviewed plan digest, message policy, and expected index digest must be supplied together")
+	}
+	if boundPlan {
+		receipt := options.MessagePolicy
+		result.MessagePolicy = &receipt
+		if !intentDigestPattern.MatchString(options.ReviewPlanDigest) {
+			return result, fail.New("INVALID_PLAN_BINDING", "reviewed plan digest must be a sha256 receipt")
+		}
+		if !intentDigestPattern.MatchString(options.ExpectedIndexDigest) {
+			return result, fail.New("INVALID_PLAN_BINDING", "expected index digest must be a sha256 receipt")
+		}
+		if err := policy.ValidateReceipt(options.MessagePolicy); err != nil {
+			return result, err
+		}
+	}
 	if len(options.Groups) == 0 {
 		return result, fail.New("INVALID_PLAN", "commit plan must contain at least one group")
 	}
@@ -182,6 +206,9 @@ func Run(ctx context.Context, options Options) (result Result, err error) {
 		return result, fail.Wrap("GIT_FAILED", err)
 	}
 	result.SourceIndexDigest = selectedDigest(source, allPaths)
+	if boundPlan && result.SourceIndexDigest != options.ExpectedIndexDigest {
+		return result, fail.New("SOURCE_INDEX_MOVED", "selected staged entries no longer match the reviewed plan")
+	}
 	index, environment, cleanup, err := privateIndex(ctx, options.Repo, indexRoot, expected)
 	if err != nil {
 		return result, err
@@ -339,22 +366,16 @@ func preparePrivateIndexRoot(gitDir string) (string, error) {
 	return filepath.Join(gitDir, "wip", "indexes"), nil
 }
 
-func normalizeGroups(repo gitx.Repo, input []Group, allowWIP bool) ([]Group, []string, error) {
+func normalizeGroups(repo gitx.Repo, input []Group, _ bool) ([]Group, []string, error) {
 	groups := make([]Group, 0, len(input))
-	seenMessages := map[string]bool{}
 	var all []string
 	for index, group := range input {
 		if len(group.Verify) > maxVerifyCommands {
 			return nil, nil, fail.Errorf("INVALID_PLAN", "group %d exceeds %d verify commands", index+1, maxVerifyCommands)
 		}
-		if err := ValidateMessage(group.Message, allowWIP); err != nil {
+		if err := ValidateMessageSafety(group.Message); err != nil {
 			return nil, nil, fail.Wrap("INVALID_COMMIT_MESSAGE", fmt.Errorf("group %d: %w", index+1, err))
 		}
-		key := strings.ToLower(strings.TrimSpace(group.Message))
-		if seenMessages[key] {
-			return nil, nil, fail.Errorf("DUPLICATE_COMMIT_MESSAGE", "group %d repeats a prior message", index+1)
-		}
-		seenMessages[key] = true
 		paths, err := repo.NormalizePaths(group.Files)
 		if err != nil {
 			return nil, nil, err
@@ -451,6 +472,12 @@ func selectedDigest(entries map[string]string, paths []string) string {
 		_, _ = hash.Write([]byte{0})
 	}
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil))
+}
+
+// SelectedIndexDigest returns a stable digest for entries covered by paths.
+// Callers use it to bind a reviewed plan to the exact staged index content.
+func SelectedIndexDigest(entries map[string]string, paths []string) string {
+	return selectedDigest(entries, paths)
 }
 
 func verifyTree(ctx context.Context, repo gitx.Repo, environment []string, tree string, commands []VerifyCommand, defaultTimeout time.Duration) error {

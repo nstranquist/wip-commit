@@ -29,10 +29,11 @@ type errorPayload struct {
 }
 
 type envelope struct {
-	OK     bool          `json:"ok"`
-	Action string        `json:"action"`
-	Data   any           `json:"data,omitempty"`
-	Error  *errorPayload `json:"error,omitempty"`
+	OK      bool          `json:"ok"`
+	Action  string        `json:"action"`
+	Data    any           `json:"data,omitempty"`
+	Context *laneContext  `json:"context,omitempty"`
+	Error   *errorPayload `json:"error,omitempty"`
 }
 
 func (application *app) run(ctx context.Context, args []string) int {
@@ -77,9 +78,14 @@ func (application *app) run(ctx context.Context, args []string) int {
 	}
 	readOnly := false
 	switch command {
-	case "status", "env", "plan":
+	case "env":
+		readOnly = envObserveRequested(rest)
+	case "handoff":
 		readOnly = true
-	case "claim", "renew", "commit", "reconcile", "release", "abort":
+	case "status":
+		readOnly = statusObserveRequested(rest)
+	case "plan":
+	case "claim", "renew", "commit", "capture", "reconcile", "release", "abort":
 	default:
 		return application.failure(command, fail.Errorf("INVALID_ARGS", "unknown command %q", command), nil, 2)
 	}
@@ -98,23 +104,27 @@ func (application *app) run(ctx context.Context, args []string) int {
 	}
 	switch command {
 	case "status":
-		return application.runStatus(laneStore, rest)
+		return application.runStatus(ctx, laneStore, rest)
 	case "env":
-		return application.runEnv(laneStore, rest)
+		return application.runEnv(ctx, laneStore, rest)
 	case "claim":
-		return application.runClaim(laneStore, rest)
+		return application.runClaim(ctx, laneStore, rest)
 	case "renew":
-		return application.runRenew(laneStore, rest)
+		return application.runRenew(ctx, laneStore, rest)
 	case "plan":
 		return application.runPlan(ctx, laneStore, rest)
 	case "commit":
 		return application.runCommit(ctx, laneStore, rest)
+	case "capture":
+		return application.runCapture(ctx, laneStore, rest)
+	case "handoff":
+		return application.runHandoff(ctx, laneStore, rest)
 	case "reconcile":
 		return application.runReconcile(ctx, laneStore, rest)
 	case "release":
-		return application.runRelease(laneStore, rest, false)
+		return application.runRelease(ctx, laneStore, rest, false)
 	case "abort":
-		return application.runRelease(laneStore, rest, true)
+		return application.runRelease(ctx, laneStore, rest, true)
 	}
 	return application.failure(command, fail.Errorf("INVALID_ARGS", "unknown command %q", command), nil, 2)
 }
@@ -137,8 +147,12 @@ func (application *app) parseGlobal(args []string) (string, []string, error) {
 }
 
 func (application app) success(action string, data any, human string) int {
+	return application.successWithContext(action, data, human, nil)
+}
+
+func (application app) successWithContext(action string, data any, human string, laneContext *laneContext) int {
 	if application.jsonMode {
-		_ = json.NewEncoder(application.stdout).Encode(envelope{OK: true, Action: action, Data: data})
+		_ = json.NewEncoder(application.stdout).Encode(envelope{OK: true, Action: action, Data: data, Context: laneContext})
 	} else if human != "" {
 		_, _ = fmt.Fprintln(application.stdout, human)
 	}
@@ -146,9 +160,13 @@ func (application app) success(action string, data any, human string) int {
 }
 
 func (application app) failure(action string, err error, data any, code int) int {
+	return application.failureWithContext(action, err, data, code, nil)
+}
+
+func (application app) failureWithContext(action string, err error, data any, code int, laneContext *laneContext) int {
 	payload := &errorPayload{Code: fail.Code(err), Message: err.Error()}
 	if application.jsonMode {
-		_ = json.NewEncoder(application.stdout).Encode(envelope{OK: false, Action: action, Data: data, Error: payload})
+		_ = json.NewEncoder(application.stdout).Encode(envelope{OK: false, Action: action, Data: data, Context: laneContext, Error: payload})
 	} else {
 		_, _ = fmt.Fprintf(application.stderr, "wip %s: %s: %s\n", action, payload.Code, payload.Message)
 	}
@@ -172,12 +190,14 @@ Commands:
   init        interactively install and initialize a shared or worktree lane
   doctor      audit bounded state, refs, and recovery requirements
   archive     preview or apply recoverable state-record archival
-  status      show the active lane and leases
+  status      classify staged state and show lane, lease, ref, and intent health
   env         print shell environment for a lane
   claim       claim additional paths
   renew       renew active path leases
-  plan        preview deterministic split suggestions for staged leased paths
+  plan        create one bound draft for staged leased paths
   commit      capture one atomic split plan
+  capture     capture one reviewed bound plan and emit a typed handoff
+  handoff     validate and print a capture-only handoff
   reconcile   finish metadata after an interrupted successful ref update
   release     release the lane and its leases
   abort       abort the lane and release its leases
@@ -196,6 +216,7 @@ Interactively initialize and optionally install wip. Important options:
   --lane ID                    short task slug
   --agent ID --session ID      owner identity
   --base-ref REF               starting commit (default HEAD)
+  --message-policy ID          override the repository message policy
   --path PATH                  path claim; repeatable
   --install --install-dir DIR  copy this binary without overwriting
   --install-skill --skill-dir DIR
@@ -206,15 +227,25 @@ Interactively initialize and optionally install wip. Important options:
 
 Capture one all-or-nothing staged split plan. Important options:
   --plan FILE                  strict JSON plan, or - for stdin
-  --single --message MESSAGE   explicit one-commit opt-out
+  --single --message MESSAGE   explicit one-commit compatibility path
   --path PATH                  staged scope for --single; repeatable
   --dry-run                    run gates without commits or a ref update
   --allow-wip                  authorize the wip: prefix
   --hook-timeout DURATION      hook limit
   --verify-timeout DURATION    default verify limit
   --lock-wait DURATION         lane-lock wait`,
-		"status": "Usage: wip status [--lane ID] [--agent ID] [--session ID]",
-		"doctor": "Usage: wip doctor\n\nRead-only audit of bounded state records, refs, and recovery intents.",
+		"capture": `Usage: wip capture --plan FILE [options]
+
+Capture one reviewed v2 plan and emit a validated capture-only handoff.
+  --plan FILE                  reviewed bound plan from wip plan
+  --final                      release the lane after the handoff validates
+  --allow-wip                  authorize the wip: prefix
+  --hook-timeout DURATION      hook limit
+  --verify-timeout DURATION    default verify limit
+  --lock-wait DURATION         lane-lock wait`,
+		"handoff": "Usage: wip handoff [identity options] [--plan-id ID --plan-digest SHA256]\n\nRead-only validation and output of a capture-only, non-authorizing handoff.",
+		"status":  "Usage: wip status [--lane ID] [--agent ID] [--session ID] [--observe]\n\nStatus renews active leases by default. Use --observe for a pure read.",
+		"doctor":  "Usage: wip doctor\n\nRead-only audit of bounded state records, refs, and recovery intents.",
 		"archive": `Usage: wip archive [options]
 
 Preview is the default. Important options:
@@ -225,10 +256,10 @@ Preview is the default. Important options:
   --apply --yes               apply the exact reviewed archive plan
   --resume ARCHIVE_ID         resume a prepared receipt; requires --apply --yes
   --restore ARCHIVE_ID        restore records; also requires --apply --yes`,
-		"env":       "Usage: wip env --lane ID",
+		"env":       "Usage: wip env --lane ID [--observe]",
 		"claim":     "Usage: wip claim [identity options] --path PATH [--path PATH...]",
 		"renew":     "Usage: wip renew [--lane ID] [--agent ID] [--session ID]",
-		"plan":      "Usage: wip plan [identity options] [--path PATH...]\n\nRead-only split suggestions. Review them before writing a commit plan.",
+		"plan":      "Usage: wip plan [identity options] [--path PATH...] [--out FILE]\n\nCreate one bound draft. Add messages and set its state to reviewed before capture.",
 		"reconcile": "Usage: wip reconcile [identity options] --plan-id ID --plan-digest SHA256",
 		"release":   "Usage: wip release [--lane ID] [--agent ID] [--session ID]",
 		"abort":     "Usage: wip abort [--lane ID] [--agent ID] [--session ID]",

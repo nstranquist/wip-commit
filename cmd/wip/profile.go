@@ -9,6 +9,7 @@ import (
 
 	"github.com/nstranquist/wip-commit/internal/atomicfile"
 	"github.com/nstranquist/wip-commit/internal/fail"
+	"github.com/nstranquist/wip-commit/internal/policy"
 	"github.com/nstranquist/wip-commit/internal/recordjson"
 	"github.com/nstranquist/wip-commit/internal/safeio"
 	"github.com/nstranquist/wip-commit/internal/store"
@@ -16,17 +17,19 @@ import (
 )
 
 type profile struct {
-	SchemaVersion int        `json:"schema_version"`
-	Lane          string     `json:"lane"`
-	Agent         string     `json:"agent"`
-	Session       string     `json:"session"`
-	Mode          store.Mode `json:"mode"`
-	Worktree      string     `json:"worktree"`
+	SchemaVersion int            `json:"schema_version"`
+	Lane          string         `json:"lane"`
+	Agent         string         `json:"agent"`
+	Session       string         `json:"session"`
+	Mode          store.Mode     `json:"mode"`
+	Worktree      string         `json:"worktree"`
+	MessagePolicy policy.Receipt `json:"message_policy,omitempty"`
 }
 
 const (
-	profileSchemaVersion = 1
-	maxProfileBytes      = 64 << 10
+	profileSchemaVersion       = 2
+	legacyProfileSchemaVersion = 1
+	maxProfileBytes            = 64 << 10
 )
 
 type identityFlags struct {
@@ -50,8 +53,8 @@ func profilePath(laneStore store.Store, lane string) (string, error) {
 	return filepath.Join(laneStore.Root, "profiles", lane+".json"), nil
 }
 
-func writeProfile(laneStore store.Store, lane store.Lane) (string, error) {
-	wanted := profile{SchemaVersion: profileSchemaVersion, Lane: lane.ID, Agent: lane.Agent, Session: lane.Session, Mode: lane.Mode, Worktree: lane.Worktree}
+func writeProfile(laneStore store.Store, lane store.Lane, messagePolicy policy.Receipt) (string, error) {
+	wanted := profile{SchemaVersion: profileSchemaVersion, Lane: lane.ID, Agent: lane.Agent, Session: lane.Session, Mode: lane.Mode, Worktree: lane.Worktree, MessagePolicy: messagePolicy}
 	body, err := recordjson.Marshal(wanted, maxProfileBytes, "PROFILE_WRITE_FAILED", "lane profile")
 	if err != nil {
 		return "", err
@@ -93,8 +96,8 @@ func loadProfile(laneStore store.Store, lane string) (profile, error) {
 	if err := strictjson.Decode(body, &value); err != nil {
 		return profile{}, fail.Wrap("PROFILE_READ_FAILED", err)
 	}
-	if value.SchemaVersion != profileSchemaVersion {
-		return profile{}, fail.Errorf("MIGRATION_REQUIRED", "profile schema version %d is unsupported; this wip release supports version %d", value.SchemaVersion, profileSchemaVersion)
+	if value.SchemaVersion != legacyProfileSchemaVersion && value.SchemaVersion != profileSchemaVersion {
+		return profile{}, fail.Errorf("MIGRATION_REQUIRED", "profile schema version %d is unsupported; this wip release supports versions %d and %d", value.SchemaVersion, legacyProfileSchemaVersion, profileSchemaVersion)
 	}
 	if value.Lane != lane {
 		return profile{}, fail.New("PROFILE_READ_FAILED", "lane profile identity is invalid")
@@ -109,6 +112,12 @@ func loadProfile(laneStore store.Store, lane string) (profile, error) {
 	}
 	if value.Worktree == "" || !filepath.IsAbs(value.Worktree) || filepath.Clean(value.Worktree) != value.Worktree {
 		return profile{}, fail.New("PROFILE_READ_FAILED", "lane profile worktree is invalid")
+	}
+	if value.SchemaVersion == legacyProfileSchemaVersion {
+		value.SchemaVersion = profileSchemaVersion
+		value.MessagePolicy = policy.Default()
+	} else if err := policy.ValidateReceipt(value.MessagePolicy); err != nil {
+		return profile{}, fail.Wrap("PROFILE_READ_FAILED", err)
 	}
 	laneRecord, err := laneStore.Load(lane)
 	if err != nil {

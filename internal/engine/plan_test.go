@@ -17,6 +17,7 @@ import (
 
 	"github.com/nstranquist/wip-commit/internal/fail"
 	"github.com/nstranquist/wip-commit/internal/gitx"
+	"github.com/nstranquist/wip-commit/internal/policy"
 )
 
 func TestRunSplitPlanPreservesHeadAndFullIndex(t *testing.T) {
@@ -64,6 +65,68 @@ func TestRunSplitPlanPreservesHeadAndFullIndex(t *testing.T) {
 	}
 	if _, clean, err := ValidateApplied(context.Background(), repo, result.PlanID, result.PlanDigest, target, result.FinalCommit); err != nil || !clean {
 		t.Fatalf("completed validation clean=%v err=%v", clean, err)
+	}
+}
+
+func TestRunEnforcesSafetyButDoesNotOwnRepositoryNamingPolicy(t *testing.T) {
+	repo := engineTestRepo(t)
+	write(t, repo.Root, "core.txt", "new core\n")
+	engineGit(t, repo.Root, "add", "core.txt")
+	head := engineGit(t, repo.Root, "rev-parse", "HEAD")
+	target := "refs/heads/wip/agent/policy-boundary"
+	engineGit(t, repo.Root, "update-ref", target, head, "")
+	receipt := policy.Default()
+	entries, err := repo.IndexEntries(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Run(context.Background(), Options{
+		Repo: repo, TargetRef: target, ExpectedRef: head, ExpectedSourceHead: head,
+		AllowedPaths:        []string{"core.txt"},
+		Groups:              []Group{{Message: "plain repository checkpoint", Files: []string{"core.txt"}}},
+		ReviewPlanDigest:    "sha256:" + strings.Repeat("a", 64),
+		ExpectedIndexDigest: SelectedIndexDigest(entries, []string{"core.txt"}),
+		MessagePolicy:       receipt,
+	})
+	if err != nil {
+		t.Fatalf("capture kernel applied repository naming policy: %v", err)
+	}
+	if result.MessagePolicy == nil || *result.MessagePolicy != receipt || result.ReviewPlanDigest == "" {
+		t.Fatalf("policy binding evidence = %#v", result)
+	}
+}
+
+func TestRunRejectsReviewedIndexMismatchBeforeHooks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture uses a POSIX hook")
+	}
+	repo := engineTestRepo(t)
+	write(t, repo.Root, "core.txt", "new core\n")
+	engineGit(t, repo.Root, "add", "core.txt")
+	head := engineGit(t, repo.Root, "rev-parse", "HEAD")
+	target := "refs/heads/wip/agent/reviewed-index"
+	engineGit(t, repo.Root, "update-ref", target, head, "")
+	marker := filepath.Join(repo.Root, "hook-ran")
+	hook := filepath.Join(repo.GitDir, "hooks", "pre-commit")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\n: > hook-ran\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Run(context.Background(), Options{
+		Repo: repo, TargetRef: target, ExpectedRef: head, ExpectedSourceHead: head,
+		AllowedPaths:        []string{"core.txt"},
+		Groups:              []Group{{Message: "plain repository checkpoint", Files: []string{"core.txt"}}},
+		ReviewPlanDigest:    "sha256:" + strings.Repeat("a", 64),
+		ExpectedIndexDigest: "sha256:" + strings.Repeat("b", 64),
+		MessagePolicy:       policy.Default(),
+	})
+	if fail.Code(err) != "SOURCE_INDEX_MOVED" {
+		t.Fatalf("index mismatch error = %v (%s)", err, fail.Code(err))
+	}
+	if result.RefUpdated {
+		t.Fatalf("index mismatch published a ref: %#v", result)
+	}
+	if _, statErr := os.Stat(marker); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("pre-commit hook ran before the reviewed index check: %v", statErr)
 	}
 }
 

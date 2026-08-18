@@ -170,6 +170,27 @@ func TestCommandOutputHelpersPreserveExactGitResults(t *testing.T) {
 	}
 }
 
+func TestTreeEntriesMatchACleanIndex(t *testing.T) {
+	repo, _ := initializedRepo(t)
+	ctx := context.Background()
+	index, err := repo.IndexEntries(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := repo.TreeEntries(ctx, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tree) != len(index) {
+		t.Fatalf("TreeEntries(HEAD) has %d entries, want %d: %#v", len(tree), len(index), tree)
+	}
+	for path, want := range index {
+		if got := tree[path]; got != want {
+			t.Errorf("TreeEntries(HEAD)[%q] = %q, want %q", path, got, want)
+		}
+	}
+}
+
 func initializedRepo(t *testing.T) (Repo, string) {
 	t.Helper()
 	directory := t.TempDir()

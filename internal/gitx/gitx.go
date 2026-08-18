@@ -192,6 +192,28 @@ func (repo Repo) IndexEntries(ctx context.Context, env []string) (map[string]str
 	return entries, nil
 }
 
+// TreeEntries returns index-shaped entries for a committed tree. The values use
+// the same "<mode> <object> 0" representation as IndexEntries.
+func (repo Repo) TreeEntries(ctx context.Context, treeish string) (map[string]string, error) {
+	output, err := repo.Raw(ctx, nil, "ls-tree", "-r", "-z", "--full-tree", treeish)
+	if err != nil {
+		return nil, err
+	}
+	entries := map[string]string{}
+	for _, row := range strings.Split(output, "\x00") {
+		if row == "" {
+			continue
+		}
+		parts := strings.SplitN(row, "\t", 2)
+		fields := strings.Fields(parts[0])
+		if len(parts) != 2 || len(fields) != 3 {
+			return nil, fmt.Errorf("malformed git ls-tree row")
+		}
+		entries[parts[1]] = fields[0] + " " + fields[2] + " 0"
+	}
+	return entries, nil
+}
+
 func (repo Repo) NormalizePaths(input []string) ([]string, error) {
 	seen := map[string]string{}
 	out := make([]string, 0, len(input))

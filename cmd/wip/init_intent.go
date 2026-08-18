@@ -14,6 +14,7 @@ import (
 	"github.com/nstranquist/wip-commit/internal/atomicfile"
 	"github.com/nstranquist/wip-commit/internal/fail"
 	"github.com/nstranquist/wip-commit/internal/filelock"
+	"github.com/nstranquist/wip-commit/internal/policy"
 	"github.com/nstranquist/wip-commit/internal/recordjson"
 	"github.com/nstranquist/wip-commit/internal/safeio"
 	"github.com/nstranquist/wip-commit/internal/store"
@@ -21,8 +22,9 @@ import (
 )
 
 const (
-	initIntentSchemaVersion = 1
-	maxInitIntentBytes      = 1 << 20
+	initIntentSchemaVersion       = 2
+	legacyInitIntentSchemaVersion = 1
+	maxInitIntentBytes            = 1 << 20
 )
 
 var initStepOrder = []string{
@@ -35,26 +37,31 @@ var initStepOrder = []string{
 }
 
 type initIntent struct {
-	SchemaVersion  int        `json:"schema_version"`
-	ID             string     `json:"id"`
-	Digest         string     `json:"digest"`
-	State          string     `json:"state"`
-	Lane           string     `json:"lane"`
-	Agent          string     `json:"agent"`
-	Session        string     `json:"session"`
-	Mode           store.Mode `json:"mode"`
-	BaseSHA        string     `json:"base_sha"`
-	Worktree       string     `json:"worktree"`
-	Paths          []string   `json:"paths"`
-	InstallPath    string     `json:"install_path,omitempty"`
-	SkillPath      string     `json:"skill_path,omitempty"`
-	CompletedSteps []string   `json:"completed_steps,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	SchemaVersion  int             `json:"schema_version"`
+	ID             string          `json:"id"`
+	Digest         string          `json:"digest"`
+	State          string          `json:"state"`
+	Lane           string          `json:"lane"`
+	Agent          string          `json:"agent"`
+	Session        string          `json:"session"`
+	Mode           store.Mode      `json:"mode"`
+	BaseSHA        string          `json:"base_sha"`
+	Worktree       string          `json:"worktree"`
+	Paths          []string        `json:"paths"`
+	MessagePolicy  *policy.Receipt `json:"message_policy,omitempty"`
+	InstallPath    string          `json:"install_path,omitempty"`
+	SkillPath      string          `json:"skill_path,omitempty"`
+	CompletedSteps []string        `json:"completed_steps,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
 func beginInitIntent(laneStore store.Store, candidate initIntent) (initIntent, string, error) {
 	candidate.SchemaVersion = initIntentSchemaVersion
+	if candidate.MessagePolicy == nil {
+		receipt := policy.Default()
+		candidate.MessagePolicy = &receipt
+	}
 	candidate.Paths = append([]string(nil), candidate.Paths...)
 	sort.Strings(candidate.Paths)
 	digest, err := digestInitIntent(candidate)
@@ -145,8 +152,8 @@ func loadInitIntent(path string) (initIntent, error) {
 	if err := strictjson.Decode(body, &intent); err != nil {
 		return initIntent{}, fail.Wrap("INIT_INTENT_FAILED", err)
 	}
-	if intent.SchemaVersion != initIntentSchemaVersion {
-		return initIntent{}, fail.Errorf("MIGRATION_REQUIRED", "init intent schema version %d is unsupported; this wip release supports version %d", intent.SchemaVersion, initIntentSchemaVersion)
+	if intent.SchemaVersion != legacyInitIntentSchemaVersion && intent.SchemaVersion != initIntentSchemaVersion {
+		return initIntent{}, fail.Errorf("MIGRATION_REQUIRED", "init intent schema version %d is unsupported; this wip release supports versions %d and %d", intent.SchemaVersion, legacyInitIntentSchemaVersion, initIntentSchemaVersion)
 	}
 	if err := validateInitIntent(intent); err != nil {
 		return initIntent{}, err
@@ -176,6 +183,18 @@ func loadInitIntent(path string) (initIntent, error) {
 }
 
 func validateInitIntent(intent initIntent) error {
+	if intent.SchemaVersion == legacyInitIntentSchemaVersion {
+		if intent.MessagePolicy != nil {
+			return fail.New("INIT_INTENT_FAILED", "legacy initialization intent contains unsupported policy data")
+		}
+	} else {
+		if intent.MessagePolicy == nil {
+			return fail.New("INIT_INTENT_FAILED", "initialization intent message policy is missing")
+		}
+		if err := policy.ValidateReceipt(*intent.MessagePolicy); err != nil {
+			return fail.Wrap("INIT_INTENT_FAILED", err)
+		}
+	}
 	for label, value := range map[string]string{"init intent": intent.ID, "lane": intent.Lane, "agent": intent.Agent, "session": intent.Session} {
 		if err := store.ValidateID(value, label); err != nil {
 			return fail.Wrap("INIT_INTENT_FAILED", err)
