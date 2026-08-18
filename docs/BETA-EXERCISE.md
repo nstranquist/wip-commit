@@ -43,13 +43,14 @@ Do not add a remote. Do not use global Git configuration.
 1. Run `wip init` in shared mode.
 2. Claim both test files.
 3. Change and stage both files.
-4. Run `wip plan`.
-5. Write a reviewed two-group plan.
+4. Run `wip plan --out <plan>`.
+5. Add two messages and set the plan state to `reviewed`.
 6. Run `wip commit --plan <plan> --dry-run`.
 7. Verify that the dry-run did not move the lane ref.
-8. Run `wip commit --plan <plan>`.
+8. Run `wip capture --plan <plan>`.
 9. Verify that the lane contains two linear commits.
 10. Verify that source `HEAD` and the complete index stayed unchanged.
+11. Verify that the handoff is capture-only and does not authorize landing.
 
 Record scenario ID `shared-split`.
 
@@ -67,14 +68,15 @@ Record scenario ID `overlap-refusal`.
 ## Scenario 3: verification failure
 
 1. Stage a later change on one leased file.
-2. Add `git rev-parse --is-inside-work-tree` as a verify command.
-3. Run the capture.
-4. Verify that the command returns `VERIFY_FAILED`.
-5. Verify that source `HEAD`, the complete index, and the lane ref stayed
+2. Write a new draft plan.
+3. Add `git rev-parse --is-inside-work-tree` as a verify command.
+4. Set the plan state to `reviewed` and run `wip capture`.
+5. Verify that the command returns `VERIFY_FAILED`.
+6. Verify that source `HEAD`, the complete index, and the lane ref stayed
    unchanged.
-6. Restore the exact staged bytes from Scenario 1 with explicit file writes and
+7. Restore the exact staged bytes from Scenario 1 with explicit file writes and
    `git add`.
-7. Verify that the complete index digest matches the digest recorded after
+8. Verify that the complete index digest matches the digest recorded after
    Scenario 1.
 
 Candidate directories do not contain Git metadata. This command must fail.
@@ -83,11 +85,9 @@ Record scenario ID `verify-failure`.
 
 ## Scenario 4: duplicate refusal
 
-1. Create a new reviewed plan from the current lane ref and the restored staged
-   snapshot.
-2. Run that plan without another staged change.
-3. Verify that the command returns `EMPTY_COMMIT_GROUP` or `EMPTY_SELECTION`.
-4. Verify that the lane ref stayed unchanged.
+1. Run `wip plan --out <new-plan>` without another staged change.
+2. Verify that the command returns `EMPTY_SELECTION`.
+3. Verify that the lane ref stayed unchanged.
 
 Record scenario ID `duplicate-refusal`.
 
@@ -97,7 +97,7 @@ Record scenario ID `duplicate-refusal`.
 2. Run `wip init` with `--mode worktree` and `--create-worktree`.
 3. Claim two files in that linked worktree.
 4. Change and stage both files in the linked worktree.
-5. Capture a reviewed two-group plan.
+5. Create and capture a reviewed two-group v2 plan.
 6. Verify both checkout `HEAD` values.
 7. Verify both complete indexes.
 8. Verify that the new lane contains the complete split chain.

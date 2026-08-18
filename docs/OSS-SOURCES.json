@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "reviewed_on": "2026-08-16",
+  "reviewed_on": "2026-08-18",
   "sources": [
     {
       "id": "producing-open-source-software",
@@ -62,7 +62,7 @@
       "title": "NIST Secure Software Development Framework",
       "authority": "government-standard",
       "url": "https://csrc.nist.gov/pubs/sp/800/218/final",
-      "reviewed_revision": "NIST SP 800-218",
+      "reviewed_revision": "NIST SP 800-218 v1.1, February 2022, reviewed 2026-08-18",
       "use_for": [
         "security requirements",
         "toolchain and provenance protection",
@@ -75,7 +75,7 @@
       "title": "Pro Git: Environment Variables",
       "authority": "official-git-book",
       "url": "https://git-scm.com/book/en/v2/Git-Internals-Environment-Variables",
-      "reviewed_revision": "online second edition, reviewed 2026-08-16",
+      "reviewed_revision": "online second edition, reviewed 2026-08-18 with Git 2.55.0",
       "use_for": [
         "repository and worktree selection",
         "index and object-store behavior",

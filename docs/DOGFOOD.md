@@ -1,5 +1,120 @@
 # Dogfood evidence
 
+## 2026-08-18 reviewed guided capture
+
+This exercise used a source-current binary in a linked worktree. It captured
+the complete agent-facing workflow with the new version 2 plan and handoff
+contracts.
+
+Evidence scope: local maintainer evidence. This exercise does not prove hosted
+CI, publication, release, landing, or independent adoption.
+
+### Operational status and lease behavior
+
+The source `HEAD` was
+`206fa8b6a1dde1d97081133e4d447c0881849922`. The lane was
+`refs/heads/wip/codex/agent-facing-capture-v2`.
+
+An expired lane inspection returned `LEASE_EXPIRED` with a complete status
+object. It did not renew an expired lease. After an explicit claim, ordinary
+`status` and `plan` calls renewed the complete active path set.
+
+After exact staging, status reported 46 capture candidates and no foreign
+staged paths. It also reported three empty broad lease scopes. The status
+object validated against `STATUS.schema.json`.
+
+### Reviewed plan and safe failure
+
+The generated draft proposed 12 component groups. Review consolidated them
+into three dependency-closed groups:
+
+1. `feat(capture): add reviewed agent workflow`
+2. `docs(capture): define operational handoff contracts`
+3. `feat(skill): teach reviewed capture workflow`
+
+The first capture built the first private commit. The next group failed with
+`DIFF_CHECK_FAILED` because `docs/STATUS.schema.json` had one extra blank line
+at EOF. The lane ref stayed at its old value. The source `HEAD` and staged
+entries also stayed unchanged.
+
+After that byte was fixed, the old plan returned `STALE_PLAN` before hooks ran.
+This result confirmed that the reviewed plan bound the selected index content.
+A new generated draft received the same reviewed three-group structure.
+
+### Applied result
+
+The second capture produced this private linear chain:
+
+1. `6a9e14d1f83bb3c04202e4536d94578e2ca89019` — `feat(capture): add reviewed agent workflow`
+2. `19a4f1c1c6463c55bbe8bf3439691e5901cf040b` — `docs(capture): define operational handoff contracts`
+3. `4c27c2a6f477a33ef257a4722fc03c47d7473f0e` — `feat(skill): teach reviewed capture workflow`
+
+Receipt evidence:
+
+- Plan ID: `plan-9b2932bca63b757a5ec475b2`.
+- Capture intent digest:
+  `sha256:8c48dad5804a213823c24447957735e61f3853bea710b278f9fcde4a833281b5`.
+- Reviewed plan digest:
+  `sha256:d24c6a65ade6962da016d4c75d6d8141a03dc9744d980a6359e6284c3ef898c7`.
+- Final tree: `fda0fab63f375d37b1fb2fd4e5f424af8724fea0`.
+- Changed-path counts: 21, 22, and 3.
+- Each group-specific verification command passed.
+- The source `HEAD` stayed unchanged.
+- The complete `git ls-files --stage -z` digest stayed
+  `cfb3075ba51c7b6358c5bd04c7c4abf4fd3f928815f06470dedc0b5466adc50a`.
+
+The guided command emitted a handoff that validated against
+`HANDOFF.schema.json`. The handoff bound the named message policy and reviewed
+plan digest. It set `capture_only` to true and `landing_authorized` to false.
+
+The later standalone handoff returned the same receipt. Status reported zero
+capture candidates, 46 captured-but-still-staged paths, a complete intent, and
+no foreign staged paths. The lane remained active at that checkpoint so this
+evidence record could be added. A final one-file capture of this record
+releases the lane only after handoff validation. No command lands, merges, or
+pushes the private ref.
+
+### Post-capture review correction
+
+A later code review found a narrow interval between command validation and the
+kernel's first index read. A parallel writer could replace selected entries
+during that interval. Stable replacement content could then pass the kernel's
+final reread.
+
+The kernel now requires the reviewed source-index digest. It compares that
+digest with its initial source snapshot before hooks run. The final reread
+still detects changes during capture.
+
+`TestRunRejectsReviewedIndexMismatchBeforeHooks` proves that a mismatch returns
+`SOURCE_INDEX_MOVED` without running the repository hook or updating the ref.
+This correction requires a new final capture and supersedes the earlier lane
+tree as the release candidate.
+
+The corrected candidate used lane
+`refs/heads/wip/codex/agent-facing-capture-v2-final`. Its reviewed capture
+produced this chain:
+
+1. `7efa2bea4373b40b2089a6ff61b37778dcec7246` — `feat(capture): add reviewed agent workflow`
+2. `5e853892f31e08e8dc73a7a4f0b4f3a6c63c4a29` — `docs(capture): define operational handoff contracts`
+3. `eb9ac96215ec1033920a7569fb8961f09c3c2aed` — `feat(skill): teach reviewed capture workflow`
+
+Corrected receipt evidence:
+
+- Plan ID: `plan-16cafb8a9838ec64f7631b00`.
+- Capture intent digest:
+  `sha256:2a8922d1d1a0bd9356b4fc4a3bf7489f8d1fab7a27304777e37c4f0b0bcb084d`.
+- Reviewed plan digest:
+  `sha256:11d4605aa1795ab6a9b7154f7328205e2bb60abf380a84d209924389dfbda431`.
+- Reviewed and kernel source-index digest:
+  `sha256:cb2393c80e40ccd78ba612742625a09490e81f2843cf5e85c91c25a9ae479387`.
+- Final tree: `1f6bb2999e707426c67d3942e83565fb4e17b0a4`.
+- The source `HEAD` and complete staged-entry listing stayed unchanged.
+- A standalone active-lane handoff renewed the complete lease set only after
+  the receipt validated.
+
+The lane stayed active for this evidence edit. A final reviewed capture adds
+only this changed file and releases the lane after handoff validation.
+
 ## 2026-08-16 self-hosted shared capture
 
 This exercise used a source-current `wip` binary on the real dirty

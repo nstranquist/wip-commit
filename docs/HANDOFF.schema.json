@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nstranquist/wip-commit/blob/main/docs/HANDOFF.schema.json",
+  "title": "wip capture-only handoff",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "kind",
+    "capture_only",
+    "landing_authorized",
+    "lane_ref",
+    "lane_tip",
+    "lane_base_commit",
+    "parent_commit",
+    "final_tree",
+    "plan_id",
+    "capture_intent_digest",
+    "message_policy_bound",
+    "intent_state",
+    "commits"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "kind": {"const": "capture_handoff"},
+    "capture_only": {"const": true},
+    "landing_authorized": {"const": false},
+    "lane_ref": {"type": "string", "pattern": "^refs/heads/wip/[^/]+/[^/]+$"},
+    "lane_tip": {"$ref": "#/$defs/object_id"},
+    "lane_base_commit": {"$ref": "#/$defs/object_id"},
+    "parent_commit": {"$ref": "#/$defs/object_id"},
+    "final_tree": {"$ref": "#/$defs/object_id"},
+    "plan_id": {"type": "string", "pattern": "^plan-[0-9a-f]{24}$"},
+    "capture_intent_digest": {"$ref": "#/$defs/digest"},
+    "reviewed_plan_digest": {"$ref": "#/$defs/digest"},
+    "message_policy": {"$ref": "#/$defs/message_policy"},
+    "message_policy_bound": {"type": "boolean"},
+    "intent_state": {"const": "complete"},
+    "commits": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["index", "message", "parent", "commit", "tree", "changed_paths"],
+        "properties": {
+          "index": {"type": "integer", "minimum": 1},
+          "message": {"type": "string", "minLength": 1},
+          "parent": {"$ref": "#/$defs/object_id"},
+          "commit": {"$ref": "#/$defs/object_id"},
+          "tree": {"$ref": "#/$defs/object_id"},
+          "changed_paths": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10000,
+            "uniqueItems": true,
+            "items": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"message_policy_bound": {"const": true}},
+        "required": ["message_policy_bound"]
+      },
+      "then": {"required": ["reviewed_plan_digest", "message_policy"]}
+    }
+  ],
+  "$defs": {
+    "object_id": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "message_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "digest"],
+      "properties": {
+        "id": {"enum": ["conventional-v1", "safety-only-v1"]},
+        "version": {"const": "1.0.0"},
+        "digest": {"$ref": "#/$defs/digest"}
+      }
+    }
+  }
+}

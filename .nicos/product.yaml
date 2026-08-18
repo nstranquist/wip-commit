@@ -16,5 +16,5 @@ checks:
         - go
         - test
         - ./...
-description: Guarded split-commit capture for parallel agents in shared checkouts and linked worktrees.
+description: Reviewed, lease-bound Git capture for agents, with operational status and capture-only handoff receipts.
 portfolio_manifest: portfolio/manifest.yaml

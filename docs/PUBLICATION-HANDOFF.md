@@ -1,12 +1,18 @@
-# First publication handoff
+# First publication handoff (historical)
 
-Status: Ready for human execution
+Status: Executed on 2026-08-17. Do not run this handoff again.
 
 Target: `github.com/nstranquist/wip-commit`
 
 Reviewed bootstrap: `b276204385636c5a8ac338491565bd4894255217`
 
 Owner approval: `owner-session-2026-08-16`
+
+Final reviewed source candidate: `206fa8b6a1dde1d97081133e4d447c0881849922`
+
+The source repository now exists and has an active ruleset. The procedure below
+is the retained first-publication record. It is not a current mutation runbook.
+See [HOSTED-STATUS-2026-08-18.md](HOSTED-STATUS-2026-08-18.md).
 
 ## Boundary
 
@@ -80,10 +86,11 @@ Stop if any preflight check fails. Do not weaken a check or edit the receipt.
 Fix the candidate, capture a new reviewed commit series, and rerun the preflight
 to a new output path.
 
-## Human-only first push
+## Human-only first push (historical record)
 
-In this section, `<candidate-commit>` means the exact `candidate.commit` from
-the validated receipt. A human repository owner must run these commands.
+Do not run these commands again. In this historical section,
+`<candidate-commit>` means the exact `candidate.commit` from the validated
+receipt.
 
 1. Create an empty public repository. Do not add a README, license, or
    `.gitignore` from GitHub.

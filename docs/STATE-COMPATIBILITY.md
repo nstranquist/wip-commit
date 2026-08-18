@@ -2,9 +2,14 @@
 
 ## Supported state
 
-`v0.1.0-beta.1` reads and writes state directory version 1. Lane, lease,
-capture-intent, initialization-intent, profile, and archive-receipt records also
-use JSON schema version 1.
+`v0.1.0-beta.1` reads and writes state directory version 1. Lane, lease, and
+archive-receipt records use JSON schema version 1.
+
+New profiles and initialization intents use record schema version 2. Their
+readers also accept version 1.
+
+Reviewed captures use capture-intent schema version 2. The legacy `wip commit`
+path can write capture-intent schema version 1.
 
 Archive receipt state values are `prepared`, `complete`, `restoring`, and
 `restored`.
@@ -34,8 +39,9 @@ When the command finds either of these items, it returns
 - a state directory with a version other than the exact name `v1`.
 - an unknown top-level entry inside the `v1` directory.
 - a domain marker schema version other than 1.
-- a lane, lease, capture intent, initialization intent, profile, or archive
-  receipt with a schema version other than 1.
+- a lane, lease, or archive receipt with a schema version other than 1.
+- a capture intent, initialization intent, or profile with a schema version
+  other than 1 or 2.
 
 The command checks state-directory versions before it creates `v1`. This check
 prevents an old binary from starting a second coordination domain beside newer
@@ -46,8 +52,13 @@ must acquire the same domain lock before it changes the marker or creates a new
 version directory.
 
 `wip` does not migrate, rename, delete, or rewrite unsupported state. It does
-not guess how a future schema works. Malformed version 1 data continues to use
-its specific read, identity, or digest error.
+not guess how a future schema works.
+
+A version 1 profile implies the historical `conventional-v1` policy. Version 1
+initialization and capture intents keep their original digest form.
+
+Readers calculate each version 1 digest before they infer any current default.
+They do not rewrite an old record during a read.
 
 `init-intents` and `archive` are additive version 1 directories. A read-only
 inspection accepts their absence as an empty older version 1 store and does not
@@ -115,9 +126,16 @@ release can read and write. A state-version change requires all of these items:
 No state migration can be a hidden side effect of `wip init`, `wip status`, or
 `wip commit`.
 
-`wip doctor`, `wip status`, `wip env`, `wip plan`, and archive preview are
-read-only. They do not create a domain marker or version directory. A marker
-without its version directory is reported as initialized but unhealthy state;
-it is not misreported as an unclaimed domain. `wip archive` moves only released
-records after an exact reviewed preview. It rechecks the exact records under
-lock, preserves all lane refs, and supports receipt-based resume and restore.
+`wip doctor`, `wip handoff`, `wip status --observe`, `wip env --observe`, and
+archive preview are read-only. They do not create a domain marker or version
+directory.
+
+Authenticated `status`, `env`, and `plan` renew active leases. This renewal
+replaces only existing lease records after complete identity validation.
+
+A marker without its version directory is initialized but unhealthy state. It
+is not an unclaimed domain.
+
+`wip archive` moves only released records after an exact reviewed preview. It
+rechecks records under lock, preserves refs, and supports receipt-based resume
+and restore.

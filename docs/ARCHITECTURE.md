@@ -67,6 +67,9 @@ index unchanged.
 worktree. Another active lane cannot bind to it. A worktree-mode lane also reads
 staged entries and leaves the worktree's `HEAD` and index unchanged.
 
+The user interface recommends `worktree` mode for one agent per task. Use
+`shared` mode only when lanes must use the same checkout and index.
+
 The mode changes the coordination boundary. It does not change the publication
 algorithm.
 
@@ -133,6 +136,10 @@ lifetime. The publication callback compares and refreshes the set while it
 holds the registry lock. Every refresh audits the complete active registry for
 a cross-lane path overlap.
 
+Authenticated `status`, `env`, `claim`, `plan`, and `handoff` also renew the
+complete active lease set. `status --observe` and `env --observe` remain pure
+reads. A handoff for a released lane does not renew leases.
+
 A heartbeat failure remains authoritative after the ref update. The failed
 result includes `ref_updated`, `plan_id`, `plan_digest`, and the applied intent
 state. The operator must use that evidence with `wip reconcile`.
@@ -141,23 +148,25 @@ state. The operator must use that evidence with `wip reconcile`.
 
 For one split plan, `wip` performs these steps:
 
-1. Normalize and validate all groups, messages, paths, and verify commands.
-2. Check that every planned path is inside the active lease set.
-3. Resolve the lane ref and source `HEAD` to exact object IDs.
-4. Snapshot the pre-commit and post-commit hook files.
-5. Read the source index and calculate a digest for the selected paths.
-6. Create a private index from the current lane commit.
-7. For each group, copy only its exact source index entries into the private
+1. Validate the reviewed-plan bindings and named message policy.
+2. Normalize and validate all groups, message safety, paths, and verify commands.
+3. Check that every planned path is inside the active lease set.
+4. Resolve the lane ref and source `HEAD` to exact object IDs.
+5. Snapshot the pre-commit and post-commit hook files.
+6. Read the source index and require its selected-path digest to equal the
+   reviewed plan.
+7. Create a private index from the current lane commit.
+8. For each group, copy only its exact source index entries into the private
    index.
-8. Run the copied pre-commit hook, check the changed-path scope, run `git diff
+9. Run the copied pre-commit hook, check the changed-path scope, run `git diff
    --check`, and run verify commands in a candidate-tree checkout.
-9. Create each commit with `git commit-tree`. No ref points to the partial chain.
-10. Recheck the lane, lease set, source `HEAD`, selected index digest, and hook
-    paths.
-11. Write a durable `prepared` intent.
-12. Update the lane ref once with the expected old object ID.
-13. Mark the intent `applied`, advance the lane cursor, and mark it `complete`.
-14. Run the copied post-commit hook once for each commit with that commit's
+10. Create each commit with `git commit-tree`. No ref points to the partial chain.
+11. Recheck the lane, lease set, source `HEAD`, selected index digest, and hook
+    paths. This second index check detects changes during the transaction.
+12. Write a durable `prepared` intent.
+13. Update the lane ref once with the expected old object ID.
+14. Mark the intent `applied`, advance the lane cursor, and mark it `complete`.
+15. Run the copied post-commit hook once for each commit with that commit's
     private tree loaded.
 
 The source `HEAD`, source index, and source worktree are not rewritten by this
@@ -234,26 +243,40 @@ Restore writes the lane manifest last.
 Resume and restore first inspect the existing domain. They return
 `ARCHIVE_NOT_FOUND` without creating state when the domain is not initialized.
 
-## Split-plan format
+## Reviewed-plan format
 
-The top-level JSON value is an array. Each item contains one message, one or
-more path scopes, and optional verify commands.
+`wip plan` emits one version 2 object. The object binds the lane, ref, source
+`HEAD`, selected paths, source index, active leases, and message policy.
 
-```json
-[
-  {
-    "message": "fix(storage): preserve atomic state",
-    "files": ["internal/storage"],
-    "verify": [
-      {
-        "argv": ["go", "test", "./internal/storage"],
-        "directory": ".",
-        "timeout_ms": 120000
-      }
-    ]
-  }
-]
-```
+Each group contains review guidance, an empty draft message, exact files, and
+optional verify commands. A reviewer adds messages and changes `state` to
+`reviewed`.
 
-The decoder rejects unknown fields, duplicate object keys, trailing JSON, and
-input larger than 1 MiB. See [PLAN.schema.json](PLAN.schema.json).
+`wip capture` accepts only this object. It calculates a canonical SHA-256
+digest and stores that digest in capture-intent schema version 2.
+
+`wip commit` also accepts the object. It keeps the legacy top-level array for
+compatibility. Legacy arrays do not qualify for `wip capture`.
+
+The decoder rejects unknown fields, duplicate keys, trailing JSON, and input
+larger than 1 MiB. See [PLAN.schema.json](PLAN.schema.json).
+
+## Operational status
+
+Status compares three exact trees: the source index, source `HEAD`, and lane
+tip. It classifies capture candidates, captured staged entries, foreign staged
+entries, and empty lease scopes.
+
+Status also validates the lane ref and latest capture intent. The JSON envelope
+contains a stable lease context for all successful lane commands.
+
+## Capture handoff
+
+The handoff loader validates a complete intent and every commit object. The
+output contains refs, object IDs, messages, path sets, and plan digests.
+
+The output contains no agent ID, session ID, absolute path, remote URL, or file
+content. It explicitly states that capture does not authorize landing.
+
+See [HANDOFF.schema.json](HANDOFF.schema.json) and
+[KEP-0002](KEP-0002-agent-facing-capture-workflow.md).

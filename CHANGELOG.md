@@ -29,11 +29,24 @@ Planned first prerelease: `v0.1.0-beta.1`.
 - Strict bounded state readers, portable Unicode path identity, and Windows
   atomic replacement and file locks.
 - NUL-delimited delete/add accounting for renamed paths.
+- Operational status with capture-candidate, captured-staged, foreign-staged,
+  empty-lease, expiry, ref-health, policy, and latest-intent fields, plus a
+  strict public JSON Schema.
+- One version 2 draft/reviewed plan schema with source, index, lease, lane, and
+  message-policy bindings.
+- `wip capture` with typed capture-only handoff output and optional post-handoff
+  lane release.
+- Named `conventional-v1` and `safety-only-v1` message policies.
+- Automatic complete-set lease renewal on ordinary authenticated lane use.
+- Version 1 profile and intent compatibility without immutable digest changes.
 
 ### Changed
 
 - Unsupported state-directory, lane, lease, intent, and profile schemas now
   fail with `MIGRATION_REQUIRED` before the command changes state.
+- Interactive initialization now recommends one linked worktree per task.
+- Commit-message naming checks now run as lane policy before hooks. The capture
+  kernel keeps only message byte, size, and subject safety checks.
 - The minimum build toolchain is Go 1.25.12. This patched floor excludes
   GO-2026-4602, GO-2026-4864, and GO-2026-4970 from reachable standard-library
   paths found by the release vulnerability scan.

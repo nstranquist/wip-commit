@@ -8,11 +8,13 @@ Target: `v0.1.0-beta.1`
 
 Owner: Repository owner
 
-Last review: 2026-08-16
+Last review: 2026-08-18
 
 Approval: `owner-session-2026-08-16`
 
-Local preparation: Extended safety pass complete on 2026-08-16
+Local preparation: Extended safety pass complete on 2026-08-18
+
+Public source: Confirmed on 2026-08-18. No tag or GitHub release exists.
 
 ## Approved decision
 
@@ -27,9 +29,9 @@ The owner approved a capture-only public beta with these boundaries:
 - Use `v0.1.0-beta.1` only after all public-beta gates pass.
 
 This approval fixes the repository name, module path, and capture-only scope.
-It does not approve a release tag. The project instructions require a human to
-perform the first push. Follow
-[PUBLICATION-HANDOFF.md](PUBLICATION-HANDOFF.md) for that exact boundary.
+It does not approve a release tag. The owner separately completed the first
+source publication. The historical authority boundary is in
+[PUBLICATION-HANDOFF.md](PUBLICATION-HANDOFF.md).
 
 ## Why this plan exists
 
@@ -65,7 +67,10 @@ The owner-controlled repository work is complete. The checkout now contains:
   values.
 - no-clobber lease creation, a capture heartbeat, a final exact-set publication
   fence, and refusal of partially released lanes.
-- read-only split proposals and a split-plan default for automation.
+- one bound draft/reviewed plan schema and fail-closed stale-plan checks.
+- operational status with staged-state classes and ordinary-use lease renewal.
+- named message policy outside the capture kernel.
+- a typed capture-only handoff and guided `wip capture` command.
 - bounded `wip doctor` inspection, structural capture-receipt validation, and
   exact recoverable state archival.
 - receipt-bound archive records and recovery of a deterministic empty batch
@@ -87,17 +92,20 @@ The owner-controlled repository work is complete. The checkout now contains:
 
 Two clean six-target rehearsals produced equal directory trees. Every recorded
 archive checksum passed, and the native archive reported the target version.
-This local proof does not satisfy hosted CI, attestation, independent testing,
-public installation, or publication gates.
+The public base has hosted CI evidence and active controls. This local feature
+candidate does not have hosted evidence. It does not satisfy attestation,
+independent testing, tagged installation, or release gates.
 
 ## Product boundary
 
 The public beta captures exact staged subsets into agent-owned local refs. It
 does not land those refs onto a shared branch.
 
-`wip init` is the onboarding entry point. It configures a shared lane or a
-linked-worktree lane. It can install the current binary only after explicit
-consent, and it does not overwrite different bytes.
+`wip init` is the onboarding entry point. It recommends one linked worktree per
+task. Shared mode remains available for lanes that require one checkout.
+
+The wizard can install the current binary only after explicit consent. It does
+not overwrite different bytes.
 
 Both modes use path leases, private indexes, bounded hooks, durable intents,
 and an exact ref compare-and-swap. Worktree mode adds worktree ownership. It
@@ -182,19 +190,21 @@ records the same approval reference.
 
 ### Phase 3: create the hosted candidate
 
-Follow [PUBLICATION-HANDOFF.md](PUBLICATION-HANDOFF.md), then
-[HOSTED-SETUP.md](HOSTED-SETUP.md), and retain their redacted evidence.
-The exact required CI check names come from the first hosted pull request.
-Do not guess them from workflow job labels.
+The first source publication ran on 2026-08-17. Do not repeat its bootstrap
+steps. See [PUBLICATION-HANDOFF.md](PUBLICATION-HANDOFF.md) for the historical
+boundary and
+[HOSTED-STATUS-2026-08-18.md](HOSTED-STATUS-2026-08-18.md) for the live check.
 
-1. Create the public repository only after the owner authorizes it.
-2. Push `main` without a release tag.
-3. Enable private vulnerability reporting and security notifications.
-4. Enable dependency alerts and secret scanning.
-5. Protect `main` with pull requests, review, and required CI jobs.
-6. Block force pushes and branch deletion.
-7. Run Linux, macOS, and Windows jobs on hosted workers.
-8. Approve a Code of Conduct, assign enforcement responsibility, and configure
+Every new candidate must use the active protected pull-request path. Use the
+required check names from the live ruleset.
+
+1. Open a reviewed candidate pull request without merging it.
+2. Run Linux, macOS, Windows, race, lint, and dependency-review jobs.
+3. Close the verification pull request without merging it.
+4. Use a separately authorized, policy-compliant update for public `main`.
+5. Verify the final public commit, tree, and hosted checks.
+6. Verify the maintainer's personal security-alert notifications.
+7. Approve a Code of Conduct, assign enforcement responsibility, and configure
    a confidential conduct-reporting path before soliciting contributions.
 
 Hosted Windows execution is mandatory. A Windows cross-build does not exercise

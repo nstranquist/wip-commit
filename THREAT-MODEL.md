@@ -10,6 +10,7 @@
 - each lane ref and lane cursor;
 - path-lease ownership;
 - the order, tree, message, and scope of every planned commit;
+- the reviewed source, lane, lease, index, and message-policy bindings;
 - the recovery record for an applied ref update.
 
 The primary failure to prevent is a successful-looking capture that includes
@@ -54,6 +55,9 @@ the set during long gates. The publication callback renews the same set while
 it holds the lease-registry lock. Each refresh also audits all active lease
 records and stops if persisted state contains a cross-lane overlap.
 
+Authenticated status, environment, claim, and plan commands renew the complete
+active set after identity validation. Pure `--observe` reads do not renew it.
+
 Normal renewal and release also inspect the complete lease registry before a
 write. Release verifies lane ownership and both directions of every lease
 reference. It permits valid partial release so an interrupted release can
@@ -71,6 +75,27 @@ Every group builds on the preceding private tree. Pre-commit hooks, `git diff
 --check`, and typed verify commands run before publication. Commit objects are
 created off-ref. One `git update-ref <new> <old>` compare-and-swap publishes the
 complete chain.
+
+### Reviewed-plan substitution
+
+The version 2 plan binds the lane ref, lane tip, source `HEAD`, candidate path
+set, selected index digest, active lease digest, and message-policy receipt.
+
+`wip capture` recalculates every binding before it opens hooks. A changed input
+returns `STALE_PLAN` and does not enter the capture transaction. The kernel
+also compares its initial source-index snapshot with the reviewed digest. This
+closes the interval between command validation and kernel setup.
+
+The capture intent stores the canonical reviewed-plan digest. The intent digest
+covers that digest and the policy receipt.
+
+### Message policy
+
+The capture kernel validates message bytes, size, and subject presence. Named
+repository policy validates message style before hooks or verification run.
+
+The lane profile binds the resolved policy. A plan with another policy fails
+before capture.
 
 ### Ref and metadata races
 
@@ -95,6 +120,14 @@ late heartbeat failure returns the applied receipt instead of reporting
 success. This receipt permits exact reconciliation after the ref moved.
 
 `wip reconcile` checks all immutable Git evidence before it advances metadata.
+
+### Capture handoff
+
+The handoff command accepts only a complete intent whose ref and Git objects
+pass receipt validation. Its ordered entries come from that durable intent.
+
+The handoff omits agent IDs, session IDs, absolute paths, remote URLs, and file
+contents. It states that the receipt does not authorize landing.
 
 ### Hooks
 
@@ -219,6 +252,8 @@ its first move and can continue after an interruption.
 - Paths that are not valid UTF-8 are not supported by plans.
 - Leases use the host wall clock. Large clock changes can shorten or extend a
   lease.
+- A handoff proves local capture integrity. It does not prove review approval,
+  branch landing, public release, deployment, adoption, or revenue.
 - `wip` does not land, merge, push, delete, reset, stash, or clean work. Those
   operations need a separate reviewed policy.
 

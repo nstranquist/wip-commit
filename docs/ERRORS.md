@@ -1,7 +1,7 @@
 # Error and recovery guide
 
 `wip --json` returns one object with `ok`, `action`, and either `data` or
-`error`. The error object has a stable `code` and a human-readable `message`.
+`error`. Successful lane commands also return `context` with lease state.
 
 ## Coordination errors
 
@@ -24,7 +24,13 @@
 | Code | Meaning | Action |
 | --- | --- | --- |
 | `SPLIT_PLAN_REQUIRED` | Automation did not provide a split plan | Pass `--plan`, or explicitly pass `--single --message` |
-| `INVALID_COMMIT_MESSAGE` | A message failed the naming policy | Use a concrete Conventional Commit subject of at most 72 characters |
+| `REVIEWED_PLAN_REQUIRED` | `wip capture` did not receive one version 2 plan | Run `wip plan --out <file>`, review that file, then pass it to `wip capture` |
+| `PLAN_NOT_REVIEWED` | The version 2 plan still has draft state | Add every message, review every group, then set `state` to `reviewed` |
+| `STALE_PLAN` | A bound lane, source, index, path, lease, or policy value changed | Run `wip status`, then create and review a new plan |
+| `PLAN_EXISTS` | `wip plan --out` found an existing destination | Select a new output path or review the existing file separately |
+| `MESSAGE_POLICY_REJECTED` | A message failed the named lane policy | Follow the policy in the JSON `message_policy` receipt |
+| `INVALID_MESSAGE_POLICY` | A policy name or receipt is unsupported | Fix `.wip-commit.json` or use a supported `--message-policy` value |
+| `INVALID_COMMIT_MESSAGE` | A message failed kernel byte or size safety | Remove unsafe controls, fix the subject, or reduce the message size |
 | `SOURCE_INDEX_MOVED` | A selected staged entry changed during capture | Inspect the staged paths and rerun the complete plan |
 | `SOURCE_HEAD_MOVED` | The checkout moved from the lane base | Stop and create a new lane from the intended base |
 | `REF_MOVED` | The lane ref did not match the expected cursor | Inspect the lane and receipt; do not force-update it |
@@ -45,6 +51,7 @@
 | `INTENT_DIGEST_MISMATCH` | The record or supplied digest differs | Stop. Do not edit the receipt or guess a digest |
 | `INVALID_INTENT` | A digest-valid receipt has invalid identities, bounds, paths, or commit structure | Stop. Preserve the receipt and lane ref; do not mark or reconcile it |
 | `CAPTURE_RECEIPT_MISMATCH` | Git objects do not match immutable evidence | Stop and inspect the repository. Do not force reconciliation |
+| `HANDOFF_NOT_READY` | The lane has no complete validated capture intent | Reconcile an applied intent or complete a reviewed capture first |
 
 ## State compatibility errors
 
@@ -52,8 +59,8 @@
 | --- | --- | --- |
 | `MIGRATION_REQUIRED` | A state directory or record uses an unsupported schema | Stop. Use the compatible `wip` release and follow [STATE-COMPATIBILITY.md](STATE-COMPATIBILITY.md) |
 | `STORE_FAILED` | Version 1 lane or lease state is malformed or unsafe to read | Stop. Preserve the state and inspect the reported file condition |
-| `PROFILE_READ_FAILED` | A version 1 profile is malformed or has the wrong identity | Pass the full identity only after you confirm the lane owner |
-| `INTENT_READ_FAILED` | A version 1 intent is malformed or unsafe to read | Stop. Preserve the intent and lane ref; do not guess recovery data |
+| `PROFILE_READ_FAILED` | A supported profile is malformed, has the wrong identity, or has an invalid policy | Preserve the profile and confirm the lane owner and policy |
+| `INTENT_READ_FAILED` | A supported intent is malformed or unsafe to read | Stop. Preserve the intent and lane ref. Do not guess recovery data |
 | `INTENT_WRITE_FAILED` | A capture intent cannot fit or cannot be published | The lane ref did not move. Reduce the plan size or fix the reported storage error |
 | `INIT_INTENT_FAILED` | An initialization receipt is malformed or changed | Stop. Preserve the receipt, worktree, lane ref, lease, profile, and installed files |
 | `INSTALL_CONFLICT` | The binary target exists with different bytes or an unsafe type | Preserve the target. Select another `--install-dir`, or review the target separately |

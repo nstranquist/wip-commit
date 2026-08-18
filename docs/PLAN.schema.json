@@ -1,51 +1,115 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/nstranquist/wip-commit/blob/main/docs/PLAN.schema.json",
-  "title": "wip split commit plan",
-  "type": "array",
-  "minItems": 1,
-  "maxItems": 128,
-  "items": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": ["message", "files"],
-    "properties": {
-      "message": {
-        "type": "string",
-        "minLength": 1
-      },
-      "files": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 10000,
-        "uniqueItems": true,
-        "items": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "verify": {
-        "type": "array",
-        "maxItems": 64,
-        "items": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["argv"],
-          "properties": {
-            "argv": {
-              "type": "array",
-              "minItems": 1,
-              "maxItems": 256,
-              "items": {"type": "string"}
-            },
-            "directory": {"type": "string"},
-            "timeout_ms": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 86400000
+  "title": "wip reviewed capture plan v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "state",
+    "lane",
+    "target_ref",
+    "lane_tip",
+    "source_head",
+    "source_index_digest",
+    "lease_digest",
+    "message_policy",
+    "staged_paths",
+    "groups",
+    "instruction"
+  ],
+  "properties": {
+    "schema_version": {"const": "2.0.0"},
+    "state": {"enum": ["draft", "reviewed"]},
+    "lane": {"type": "string", "minLength": 1, "maxLength": 64},
+    "target_ref": {"type": "string", "pattern": "^refs/heads/wip/[^/]+/[^/]+$"},
+    "lane_tip": {"$ref": "#/$defs/object_id"},
+    "source_head": {"$ref": "#/$defs/object_id"},
+    "source_index_digest": {"$ref": "#/$defs/digest"},
+    "lease_digest": {"$ref": "#/$defs/digest"},
+    "message_policy": {"$ref": "#/$defs/message_policy"},
+    "staged_paths": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10000,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "groups": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {"$ref": "#/$defs/group"}
+    },
+    "instruction": {"type": "string", "minLength": 1}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"state": {"const": "reviewed"}}},
+      "then": {
+        "properties": {
+          "groups": {
+            "items": {
+              "allOf": [
+                {"$ref": "#/$defs/group"},
+                {"properties": {"message": {"minLength": 1}}}
+              ]
             }
           }
         }
+      }
+    }
+  ],
+  "$defs": {
+    "object_id": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "message_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "digest"],
+      "properties": {
+        "id": {"enum": ["conventional-v1", "safety-only-v1"]},
+        "version": {"const": "1.0.0"},
+        "digest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "suggested_scope", "suggested_prefix", "rationale", "message", "files"],
+      "properties": {
+        "key": {"type": "string", "minLength": 1},
+        "suggested_scope": {"type": "string", "minLength": 1},
+        "suggested_prefix": {"type": "string", "minLength": 1},
+        "rationale": {"type": "string", "minLength": 1},
+        "message": {"type": "string"},
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10000,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "verify": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {"$ref": "#/$defs/verify"}
+        }
+      }
+    },
+    "verify": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["argv"],
+      "properties": {
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {"type": "string"}
+        },
+        "directory": {"type": "string"},
+        "timeout_ms": {"type": "integer", "minimum": 0, "maximum": 86400000}
       }
     }
   }

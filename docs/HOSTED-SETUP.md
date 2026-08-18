@@ -1,5 +1,8 @@
 # Hosted repository setup
 
+Status: Executed for the first source publication. Use this file to verify or
+repair controls. Do not repeat repository creation.
+
 ## Authority boundary
 
 The owner approved the `wip-commit` name,
@@ -9,8 +12,10 @@ instructions assign the first push to a human.
 
 Do not create a release tag until every public-beta gate passes.
 
-Use [PUBLICATION-HANDOFF.md](PUBLICATION-HANDOFF.md) before this runbook. This
-runbook does not authorize a release tag.
+The first-publication procedure is now a historical record in
+[PUBLICATION-HANDOFF.md](PUBLICATION-HANDOFF.md). Current control evidence is in
+[HOSTED-STATUS-2026-08-18.md](HOSTED-STATUS-2026-08-18.md). This runbook does
+not authorize a release tag.
 
 ## Source of truth
 

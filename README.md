@@ -4,9 +4,10 @@
 source checkout's `HEAD` or rewriting its Git index. Each agent writes to a
 local ref under `refs/heads/wip/<agent>/<lane>`.
 
-The planned first prerelease is `v0.1.0-beta.1`. The current candidate is
-suitable for local beta use, but it is not a stable release. Verify the public
-tag and release before you treat a checkout as published software.
+The source repository is public. No tag or GitHub release exists. The planned
+first prerelease is `v0.1.0-beta.1`. The current candidate is suitable for
+local beta use, but it is not a stable release. Verify the public tag and
+release before you treat a checkout as released software.
 
 ## Why it exists
 
@@ -74,13 +75,17 @@ wip init
 
 The wizard does the following work:
 
-1. It checks the coordination domain and recommends `shared` or `worktree` mode.
+1. It checks the coordination domain and recommends `worktree` mode.
 2. It asks for the agent, session, lane, base ref, and path claims.
 3. It can create a detached linked worktree after you select that mode.
 4. It can copy the current binary to `~/.local/bin` after you approve the path.
 5. It can install the embedded portable skill in `~/.agents/skills`.
-6. It creates the lane, claims the paths, writes a private profile, and checks
+6. It binds the lane to a named message policy.
+7. It creates the lane, claims the paths, writes a private profile, and checks
    the staged diff.
+
+Use `worktree` mode for one agent per task. Use `shared` mode only when lanes
+must use the same checkout and index.
 
 The staged-path read must succeed when the worktree exists. Git inspection
 errors stop setup and preserve its recovery receipt. Staged whitespace errors
@@ -111,7 +116,8 @@ Use non-interactive setup for an agent:
 
 ```text
 wip --json --repo-dir /repo init \
-  --mode shared \
+  --mode worktree \
+  --create-worktree /worktrees/parser-errors \
   --lane parser-errors \
   --agent codex \
   --session session-42 \
@@ -153,42 +159,92 @@ same index.
 
 ```text
 git add -- internal/parser docs/parser.md
-wip plan
-wip commit
+wip --json status
+wip --json plan --out plan.json
 ```
 
-`wip plan` is read-only. It groups paths at component boundaries and suggests
-one Conventional Commit prefix per group. The type is concrete only for clear
-documentation, dependency, CI, and test-only groups. Review semantic intent and
-dependency closure before you write the final plan.
+`wip status` is the operational read for an agent. It reports:
+
+- leased entries that are capture candidates;
+- captured entries that remain staged;
+- foreign staged entries outside the lane;
+- active claims with no staged or pending entry;
+- lease time, ref health, policy, and latest intent state.
+
+The command renews active leases after it validates the lane identity. Use
+`wip status --observe` when a pure read is required.
+
+`wip plan` groups paths at component boundaries. It writes one draft with all
+capture bindings and empty message fields. The command creates `plan.json`
+without replacing an existing file.
 
 The planner compares the active source index with the lane's current commit.
 It omits staged paths that the lane already captured.
 
-Interactive capture uses the same proposals and asks for one Conventional
-Commit message per group. No ref moves until all gates pass.
-
-Automation must supply a split plan or explicitly opt out:
+Review every group for intent and dependency closure. Add one message to each
+group. Then change the top-level `state` from `draft` to `reviewed`.
 
 ```json
-[
-  {
-    "message": "fix(parser): preserve source error locations",
-    "files": ["internal/parser"],
-    "verify": [
-      {"argv": ["go", "test", "./internal/parser"], "timeout_ms": 120000}
-    ]
+{
+  "schema_version": "2.0.0",
+  "state": "reviewed",
+  "lane": "parser-errors",
+  "target_ref": "refs/heads/wip/codex/parser-errors",
+  "lane_tip": "<exact object ID>",
+  "source_head": "<exact object ID>",
+  "source_index_digest": "sha256:<exact digest>",
+  "lease_digest": "sha256:<exact digest>",
+  "message_policy": {
+    "id": "conventional-v1",
+    "version": "1.0.0",
+    "digest": "sha256:<exact digest>"
   },
-  {
-    "message": "docs(parser): explain source error locations",
-    "files": ["docs/parser.md"]
-  }
-]
+  "staged_paths": ["docs/parser.md", "internal/parser/errors.go"],
+  "groups": [
+    {
+      "key": "internal/parser",
+      "suggested_scope": "parser",
+      "suggested_prefix": "<type>(parser): ",
+      "rationale": "nearest component boundary; review semantic and dependency closure",
+      "message": "fix(parser): preserve source error locations",
+      "files": ["internal/parser/errors.go"],
+      "verify": [
+        {"argv": ["go", "test", "./internal/parser"], "timeout_ms": 120000}
+      ]
+    },
+    {
+      "key": "docs/parser",
+      "suggested_scope": "parser",
+      "suggested_prefix": "<type>(parser): ",
+      "rationale": "nearest component boundary; review semantic and dependency closure",
+      "message": "docs(parser): explain source error locations",
+      "files": ["docs/parser.md"]
+    }
+  ],
+  "instruction": "Review every path group, add a non-empty message to each group, then change state from draft to reviewed. Capture rejects stale bindings and draft plans."
+}
 ```
 
 ```text
-wip commit --plan plan.json
+wip --json capture --plan plan.json
 ```
+
+`wip capture` recalculates the lane, source, index, path, lease, and policy
+bindings before hooks run. It rejects a draft or stale plan.
+
+The result contains the capture receipt and a typed handoff. The handoff is
+capture-only evidence. It does not authorize landing, merging, or pushing.
+
+Use `wip capture --final --plan plan.json` to release the lane after handoff
+validation. The lane ref and commits remain.
+
+The v2 plan schema is [docs/PLAN.schema.json](docs/PLAN.schema.json). The
+operational status and handoff schemas are
+[docs/STATUS.schema.json](docs/STATUS.schema.json) and
+[docs/HANDOFF.schema.json](docs/HANDOFF.schema.json).
+
+`wip commit` remains a compatibility and interactive command. It accepts the
+reviewed v2 plan or the legacy plan array. `wip capture` accepts only v2.
 
 When one commit is intentional, use this explicit command:
 
@@ -198,13 +254,29 @@ wip commit --single \
   --path internal/parser
 ```
 
-The command rejects vague subjects, unsupported commit types, duplicate
-messages, subjects longer than 72 characters, and `wip:` unless you pass
-`--allow-wip`.
+The default `conventional-v1` policy rejects vague subjects, unsupported types,
+duplicate messages, long subjects, and unauthorized `wip:` prefixes.
+
+Select `safety-only-v1` in `.wip-commit.json` when repository policy permits
+free-form messages:
+
+```json
+{
+  "schema_version": "1.0.0",
+  "message_policy": "safety-only-v1"
+}
+```
+
+The capture kernel still rejects unsafe bytes, empty subjects, and oversized
+messages. Policy checks finish before hooks and verification commands run.
 
 ## Continue and finish
 
-Leases last 15 minutes while the agent edits. Renew them between captures:
+Leases last 15 minutes without authenticated lane use. `status`, `env`,
+`claim`, `plan`, `commit`, `capture`, and `handoff` renew the complete active
+set. A handoff for a released lane stays read-only.
+
+Manual renewal remains available:
 
 ```text
 wip renew
@@ -225,6 +297,15 @@ Inspect the lane with:
 ```text
 wip status
 ```
+
+Use `wip handoff` to validate and print the latest complete capture receipt:
+
+```text
+wip --json handoff --lane parser-errors
+```
+
+The handoff omits agent IDs, session IDs, absolute worktree paths, remote URLs,
+and file contents. It sets `landing_authorized` to `false`.
 
 When the task is complete, release the coordination state:
 
@@ -362,6 +443,8 @@ The [open source practice guide](docs/OSS-PRACTICE-GUIDE.md) maps official
 guidance to project rules and records when maintainers must review it again.
 Local self-hosting receipts and safe-failure results are in
 [docs/DOGFOOD.md](docs/DOGFOOD.md).
+The current public-source, hosted-control, and release boundary is in
+[docs/HOSTED-STATUS-2026-08-18.md](docs/HOSTED-STATUS-2026-08-18.md).
 
 ## License
 

@@ -3,7 +3,7 @@
   "plan_id": "wip-oss-public-beta",
   "plan_status": "proposed",
   "target_version": "v0.1.0-beta.1",
-  "last_reviewed": "2026-08-16",
+  "last_reviewed": "2026-08-18",
   "status_definitions": {
     "verified": "Local evidence passed on the recorded source.",
     "prepared": "The repository artifact exists, but hosted evidence is absent.",
@@ -119,20 +119,22 @@
       "human_gate": true,
       "acceptance": "The exact candidate passes Linux, macOS, Windows, race, vet, lint, module, and dependency-review jobs.",
       "evidence": [
-        {"kind": "workflow", "value": ".github/workflows/ci.yml", "observed_on": "2026-08-14"}
+        {"kind": "workflow", "value": ".github/workflows/ci.yml", "observed_on": "2026-08-14"},
+        {"kind": "hosted-run", "value": "Public main CI run 32183872589 passed Linux, macOS, Windows, race, and lint at 4cf003bebbfd9c6281578ea9ef1b679dae67078f.", "observed_on": "2026-08-18"},
+        {"kind": "gap", "value": "The agent-facing candidate still needs the complete protected pull-request check set, including dependency-review.", "observed_on": "2026-08-18"}
       ]
     },
     {
       "id": "OSS-009",
       "gate": "public-beta",
       "title": "Configure hosted repository protections",
-      "status": "human-gated",
+      "status": "verified",
       "owner": "repository-owner",
-      "human_gate": true,
+      "human_gate": false,
       "acceptance": "main requires pull requests, review, required CI, and blocks force pushes and deletion.",
       "evidence": [
         {"kind": "prepared-runbook", "value": "docs/HOSTED-SETUP.md defines the authority boundary, ruleset sequence, observed-check-name rule, and evidence receipt.", "observed_on": "2026-08-16"},
-        {"kind": "gap", "value": "No remote is configured in the local checkout.", "observed_on": "2026-08-14"}
+        {"kind": "hosted-setting", "value": "Active no-bypass ruleset 20926881 requires rebase-only pull requests, review, six provider-bound checks, linear history, and ref protections.", "observed_on": "2026-08-18"}
       ]
     },
     {
@@ -145,7 +147,9 @@
       "acceptance": "Private vulnerability reporting, dependency alerts, secret scanning, and security notifications are enabled.",
       "evidence": [
         {"kind": "prepared-policy", "value": "SECURITY.md and .github/ISSUE_TEMPLATE/config.yml", "observed_on": "2026-08-14"},
-        {"kind": "prepared-runbook", "value": "docs/HOSTED-SETUP.md defines the current GitHub security-setting sequence and evidence receipt.", "observed_on": "2026-08-16"}
+        {"kind": "prepared-runbook", "value": "docs/HOSTED-SETUP.md defines the current GitHub security-setting sequence and evidence receipt.", "observed_on": "2026-08-16"},
+        {"kind": "hosted-setting", "value": "Private vulnerability reporting, Dependabot security updates, secret scanning, and secret-scanning push protection are enabled.", "observed_on": "2026-08-18"},
+        {"kind": "gap", "value": "The maintainer's personal security-notification setting remains unverified.", "observed_on": "2026-08-18"}
       ]
     },
     {
@@ -186,7 +190,8 @@
       "human_gate": true,
       "acceptance": "A clean environment installs the tagged command through the public Go module path and runs wip version.",
       "evidence": [
-        {"kind": "gap", "value": "The module path is not public.", "observed_on": "2026-08-14"}
+        {"kind": "command", "value": "A clean GOBIN installed github.com/nstranquist/wip-commit/cmd/wip@4cf003bebbfd9c6281578ea9ef1b679dae67078f through proxy.golang.org and returned wip 0.1.0-beta.1.", "observed_on": "2026-08-18"},
+        {"kind": "gap", "value": "No final public tag exists, so tagged installation remains unproved.", "observed_on": "2026-08-18"}
       ]
     },
     {
@@ -198,7 +203,7 @@
       "human_gate": true,
       "acceptance": "The owner creates a signed v0.1.0-beta.1 tag only after every public-beta gate passes.",
       "evidence": [
-        {"kind": "gap", "value": "No remote or tag exists.", "observed_on": "2026-08-14"}
+        {"kind": "gap", "value": "The public repository exists, but no tag or GitHub release exists.", "observed_on": "2026-08-18"}
       ]
     },
     {
@@ -283,9 +288,9 @@
       "status": "verified",
       "owner": "maintainer",
       "human_gate": false,
-      "acceptance": "Automation needs a reviewed split plan unless it explicitly selects one commit. The read-only planner proposes deterministic component groups and conservative Conventional Commit prefixes for staged paths that differ from the lane's current commit, without moving HEAD or the index.",
+      "acceptance": "Automation uses one version 2 plan from draft through capture. The plan binds the lane, ref, tip, source HEAD, candidate paths, selected index, active lease scope, and named message policy. Capture rejects draft or stale plans before hooks run. Legacy arrays remain available only through the compatibility commit command.",
       "evidence": [
-        {"kind": "test", "value": "TestCommitRequiresSplitPlanUnlessSingleIsExplicit, TestPlanPreviewUsesComponentBoundariesWithoutMutation, and TestPlanPreviewExcludesAlreadyCapturedStagedPaths", "observed_on": "2026-08-16"}
+        {"kind": "test", "value": "TestCommitRequiresSplitPlanUnlessSingleIsExplicit, TestPlanPreviewUsesComponentBoundariesWithoutMutation, TestPlanPreviewExcludesAlreadyCapturedStagedPaths, TestReviewedPlanCaptureProducesBoundPrivateHandoff, and TestCaptureRejectsDraftAndStaleReviewedPlans", "observed_on": "2026-08-18"}
       ]
     },
     {
@@ -369,7 +374,7 @@
       "human_gate": false,
       "acceptance": "The repository records authoritative open source, secure-development, evaluation, SSDF, and Git sources with reviewed revisions. A maintainer guide maps those sources to project rules, review triggers, evidence types, and accepted gaps.",
       "evidence": [
-        {"kind": "artifact", "value": "docs/OSS-PRACTICE-GUIDE.md, docs/OSS-SOURCES.json, AGENTS.md, CONTRIBUTING.md, GOVERNANCE.md, and docs/RELEASE.md", "observed_on": "2026-08-16"}
+        {"kind": "artifact", "value": "docs/OSS-PRACTICE-GUIDE.md, docs/OSS-SOURCES.json, docs/SECURITY-REVIEW-2026-08-18.md, AGENTS.md, CONTRIBUTING.md, GOVERNANCE.md, and docs/RELEASE.md", "observed_on": "2026-08-18"}
       ]
     },
     {
@@ -418,7 +423,7 @@
       "acceptance": "A source-current, fail-closed preflight binds a clean final candidate to the reviewed bootstrap, a merge-free linear split-commit range, the complete reviewed path delta, zero remotes and tags, owner approval, public author and committer identities, absent target repository, complete non-replaced history, passing object integrity, and passing history and worktree secret scans. It writes a no-overwrite private receipt outside the checkout. A human-only runbook preserves the exact candidate while obtaining hosted checks without merging a pull request.",
       "evidence": [
         {"kind": "artifact", "value": "scripts/publication-handoff, docs/PUBLICATION-HANDOFF.md, docs/PUBLICATION-HANDOFF.paths, and docs/PUBLICATION-HANDOFF.schema.json", "observed_on": "2026-08-16"},
-        {"kind": "gap", "value": "The project instructions prohibit an agent push. Human execution and hosted evidence remain required.", "observed_on": "2026-08-16"}
+        {"kind": "hosted-state", "value": "The first source publication completed without a pull-request merge; the public repository and protected main now exist.", "observed_on": "2026-08-18"}
       ]
     },
     {
@@ -433,6 +438,19 @@
         {"kind": "finding", "value": "Go 1.25.0 reached GO-2026-4602, GO-2026-4864, and GO-2026-4970 in project code paths; all are fixed by Go 1.25.12.", "observed_on": "2026-08-16"},
         {"kind": "artifact", "value": "go.mod requires Go 1.25.12; docs/RELEASE.md and docs/OSS-PRACTICE-GUIDE.md require exact-minimum verification.", "observed_on": "2026-08-16"},
         {"kind": "command", "value": "GOTOOLCHAIN=go1.25.12 GOWORK=off go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...", "observed_on": "2026-08-16"}
+      ]
+    },
+    {
+      "id": "OSS-034",
+      "gate": "public-beta",
+      "title": "Complete the agent-facing capture workflow",
+      "status": "verified",
+      "owner": "maintainer",
+      "human_gate": false,
+      "acceptance": "Status classifies leased, captured, pending, and foreign staged entries. Ordinary authenticated use renews the complete active lease set. Message naming is a bound lane policy outside the capture kernel. Guided capture returns a privacy-bounded, non-authorizing handoff and can release only after handoff validation. Interactive initialization recommends one worktree per task.",
+      "evidence": [
+        {"kind": "artifact", "value": "docs/KEP-0002-agent-facing-capture-workflow.md, docs/PLAN.schema.json, docs/HANDOFF.schema.json, and docs/SECURITY-REVIEW-2026-08-18.md", "observed_on": "2026-08-18"},
+        {"kind": "test", "value": "TestStatusClassifiesCaptureStateAndForeignIndexEntries, TestMessagePolicyIsBoundOutsideCaptureKernel, TestReviewedPlanCaptureProducesBoundPrivateHandoff, TestCaptureRejectsDraftAndStaleReviewedPlans, and TestGuidedCaptureFinalReleasesAfterHandoffValidation", "observed_on": "2026-08-18"}
       ]
     }
   ]
