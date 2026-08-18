@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,12 +20,7 @@ func (values *stringList) Set(value string) error {
 }
 
 func statusObserveRequested(args []string) bool {
-	for _, arg := range args {
-		if arg == "--observe" {
-			return true
-		}
-	}
-	return false
+	return booleanFlagRequested(args, "observe")
 }
 
 func (application app) runStatus(ctx context.Context, laneStore store.Store, args []string) int {
@@ -68,12 +64,30 @@ func (application app) runStatus(ctx context.Context, laneStore store.Store, arg
 }
 
 func envObserveRequested(args []string) bool {
+	return booleanFlagRequested(args, "observe")
+}
+
+func booleanFlagRequested(args []string, name string) bool {
+	requested := false
 	for _, arg := range args {
-		if arg == "--observe" {
-			return true
+		if arg == "--"+name || arg == "-"+name {
+			requested = true
+			continue
+		}
+		for _, prefix := range []string{"--" + name + "=", "-" + name + "="} {
+			if !strings.HasPrefix(arg, prefix) {
+				continue
+			}
+			value, err := strconv.ParseBool(strings.TrimPrefix(arg, prefix))
+			if err != nil {
+				// Keep malformed observe requests read-only until the flag parser
+				// returns INVALID_ARGS.
+				return true
+			}
+			requested = value
 		}
 	}
-	return false
+	return requested
 }
 
 func (application app) runEnv(ctx context.Context, laneStore store.Store, args []string) int {
@@ -93,8 +107,12 @@ func (application app) runEnv(ctx context.Context, laneStore store.Store, args [
 	if err != nil {
 		return application.failure("env", err, nil, 1)
 	}
-	if laneStore.Repo.Root != saved.Worktree {
-		return application.failure("env", fail.New("WORKTREE_MISMATCH", "lane is bound to a different checkout"), nil, 1)
+	bound, err := laneStore.Load(saved.Lane)
+	if err != nil {
+		return application.failure("env", err, nil, 1)
+	}
+	if bound.Worktree != laneStore.Repo.Root {
+		return application.failure("env", fail.New("WORKTREE_MISMATCH", "lane is bound to a different checkout; run wip env from "+bound.Worktree), nil, 1)
 	}
 	renewal := renewalStatus{}
 	if !*observe {

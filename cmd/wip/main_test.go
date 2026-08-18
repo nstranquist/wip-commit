@@ -86,6 +86,108 @@ func TestIdentityEnvironmentDefaultsRemainSupported(t *testing.T) {
 	}
 }
 
+func TestObserveFlagSpellingsSelectReadOnlyMode(t *testing.T) {
+	tests := []struct {
+		args []string
+		want bool
+	}{
+		{args: []string{"--observe"}, want: true},
+		{args: []string{"-observe"}, want: true},
+		{args: []string{"--observe=true"}, want: true},
+		{args: []string{"-observe=1"}, want: true},
+		{args: []string{"--observe=false"}, want: false},
+		{args: []string{"--observe=invalid"}, want: true},
+		{args: []string{"--observe", "--observe=false"}, want: false},
+	}
+	for _, test := range tests {
+		if got := booleanFlagRequested(test.args, "observe"); got != test.want {
+			t.Errorf("booleanFlagRequested(%q) = %v, want %v", test.args, got, test.want)
+		}
+	}
+}
+
+func TestObserveFlagVariantsDoNotRenewLeases(t *testing.T) {
+	directory := cliTestRepo(t)
+	initializeCLI(t, directory, "observe-variants", "core.txt")
+	repo, err := gitx.Discover(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laneStore, initialized, err := store.Inspect(repo)
+	if err != nil || !initialized {
+		t.Fatalf("inspect initialized=%v err=%v", initialized, err)
+	}
+	status, err := laneStore.Status("observe-variants")
+	if err != nil || len(status.Leases) != 1 {
+		t.Fatalf("status=%#v err=%v", status, err)
+	}
+	original := status.Leases[0]
+
+	for _, spelling := range []string{"--observe=true", "-observe"} {
+		result := runCLI(t, []string{"--json", "--repo-dir", directory, "status", "--lane", "observe-variants", spelling}, "")
+		if result.code != 0 || result.envelope.Context == nil || result.envelope.Context.LeaseRenewed {
+			t.Fatalf("status %s = %#v stderr=%s", spelling, result.envelope, result.stderr)
+		}
+		stored, err := laneStore.LoadLease(original.ID)
+		if err != nil || !stored.UpdatedAt.Equal(original.UpdatedAt) || !stored.ExpiresAt.Equal(*original.ExpiresAt) {
+			t.Fatalf("status %s changed lease=%#v err=%v", spelling, stored, err)
+		}
+	}
+	invalid := runCLI(t, []string{"--json", "--repo-dir", directory, "status", "--lane", "observe-variants", "--observe=invalid"}, "")
+	if invalid.code == 0 || invalid.envelope.Error == nil || invalid.envelope.Error.Code != "INVALID_ARGS" {
+		t.Fatalf("invalid observe = %#v stderr=%s", invalid.envelope, invalid.stderr)
+	}
+	stored, err := laneStore.LoadLease(original.ID)
+	if err != nil || !stored.UpdatedAt.Equal(original.UpdatedAt) || !stored.ExpiresAt.Equal(*original.ExpiresAt) {
+		t.Fatalf("invalid observe changed lease=%#v err=%v", stored, err)
+	}
+
+	renewed := runCLI(t, []string{"--json", "--repo-dir", directory, "status", "--lane", "observe-variants", "--observe=false"}, "")
+	if renewed.code != 0 || renewed.envelope.Context == nil || !renewed.envelope.Context.LeaseRenewed {
+		t.Fatalf("renewing status = %#v stderr=%s", renewed.envelope, renewed.stderr)
+	}
+	stored, err = laneStore.LoadLease(original.ID)
+	if err != nil || !stored.UpdatedAt.After(original.UpdatedAt) {
+		t.Fatalf("explicit false did not renew lease=%#v err=%v", stored, err)
+	}
+}
+
+func TestEnvRejectsAnotherWorktreeWithoutRenewing(t *testing.T) {
+	anchor := cliTestRepo(t)
+	linked := filepath.Join(t.TempDir(), "bound-worktree")
+	cliGit(t, anchor, "worktree", "add", "--detach", linked, "HEAD")
+	initialized := runCLI(t, []string{"--json", "--repo-dir", linked, "init", "--mode", "worktree", "--lane", "bound-env", "--agent", "agent", "--session", "session", "--path", "core.txt", "--non-interactive", "--no-install", "--no-install-skill"}, "")
+	if initialized.code != 0 {
+		t.Fatalf("init = %#v stderr=%s", initialized.envelope, initialized.stderr)
+	}
+	repo, err := gitx.Discover(context.Background(), linked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laneStore, _, err := store.Inspect(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := laneStore.Status("bound-env")
+	if err != nil || len(status.Leases) != 1 {
+		t.Fatalf("status=%#v err=%v", status, err)
+	}
+	original := status.Leases[0]
+	for _, args := range [][]string{
+		{"--json", "--repo-dir", anchor, "env", "--lane", "bound-env"},
+		{"--json", "--repo-dir", anchor, "env", "--lane", "bound-env", "--observe=true"},
+	} {
+		result := runCLI(t, args, "")
+		if result.code == 0 || result.envelope.Error == nil || result.envelope.Error.Code != "WORKTREE_MISMATCH" {
+			t.Fatalf("wrong-worktree env = %#v stderr=%s", result.envelope, result.stderr)
+		}
+		stored, err := laneStore.LoadLease(original.ID)
+		if err != nil || !stored.UpdatedAt.Equal(original.UpdatedAt) || !stored.ExpiresAt.Equal(*original.ExpiresAt) {
+			t.Fatalf("wrong-worktree env changed lease=%#v err=%v", stored, err)
+		}
+	}
+}
+
 func TestConcurrentSharedLanesCaptureDisjointPaths(t *testing.T) {
 	directory := cliTestRepo(t)
 	writeCLI(t, directory, "core.txt", "new core\n")
@@ -544,6 +646,46 @@ func TestInitSkipsHomeResolutionWhenInstallationIsDisabled(t *testing.T) {
 	}
 	if options.installDir != "" || options.skillDir != "" {
 		t.Fatalf("disabled installation resolved directories: %#v", options)
+	}
+}
+
+func TestInteractiveWorktreeInitRequiresAndReportsDestination(t *testing.T) {
+	directory := cliTestRepo(t)
+	repo, err := gitx.Discover(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(t.TempDir(), "agent-worktree")
+	options := initOptions{
+		mode: string(store.ModeWorktree), lane: "guided-worktree", agent: "agent", session: "session", baseRef: "HEAD",
+		paths: stringList{"core.txt"}, noInstall: true, noInstallSkill: true,
+	}
+	input := strings.Join([]string{"", destination, "", "", "", ""}, "\n") + "\n"
+	var output bytes.Buffer
+	if err := prepareInitOptions(context.Background(), repo, &options, prompt{reader: bufio.NewReader(strings.NewReader(input)), out: &output}); err != nil {
+		t.Fatal(err)
+	}
+	if options.createWorktree != destination || !strings.Contains(output.String(), "A linked worktree path is required.") {
+		t.Fatalf("worktree=%q output=%q", options.createWorktree, output.String())
+	}
+	human := formatInitResult(initResult{
+		Lane:            &store.Lane{Mode: store.ModeWorktree, ID: "guided-worktree", Ref: store.LaneRef("agent", "guided-worktree")},
+		CreatedWorktree: true,
+		RepoDir:         directory,
+		Worktree:        destination,
+		Environment:     "export WIP_LANE=guided-worktree",
+	})
+	if !strings.Contains(human, "Continue in linked worktree "+destination+".") {
+		t.Fatalf("init result did not report navigation: %q", human)
+	}
+	reused := formatInitResult(initResult{
+		Lane:        &store.Lane{Mode: store.ModeWorktree, ID: "guided-worktree", Ref: store.LaneRef("agent", "guided-worktree")},
+		RepoDir:     directory,
+		Worktree:    destination,
+		Environment: "export WIP_LANE=guided-worktree",
+	})
+	if !strings.Contains(reused, "Continue in linked worktree "+destination+".") || strings.Contains(reused, "Created linked worktree") {
+		t.Fatalf("reused worktree result = %q", reused)
 	}
 }
 
@@ -1325,7 +1467,7 @@ func TestLeaseHeartbeatKeepsLongCaptureFenceActive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	laneStore.LeaseTTL = 3 * time.Second
+	laneStore.LeaseTTL = 9 * time.Second
 	lane, err := laneStore.Create(context.Background(), store.CreateOptions{ID: "heartbeat", Agent: "agent", Session: "session", Mode: store.ModeShared})
 	if err != nil {
 		t.Fatal(err)
@@ -1342,19 +1484,31 @@ func TestLeaseHeartbeatKeepsLongCaptureFenceActive(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = lock.Release() }()
-	_, stop, err := startLeaseHeartbeat(context.Background(), laneStore, lane, []string{"core.txt"})
+	refreshed := make(chan struct{}, 1)
+	_, stop, err := startLeaseHeartbeatWithObserver(context.Background(), laneStore, lane, []string{"core.txt"}, func() {
+		select {
+		case refreshed <- struct{}{}:
+		default:
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(4 * time.Second)
+	defer func() {
+		if err := stop(); err != nil {
+			t.Errorf("stop heartbeat: %v", err)
+		}
+	}()
+	select {
+	case <-refreshed:
+	case <-time.After(12 * time.Second):
+		t.Fatal("heartbeat did not renew the lease")
+	}
 	if active, err := laneStore.ActivePaths(lane.ID); err != nil || len(active) != 1 || active[0] != "core.txt" {
 		t.Fatalf("heartbeat active paths = %v, err=%v", active, err)
 	}
 	if _, err := laneStore.Claim(other.ID, other.Agent, other.Session, []string{"core.txt"}); fail.Code(err) != "PATH_LEASE_CONFLICT" {
 		t.Fatalf("heartbeat did not fence competing claim: %v (%s)", err, fail.Code(err))
-	}
-	if err := stop(); err != nil {
-		t.Fatal(err)
 	}
 }
 

@@ -1,12 +1,19 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/nstranquist/wip-commit/internal/fail"
+	"github.com/nstranquist/wip-commit/internal/gitx"
+	"github.com/nstranquist/wip-commit/internal/store"
 )
 
 func TestLaneJSONAlwaysSerializesLeaseExpiry(t *testing.T) {
@@ -200,9 +207,181 @@ func TestGuidedCaptureFinalReleasesAfterHandoffValidation(t *testing.T) {
 	if !result.LaneReleased || result.Handoff.IntentState != "complete" {
 		t.Fatalf("final result = %#v", result)
 	}
+	laneStore := inspectCLIStore(t, directory)
+	lockPath := filepath.Join(laneStore.Root, "locks", "lane-final-capture.lock")
+	lockBefore, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	printed := runCLI(t, []string{"--json", "--repo-dir", directory, "handoff", "--lane", "final-capture"}, "")
 	if printed.code != 0 || !printed.envelope.OK {
 		t.Fatalf("released handoff: %#v stderr=%s", printed.envelope, printed.stderr)
+	}
+	lockAfter, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(lockAfter, lockBefore) {
+		t.Fatalf("released handoff changed the lane lock: before=%q after=%q", lockBefore, lockAfter)
+	}
+}
+
+func TestGuidedCaptureKeepsLaneLockThroughFinalRelease(t *testing.T) {
+	directory := cliTestRepo(t)
+	writeCLI(t, directory, "core.txt", "new core\n")
+	cliGit(t, directory, "add", "core.txt")
+	initializeCLI(t, directory, "locked-final", "core.txt")
+	planPath := reviewedPlanFile(t, directory, "locked-final", "fix(core): finalize under one lane lock")
+
+	entered := make(chan struct{})
+	proceed := make(chan struct{})
+	var stdout, stderr bytes.Buffer
+	application := app{
+		stdin: strings.NewReader(""), stdout: &stdout, stderr: &stderr,
+		beforeFinalRelease: func() {
+			close(entered)
+			<-proceed
+		},
+	}
+	done := make(chan int, 1)
+	go func() {
+		done <- application.run(context.Background(), []string{"--json", "--repo-dir", directory, "capture", "--lane", "locked-final", "--plan", planPath, "--final"})
+	}()
+	waitForBarrier(t, entered, "final capture validation")
+	unblocked := false
+	defer func() {
+		if !unblocked {
+			close(proceed)
+		}
+	}()
+
+	laneStore := inspectCLIStore(t, directory)
+	lock, err := laneStore.LaneLock("locked-final", 100*time.Millisecond)
+	if err == nil {
+		_ = lock.Release()
+		t.Fatal("another lane transaction acquired the lock before final release")
+	}
+	if fail.Code(err) != "LOCK_TIMEOUT" {
+		t.Fatalf("competing lane lock error = %v (%s)", err, fail.Code(err))
+	}
+	lane, err := laneStore.Load("locked-final")
+	if err != nil || lane.State != "active" {
+		t.Fatalf("lane before final release = %#v err=%v", lane, err)
+	}
+	close(proceed)
+	unblocked = true
+
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Fatalf("final capture code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("final capture did not finish")
+	}
+	lane, err = laneStore.Load("locked-final")
+	if err != nil || lane.State != "released" {
+		t.Fatalf("lane after final release = %#v err=%v", lane, err)
+	}
+}
+
+func TestHandoffKeepsLaneLockThroughValidationAndRenewal(t *testing.T) {
+	directory := cliTestRepo(t)
+	writeCLI(t, directory, "core.txt", "new core\n")
+	cliGit(t, directory, "add", "core.txt")
+	initializeCLI(t, directory, "locked-handoff", "core.txt")
+	planPath := reviewedPlanFile(t, directory, "locked-handoff", "fix(core): validate handoff under one lock")
+	captured := runCLI(t, []string{"--json", "--repo-dir", directory, "capture", "--lane", "locked-handoff", "--plan", planPath}, "")
+	if captured.code != 0 {
+		t.Fatalf("capture = %#v stderr=%s", captured.envelope, captured.stderr)
+	}
+
+	entered := make(chan struct{})
+	proceed := make(chan struct{})
+	var stdout, stderr bytes.Buffer
+	application := app{
+		stdin: strings.NewReader(""), stdout: &stdout, stderr: &stderr,
+		afterHandoffValidation: func() {
+			close(entered)
+			<-proceed
+		},
+	}
+	done := make(chan int, 1)
+	go func() {
+		done <- application.run(context.Background(), []string{"--json", "--repo-dir", directory, "handoff", "--lane", "locked-handoff"})
+	}()
+	waitForBarrier(t, entered, "handoff validation")
+	unblocked := false
+	defer func() {
+		if !unblocked {
+			close(proceed)
+		}
+	}()
+
+	laneStore := inspectCLIStore(t, directory)
+	lock, err := laneStore.LaneLock("locked-handoff", 100*time.Millisecond)
+	if err == nil {
+		_ = lock.Release()
+		t.Fatal("another lane transaction acquired the lock after handoff validation")
+	}
+	if fail.Code(err) != "LOCK_TIMEOUT" {
+		t.Fatalf("competing lane lock error = %v (%s)", err, fail.Code(err))
+	}
+	close(proceed)
+	unblocked = true
+
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Fatalf("handoff code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("handoff did not finish")
+	}
+}
+
+func reviewedPlanFile(t *testing.T, directory, lane, message string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "reviewed-plan.json")
+	drafted := runCLI(t, []string{"--json", "--repo-dir", directory, "plan", "--lane", lane, "--out", path}, "")
+	if drafted.code != 0 {
+		t.Fatalf("draft plan = %#v stderr=%s", drafted.envelope, drafted.stderr)
+	}
+	var plan planProposal
+	decodeData(t, drafted.envelope.Data, &plan)
+	plan.State = "reviewed"
+	for index := range plan.Groups {
+		plan.Groups[index].Message = message
+	}
+	body, err := json.MarshalIndent(plan, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(body, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func inspectCLIStore(t *testing.T, directory string) store.Store {
+	t.Helper()
+	repo, err := gitx.Discover(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laneStore, initialized, err := store.Inspect(repo)
+	if err != nil || !initialized {
+		t.Fatalf("inspect initialized=%v err=%v", initialized, err)
+	}
+	return laneStore
+}
+
+func waitForBarrier(t *testing.T, barrier <-chan struct{}, label string) {
+	t.Helper()
+	select {
+	case <-barrier:
+	case <-time.After(20 * time.Second):
+		t.Fatalf("%s did not reach its test barrier", label)
 	}
 }
 

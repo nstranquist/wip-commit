@@ -422,9 +422,7 @@ func ValidateApplied(ctx context.Context, repo gitx.Repo, planID, planDigest, ta
 	if actual != intent.ExpectedNew {
 		return Intent{}, false, fail.Errorf("REF_MOVED", "lane ref is %s, not plan result %s", actual, intent.ExpectedNew)
 	}
-	if laneCursor == intent.ExpectedNew && intent.State == "complete" {
-		return intent, true, nil
-	}
+	alreadyComplete := laneCursor == intent.ExpectedNew && intent.State == "complete"
 	cursor := intent.ExpectedOld
 	for index, planned := range intent.Commits {
 		if planned.Commit == "" || planned.Parent != cursor {
@@ -463,7 +461,7 @@ func ValidateApplied(ctx context.Context, repo gitx.Repo, planID, planDigest, ta
 	if err != nil || finalTree != intent.FinalTree {
 		return Intent{}, false, fail.New("CAPTURE_RECEIPT_MISMATCH", "applied commit does not contain the receipt final tree")
 	}
-	return intent, false, nil
+	return intent, alreadyComplete, nil
 }
 
 func intentPath(repo gitx.Repo, planID string) (string, error) {

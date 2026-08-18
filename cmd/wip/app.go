@@ -16,11 +16,13 @@ import (
 )
 
 type app struct {
-	stdin          io.Reader
-	stdout, stderr io.Writer
-	jsonMode       bool
-	repoDir        string
-	leaseHeartbeat func(context.Context, store.Store, store.Lane, []string) (context.Context, func() error, error)
+	stdin                  io.Reader
+	stdout, stderr         io.Writer
+	jsonMode               bool
+	repoDir                string
+	leaseHeartbeat         func(context.Context, store.Store, store.Lane, []string) (context.Context, func() error, error)
+	beforeFinalRelease     func()
+	afterHandoffValidation func()
 }
 
 type errorPayload struct {

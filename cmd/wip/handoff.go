@@ -96,6 +96,22 @@ func (application app) runHandoff(ctx context.Context, laneStore store.Store, ar
 	if err != nil {
 		return application.failure("handoff", err, nil, 1)
 	}
+	if status.Lane.State == "active" {
+		writable, openErr := store.Open(laneStore.Repo)
+		if openErr != nil {
+			return application.failure("handoff", openErr, nil, 1)
+		}
+		laneStore = writable
+	}
+	lock, err := laneStore.ExistingLaneLock(status.Lane.ID, 0)
+	if err != nil {
+		return application.failure("handoff", err, nil, 1)
+	}
+	defer func() { _ = lock.Release() }()
+	status, err = resolveHandoffStatus(laneStore, identity)
+	if err != nil {
+		return application.failure("handoff", err, nil, 1)
+	}
 	if *planID == "" {
 		latest, latestErr := engine.LatestIntent(laneStore.Repo, status.Lane.Ref)
 		if latestErr != nil {
@@ -110,17 +126,15 @@ func (application app) runHandoff(ctx context.Context, laneStore store.Store, ar
 	if err != nil {
 		return application.failure("handoff", err, nil, 1)
 	}
+	if application.afterHandoffValidation != nil {
+		application.afterHandoffValidation()
+	}
 	renewal := renewalStatus{}
 	if status.Lane.State == "active" {
 		renewal.Attempted = true
-		writable, openErr := store.Open(laneStore.Repo)
-		if openErr != nil {
-			return application.failure("handoff", openErr, handoff, 1)
+		if _, err := laneStore.RenewWithLockHeld(status.Lane); err != nil {
+			return application.failure("handoff", err, nil, 1)
 		}
-		if _, err := writable.Renew(status.Lane.ID, status.Lane.Agent, status.Lane.Session); err != nil {
-			return application.failure("handoff", err, handoff, 1)
-		}
-		laneStore = writable
 		now := time.Now().UTC()
 		renewal.Succeeded, renewal.RenewedAt = true, &now
 		status, err = laneStore.Status(status.Lane.ID)

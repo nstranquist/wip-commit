@@ -78,12 +78,7 @@ func (application app) runCaptureTransaction(ctx context.Context, laneStore stor
 	if err != nil {
 		return application.failure(action, err, nil, 1)
 	}
-	lockHeld := true
-	defer func() {
-		if lockHeld {
-			_ = lock.Release()
-		}
-	}()
+	defer func() { _ = lock.Release() }()
 	lane, err := laneStore.Load(status.Lane.ID)
 	if err != nil {
 		return application.failure(action, err, nil, 1)
@@ -196,11 +191,10 @@ func (application app) runCaptureTransaction(ctx context.Context, laneStore stor
 	}
 	guidedResult := guidedCaptureResult{Capture: result, Handoff: handoff}
 	if options.final {
-		if err := lock.Release(); err != nil {
-			return application.failure(action, fail.Wrap("LOCK_RELEASE_FAILED", err), guidedResult, 1)
+		if application.beforeFinalRelease != nil {
+			application.beforeFinalRelease()
 		}
-		lockHeld = false
-		if err := laneStore.Release(current.ID, current.Agent, current.Session, false); err != nil {
+		if err := laneStore.ReleaseWithLockHeld(current, false); err != nil {
 			return application.failure(action, err, guidedResult, 1)
 		}
 		guidedResult.LaneReleased = true
@@ -225,6 +219,10 @@ func (application app) runCaptureTransaction(ctx context.Context, laneStore stor
 }
 
 func startLeaseHeartbeat(parent context.Context, laneStore store.Store, lane store.Lane, allowed []string) (context.Context, func() error, error) {
+	return startLeaseHeartbeatWithObserver(parent, laneStore, lane, allowed, nil)
+}
+
+func startLeaseHeartbeatWithObserver(parent context.Context, laneStore store.Store, lane store.Lane, allowed []string, afterBackgroundRefresh func()) (context.Context, func() error, error) {
 	if err := laneStore.RefreshCaptureLease(parent, lane, allowed); err != nil {
 		return nil, nil, fail.Wrap("LEASE_HEARTBEAT_FAILED", err)
 	}
@@ -255,6 +253,9 @@ func startLeaseHeartbeat(parent context.Context, laneStore store.Store, lane sto
 					cancelCapture()
 					done <- fail.Wrap("LEASE_HEARTBEAT_FAILED", err)
 					return
+				}
+				if afterBackgroundRefresh != nil {
+					afterBackgroundRefresh()
 				}
 			}
 		}

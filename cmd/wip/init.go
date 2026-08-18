@@ -149,11 +149,16 @@ func prepareInitOptions(ctx context.Context, source gitx.Repo, options *initOpti
 		if options.nonInteractive {
 			return fail.New("WORKTREE_REQUIRED", "worktree mode from an anchor checkout requires --create-worktree")
 		}
-		value, err := prompter.ask("New linked worktree path", "")
-		if err != nil {
-			return err
+		for strings.TrimSpace(options.createWorktree) == "" {
+			value, err := prompter.ask("New linked worktree path", "")
+			if err != nil {
+				return err
+			}
+			options.createWorktree = value
+			if strings.TrimSpace(options.createWorktree) == "" {
+				_, _ = fmt.Fprintln(prompter.out, "A linked worktree path is required.")
+			}
 		}
-		options.createWorktree = value
 	}
 	if !options.nonInteractive {
 		value, err := prompter.ask("Base ref", options.baseRef)
@@ -790,6 +795,9 @@ func formatInitResult(result initResult) string {
 	}
 	if result.CreatedWorktree {
 		lines = append(lines, "Created linked worktree "+result.Worktree+".")
+	}
+	if result.Lane != nil && result.Lane.Mode == store.ModeWorktree && result.Worktree != "" && result.Worktree != result.RepoDir {
+		lines = append(lines, "Continue in linked worktree "+result.Worktree+".")
 	}
 	if result.InstallPath != "" {
 		state := "Installed"

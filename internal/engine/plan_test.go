@@ -539,6 +539,12 @@ func TestValidateAppliedChecksGitObjectsAgainstReceipt(t *testing.T) {
 			if _, clean, err := ValidateApplied(context.Background(), repo, result.PlanID, result.PlanDigest, target, head); err != nil || clean {
 				t.Fatalf("valid applied receipt clean=%v err=%v", clean, err)
 			}
+			if _, err := MarkIntent(repo, result.PlanID, result.PlanDigest, "complete"); err != nil {
+				t.Fatal(err)
+			}
+			if _, clean, err := ValidateApplied(context.Background(), repo, result.PlanID, result.PlanDigest, target, result.FinalCommit); err != nil || !clean {
+				t.Fatalf("valid complete receipt clean=%v err=%v", clean, err)
+			}
 
 			intent, path, err := LoadIntent(repo, result.PlanID, result.PlanDigest)
 			if err != nil {
@@ -556,7 +562,7 @@ func TestValidateAppliedChecksGitObjectsAgainstReceipt(t *testing.T) {
 			if err := os.WriteFile(path, append(body, '\n'), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := ValidateApplied(context.Background(), repo, result.PlanID, intent.PlanDigest, target, head); fail.Code(err) != "CAPTURE_RECEIPT_MISMATCH" {
+			if _, _, err := ValidateApplied(context.Background(), repo, result.PlanID, intent.PlanDigest, target, result.FinalCommit); fail.Code(err) != "CAPTURE_RECEIPT_MISMATCH" {
 				t.Fatalf("mismatched %s receipt error = %v (%s)", test.name, err, fail.Code(err))
 			}
 		})

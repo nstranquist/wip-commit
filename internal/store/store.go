@@ -331,6 +331,19 @@ func (store Store) LaneLock(id string, wait time.Duration) (*filelock.Lock, erro
 	return lock, nil
 }
 
+// ExistingLaneLock acquires an existing lane lock without changing its file.
+// Lane creation always publishes this lock before the lane becomes active.
+func (store Store) ExistingLaneLock(id string, wait time.Duration) (*filelock.Lock, error) {
+	if err := validateID(id, "lane"); err != nil {
+		return nil, err
+	}
+	lock, err := filelock.AcquireExisting(filepath.Join(store.Root, "locks", "lane-"+id+".lock"), wait)
+	if err != nil {
+		return nil, fail.Wrap("LOCK_TIMEOUT", err)
+	}
+	return lock, nil
+}
+
 func (store Store) registryLock(wait time.Duration) (*filelock.Lock, error) {
 	lock, err := filelock.Acquire(filepath.Join(store.Root, "locks", "leases.lock"), wait)
 	if err != nil {
@@ -545,6 +558,29 @@ func (store Store) Renew(id, agent, session string) ([]Lease, error) {
 	if err := ownedActive(lane, agent, session); err != nil {
 		return nil, err
 	}
+	return store.renewLocked(lane)
+}
+
+// RenewWithLockHeld extends every active lease for expected. The caller must
+// hold expected's lane lock for the complete call.
+func (store Store) RenewWithLockHeld(expected Lane) ([]Lease, error) {
+	lane, err := store.Load(expected.ID)
+	if err != nil {
+		return nil, err
+	}
+	if !sameLaneSnapshot(lane, expected) {
+		return nil, fail.New("LANE_MOVED", "lane changed before its leases could be renewed")
+	}
+	if err := ownedActive(lane, expected.Agent, expected.Session); err != nil {
+		return nil, err
+	}
+	if lane.Worktree != store.Repo.Root {
+		return nil, fail.New("WORKTREE_MISMATCH", "lane is bound to a different checkout")
+	}
+	return store.renewLocked(lane)
+}
+
+func (store Store) renewLocked(lane Lane) ([]Lease, error) {
 	registry, err := store.registryLock(0)
 	if err != nil {
 		return nil, err
@@ -563,7 +599,7 @@ func (store Store) Renew(id, agent, session string) ([]Lease, error) {
 	}
 	var renewed []Lease
 	for _, lease := range leases {
-		if lease.LaneID != id || !activeLease(lease, now) {
+		if lease.LaneID != lane.ID || !activeLease(lease, now) {
 			continue
 		}
 		expires := now.Add(store.leaseTTL())
@@ -975,11 +1011,6 @@ func (store Store) Release(id, agent, session string, abort bool) error {
 		return err
 	}
 	defer func() { _ = lock.Release() }()
-	registry, err := store.registryLock(0)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = registry.Release() }()
 	lane, err := store.Load(id)
 	if err != nil {
 		return err
@@ -987,6 +1018,31 @@ func (store Store) Release(id, agent, session string, abort bool) error {
 	if lane.Agent != agent || lane.Session != session {
 		return fail.New("IDENTITY_MISMATCH", "lane belongs to another agent or session")
 	}
+	return store.releaseLocked(lane, abort)
+}
+
+// ReleaseWithLockHeld releases expected and its leases. The caller must hold
+// expected's lane lock for the complete call.
+func (store Store) ReleaseWithLockHeld(expected Lane, abort bool) error {
+	lane, err := store.Load(expected.ID)
+	if err != nil {
+		return err
+	}
+	if !sameLaneSnapshot(lane, expected) {
+		return fail.New("LANE_MOVED", "lane changed before it could be released")
+	}
+	if lane.Worktree != store.Repo.Root {
+		return fail.New("WORKTREE_MISMATCH", "lane is bound to a different checkout")
+	}
+	return store.releaseLocked(lane, abort)
+}
+
+func (store Store) releaseLocked(lane Lane, abort bool) error {
+	registry, err := store.registryLock(0)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = registry.Release() }()
 	now := time.Now().UTC()
 	leases, err := store.leases("", false)
 	if err != nil {
@@ -996,7 +1052,7 @@ func (store Store) Release(id, agent, session string, abort bool) error {
 		return err
 	}
 	for _, lease := range leases {
-		if lease.LaneID != id || lease.State != "active" {
+		if lease.LaneID != lane.ID || lease.State != "active" {
 			continue
 		}
 		lease.State, lease.UpdatedAt, lease.ReleasedAt = "released", now, &now
@@ -1010,6 +1066,24 @@ func (store Store) Release(id, agent, session string, abort bool) error {
 	}
 	lane.UpdatedAt = now
 	return store.writeLane(lane)
+}
+
+func sameLaneSnapshot(left, right Lane) bool {
+	return left.SchemaVersion == right.SchemaVersion &&
+		left.ID == right.ID &&
+		left.Agent == right.Agent &&
+		left.Session == right.Session &&
+		left.Mode == right.Mode &&
+		left.Ref == right.Ref &&
+		left.BaseRef == right.BaseRef &&
+		left.BaseSHA == right.BaseSHA &&
+		left.CurrentSHA == right.CurrentSHA &&
+		left.Worktree == right.Worktree &&
+		sameStrings(left.LeaseIDs, right.LeaseIDs) &&
+		left.State == right.State &&
+		left.CreatedAt.Equal(right.CreatedAt) &&
+		left.UpdatedAt.Equal(right.UpdatedAt) &&
+		left.LastCommit == right.LastCommit
 }
 
 func validateReleaseLeaseLinks(lane Lane, leases []Lease) error {
