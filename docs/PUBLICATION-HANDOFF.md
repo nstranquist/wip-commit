@@ -1,6 +1,6 @@
 # First publication handoff
 
-Status: Ready for human execution
+Status: Executed on 2026-08-17. Do not run this handoff again.
 
 Target: `github.com/nstranquist/wip-commit`
 
@@ -8,14 +8,36 @@ Reviewed bootstrap: `b276204385636c5a8ac338491565bd4894255217`
 
 Owner approval: `owner-session-2026-08-16`
 
+Final public `main`: `206fa8b6a1dde1d97081133e4d447c0881849922`
+
+Public evidence: [PUBLICATION-EVIDENCE.md](PUBLICATION-EVIDENCE.md)
+
+## Execution note
+
+The pre-first-push receipt bound
+`ed3f1fadfbc74eb0aa41ef8b90e41f403213d33d` and its 17-path manifest. The first
+hosted run found three Windows host assumptions and a disabled dependency
+graph.
+
+Commit `206fa8b6a1dde1d97081133e4d447c0881849922` fixed the Windows findings and
+expanded the complete bootstrap delta to 20 reviewed paths. The corrected
+commit passed every required hosted check.
+
+Pull request 1 closed without a merge commit. Then `main` moved by a direct
+fast-forward.
+
+The pre-first-push command cannot validate this correction because the target
+now exists. [KEP-0002](KEP-0002-hosted-candidate-correction.md) defines the
+source-current correction receipt that remains required before the tag.
+
 ## Boundary
 
 The owner approved the repository name, module path, and capture-only public
 beta scope. The owner has not approved a release tag.
 
-The repository instructions prohibit an agent push. A human must execute every
-command in the **Human-only first push** section. Do not merge the bootstrap
-pull request. Do not create a tag during this handoff.
+The repository instructions prohibited an agent push without an owner
+override. The owner gave one-time approval for this exact handoff. That
+approval did not authorize a pull-request merge or tag.
 
 The preflight command is read-only except for one new private receipt outside
 the checkout. It does not create a repository, remote, tag, branch, or Git ref,
@@ -81,6 +103,8 @@ Fix the candidate, capture a new reviewed commit series, and rerun the preflight
 to a new output path.
 
 ## Human-only first push
+
+This section is an execution record. Do not run these commands again.
 
 In this section, `<candidate-commit>` means the exact `candidate.commit` from
 the validated receipt. A human repository owner must run these commands.

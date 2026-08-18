@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "plan_id": "wip-oss-public-beta",
-  "plan_status": "proposed",
+  "plan_status": "accepted",
   "target_version": "v0.1.0-beta.1",
-  "last_reviewed": "2026-08-16",
+  "last_reviewed": "2026-08-17",
   "status_definitions": {
-    "verified": "Local evidence passed on the recorded source.",
+    "verified": "Recorded local or hosted evidence passed on the exact source.",
     "prepared": "The repository artifact exists, but hosted evidence is absent.",
     "planned": "Owner-controlled implementation work remains.",
     "human-gated": "An owner decision or external mutation is required.",
@@ -114,25 +114,27 @@
       "id": "OSS-008",
       "gate": "public-beta",
       "title": "Run hosted operating-system tests",
-      "status": "external-evidence",
+      "status": "verified",
       "owner": "repository-owner",
-      "human_gate": true,
+      "human_gate": false,
       "acceptance": "The exact candidate passes Linux, macOS, Windows, race, vet, lint, module, and dependency-review jobs.",
       "evidence": [
-        {"kind": "workflow", "value": ".github/workflows/ci.yml", "observed_on": "2026-08-14"}
+        {"kind": "workflow", "value": ".github/workflows/ci.yml", "observed_on": "2026-08-14"},
+        {"kind": "hosted-run", "value": "https://github.com/nstranquist/wip-commit/actions/runs/31996057770 passed Linux, macOS, Windows, race, lint, and dependency review on commit 206fa8b6a1dde1d97081133e4d447c0881849922.", "observed_on": "2026-08-17"},
+        {"kind": "hosted-run", "value": "https://github.com/nstranquist/wip-commit/actions/runs/31996220707 passed every main-push job that applies to commit 206fa8b6a1dde1d97081133e4d447c0881849922.", "observed_on": "2026-08-17"}
       ]
     },
     {
       "id": "OSS-009",
       "gate": "public-beta",
       "title": "Configure hosted repository protections",
-      "status": "human-gated",
+      "status": "verified",
       "owner": "repository-owner",
-      "human_gate": true,
+      "human_gate": false,
       "acceptance": "main requires pull requests, review, required CI, and blocks force pushes and deletion.",
       "evidence": [
         {"kind": "prepared-runbook", "value": "docs/HOSTED-SETUP.md defines the authority boundary, ruleset sequence, observed-check-name rule, and evidence receipt.", "observed_on": "2026-08-16"},
-        {"kind": "gap", "value": "No remote is configured in the local checkout.", "observed_on": "2026-08-14"}
+        {"kind": "hosted-setting", "value": "https://github.com/nstranquist/wip-commit/rules/20926881 is active on main with no bypass actor, rebase-only pull requests, one approval, last-push approval, six provider-bound checks, linear history, and ref protections.", "observed_on": "2026-08-17"}
       ]
     },
     {
@@ -145,7 +147,9 @@
       "acceptance": "Private vulnerability reporting, dependency alerts, secret scanning, and security notifications are enabled.",
       "evidence": [
         {"kind": "prepared-policy", "value": "SECURITY.md and .github/ISSUE_TEMPLATE/config.yml", "observed_on": "2026-08-14"},
-        {"kind": "prepared-runbook", "value": "docs/HOSTED-SETUP.md defines the current GitHub security-setting sequence and evidence receipt.", "observed_on": "2026-08-16"}
+        {"kind": "prepared-runbook", "value": "docs/HOSTED-SETUP.md defines the current GitHub security-setting sequence and evidence receipt.", "observed_on": "2026-08-16"},
+        {"kind": "hosted-setting", "value": "Dependency graph, Dependabot alerts, Dependabot security updates, secret scanning, push protection, and private vulnerability reporting are enabled. GitHub serves SECURITY.md on the security policy page.", "observed_on": "2026-08-17"},
+        {"kind": "gap", "value": "The maintainer's personal security-alert notification setting is not verified.", "observed_on": "2026-08-17"}
       ]
     },
     {
@@ -186,7 +190,8 @@
       "human_gate": true,
       "acceptance": "A clean environment installs the tagged command through the public Go module path and runs wip version.",
       "evidence": [
-        {"kind": "gap", "value": "The module path is not public.", "observed_on": "2026-08-14"}
+        {"kind": "public-install", "value": "A clean unauthenticated clone resolved commit 206fa8b6a1dde1d97081133e4d447c0881849922 and tree c0dd6638adcdc231840ad06406dc9f0caa38e45d. go install at that commit resolved the public pseudo-version and returned wip 0.1.0-beta.1.", "observed_on": "2026-08-17"},
+        {"kind": "gap", "value": "No public beta tag exists, so the tagged-install acceptance rule remains open.", "observed_on": "2026-08-17"}
       ]
     },
     {
@@ -198,7 +203,7 @@
       "human_gate": true,
       "acceptance": "The owner creates a signed v0.1.0-beta.1 tag only after every public-beta gate passes.",
       "evidence": [
-        {"kind": "gap", "value": "No remote or tag exists.", "observed_on": "2026-08-14"}
+        {"kind": "gap", "value": "The public repository exists, but no tag, GitHub release, or explicit tag approval exists.", "observed_on": "2026-08-17"}
       ]
     },
     {
@@ -345,7 +350,7 @@
       "human_gate": true,
       "acceptance": "After a beta period, the project reviews issue and pull-request response, maintainer load, unresolved security and safety defects, real concurrent use, and a tested backup-administrator, transfer, or archival path.",
       "evidence": [
-        {"kind": "gap", "value": "A local unpublished project has no honest community-health or succession evidence.", "observed_on": "2026-08-16"}
+        {"kind": "gap", "value": "A new public source candidate has no beta-period community-health or succession evidence.", "observed_on": "2026-08-17"}
       ]
     },
     {
@@ -415,10 +420,10 @@
       "status": "verified",
       "owner": "repository-owner",
       "human_gate": false,
-      "acceptance": "A source-current, fail-closed preflight binds a clean final candidate to the reviewed bootstrap, a merge-free linear split-commit range, the complete reviewed path delta, zero remotes and tags, owner approval, public author and committer identities, absent target repository, complete non-replaced history, passing object integrity, and passing history and worktree secret scans. It writes a no-overwrite private receipt outside the checkout. A human-only runbook preserves the exact candidate while obtaining hosted checks without merging a pull request.",
+      "acceptance": "A source-current, fail-closed preflight binds a clean pre-first-push candidate to the reviewed bootstrap, a merge-free linear split-commit range, the complete reviewed path delta, zero remotes and tags, owner approval, public author and committer identities, absent target repository, complete non-replaced history, passing object integrity, and passing history and worktree secret scans. It writes a no-overwrite private receipt outside the checkout. A human-only runbook preserves the exact candidate while obtaining hosted checks without merging a pull request.",
       "evidence": [
         {"kind": "artifact", "value": "scripts/publication-handoff, docs/PUBLICATION-HANDOFF.md, docs/PUBLICATION-HANDOFF.paths, and docs/PUBLICATION-HANDOFF.schema.json", "observed_on": "2026-08-16"},
-        {"kind": "gap", "value": "The project instructions prohibit an agent push. Human execution and hosted evidence remain required.", "observed_on": "2026-08-16"}
+        {"kind": "receipt", "value": "The validated private pre-first-push receipt bound commit ed3f1fadfbc74eb0aa41ef8b90e41f403213d33d, tree 674a65c74d55a08b3f8d560700de1430ade99942, the reviewed bootstrap, and the then-current 17-path manifest before repository creation.", "observed_on": "2026-08-17"}
       ]
     },
     {
@@ -433,6 +438,19 @@
         {"kind": "finding", "value": "Go 1.25.0 reached GO-2026-4602, GO-2026-4864, and GO-2026-4970 in project code paths; all are fixed by Go 1.25.12.", "observed_on": "2026-08-16"},
         {"kind": "artifact", "value": "go.mod requires Go 1.25.12; docs/RELEASE.md and docs/OSS-PRACTICE-GUIDE.md require exact-minimum verification.", "observed_on": "2026-08-16"},
         {"kind": "command", "value": "GOTOOLCHAIN=go1.25.12 GOWORK=off go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...", "observed_on": "2026-08-16"}
+      ]
+    },
+    {
+      "id": "OSS-034",
+      "gate": "public-beta",
+      "title": "Bind hosted candidate corrections",
+      "status": "planned",
+      "owner": "maintainer",
+      "human_gate": false,
+      "acceptance": "A fail-closed Go command binds each post-first-push correction to the old and new candidates, complete path manifest, local checks, remote candidate ref, unmerged pull request, required hosted runs, and final tree in one immutable private receipt before main moves.",
+      "evidence": [
+        {"kind": "kep", "value": "docs/KEP-0002-hosted-candidate-correction.md defines the receipt contract, sequence, failure behavior, and test plan.", "observed_on": "2026-08-17"},
+        {"kind": "gap", "value": "The first receipt binds ed3f1fadfbc74eb0aa41ef8b90e41f403213d33d, while public main is 206fa8b6a1dde1d97081133e4d447c0881849922 after a hosted correction. No source command validates this correction flow yet.", "observed_on": "2026-08-17"}
       ]
     }
   ]
