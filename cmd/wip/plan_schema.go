@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"sort"
 	"strings"
@@ -197,8 +196,4 @@ func samePlanStrings(left, right []string) bool {
 		}
 	}
 	return true
-}
-
-func planSummary(plan planProposal) string {
-	return fmt.Sprintf("%d group(s), %d path(s), policy %s", len(plan.Groups), len(plan.StagedPaths), plan.MessagePolicy.ID)
 }
