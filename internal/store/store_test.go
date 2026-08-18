@@ -59,6 +59,76 @@ func TestConcurrentSharedClaimsAreExclusive(t *testing.T) {
 	}
 }
 
+func TestOperationalRecordsUseTheRegistryFence(t *testing.T) {
+	repo := testRepo(t)
+	laneStore, err := Open(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lane, err := laneStore.Create(context.Background(), CreateOptions{ID: "registry-reads", Agent: "agent", Session: "session", Mode: ModeShared})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := laneStore.Claim(lane.ID, lane.Agent, lane.Session, []string{"base.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "load lane", run: func() error { _, err := laneStore.Load(lane.ID); return err }},
+		{name: "load lease", run: func() error { _, err := laneStore.LoadLease(lease.ID); return err }},
+		{name: "current", run: func() error { _, err := laneStore.Current(lane.Agent, lane.Session, lane.ID); return err }},
+		{name: "status", run: func() error { _, err := laneStore.Status(lane.ID); return err }},
+		{name: "active paths", run: func() error { _, err := laneStore.ActivePaths(lane.ID); return err }},
+		{name: "archive candidates", run: func() error { _, err := laneStore.ArchiveCandidates(time.Now().UTC().Add(time.Hour)); return err }},
+	}
+	for _, read := range reads {
+		t.Run(read.name, func(t *testing.T) {
+			assertWaitsForRegistry(t, laneStore, read.run)
+		})
+	}
+	tree := git(t, repo.Root, "rev-parse", lane.CurrentSHA+"^{tree}")
+	commit := git(t, repo.Root, "commit-tree", tree, "-p", lane.CurrentSHA, "-m", "test: advance lane")
+	git(t, repo.Root, "update-ref", lane.Ref, commit, lane.CurrentSHA)
+	assertWaitsForRegistry(t, laneStore, func() error {
+		return laneStore.RecordCommit(context.Background(), lane.ID, commit)
+	})
+}
+
+func assertWaitsForRegistry(t *testing.T, laneStore Store, run func() error) {
+	t.Helper()
+	lock, err := laneStore.registryLock(time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		close(started)
+		done <- run()
+	}()
+	<-started
+	select {
+	case err := <-done:
+		_ = lock.Release()
+		t.Fatalf("operation passed the registry fence: %v", err)
+	case <-time.After(75 * time.Millisecond):
+	}
+	if err := lock.Release(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("operation did not continue after the registry fence opened")
+	}
+}
+
 func TestClaimIsIdempotentAndExpiredLeaseCannotRenew(t *testing.T) {
 	repo := testRepo(t)
 	laneStore, _ := Open(repo)
@@ -983,9 +1053,19 @@ func TestArchiveReceiptRejectsCrossLaneAndExtraRecords(t *testing.T) {
 		leases = append(leases, lease)
 	}
 	cutoff := time.Now().UTC().Add(-24 * time.Hour)
-	candidate, eligible, err := laneStore.archiveCandidate(lanes[0].ID, cutoff)
-	if err != nil || !eligible {
-		t.Fatalf("candidate = %#v eligible=%v err=%v", candidate, eligible, err)
+	candidates, err := laneStore.ArchiveCandidates(cutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var candidate ArchiveCandidate
+	for _, item := range candidates {
+		if item.LaneID == lanes[0].ID {
+			candidate = item
+			break
+		}
+	}
+	if candidate.LaneID == "" {
+		t.Fatalf("candidate for %s not found in %#v", lanes[0].ID, candidates)
 	}
 	receipt, err := laneStore.prepareArchiveReceipt(cutoff, []ArchiveCandidate{candidate})
 	if err != nil {

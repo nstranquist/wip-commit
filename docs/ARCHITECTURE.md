@@ -95,11 +95,15 @@ Commands use this lock order:
 1. coordination-domain lock during store creation;
 2. archive lock during archive or restore;
 3. lane locks in sorted lane order;
-4. lease-registry lock.
+4. state-registry lock at `locks/leases.lock`.
 
 No command acquires those locks in the opposite order. Different lanes can run
 capture work in parallel. One lane is serialized. An initialization-intent
 lock is acquired by itself when a completed step is recorded.
+
+The state-registry lock fences operational lane and lease record reads. It also
+fences lease replacement and the final lane commit receipt. Windows can reject
+an open during atomic replacement without this shared fence.
 
 ## Lane state
 
