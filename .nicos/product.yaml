@@ -5,6 +5,7 @@ surface: products
 kind: product
 status: experimental
 launch: built
+license: MIT
 tags:
     - go
     - git
