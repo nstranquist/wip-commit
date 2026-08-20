@@ -1,8 +1,46 @@
-schema_version: 1
+schema_version: 2
 product_id: product.wip-commit
-visibility: internal
-reviewed: false
-assets: []
+visibility: public
+reviewed: true
+presentation:
+    summary: Guarded split-commit capture for parallel agents in shared Git checkouts.
+    detail: Discover path ownership, isolate an exact staged delta, run policy gates, create a recoverable commit, and keep unrelated or concurrently staged work outside the commit.
+    language: Go
+    lane: Git safety and agent ergonomics
+access:
+    profile: go-cli
+    primary_action:
+        kind: source
+        label: Build wip-commit
+        url: https://github.com/nstranquist/wip-commit#build-locally
+    repository_url: https://github.com/nstranquist/wip-commit
+    documentation_url: https://github.com/nstranquist/wip-commit#start-with-wip-init
+    feedback_url: https://github.com/nstranquist/wip-commit/issues/new
+    module: github.com/nstranquist/wip-commit
+    binary: wip
+    smoke_argv: [go, run, ./cmd/wip, --help]
+proof:
+    claims:
+        - id: exact-path-capture
+          statement: The workflow captures an explicit path set instead of committing the entire shared index.
+          evidence_kind: documentation
+          evidence_url: https://github.com/nstranquist/wip-commit#capture-work
+        - id: safety-boundary
+          statement: The repository documents index ownership, recovery, and unsupported destructive operations.
+          evidence_kind: documentation
+          evidence_url: https://github.com/nstranquist/wip-commit#safety-scope
+    boundaries:
+        - The public repository currently has no SemVer tag or formal GitHub Release.
+        - Guarded commits reduce shared-checkout risk but cannot infer human ownership intent.
+assets:
+    - path: assets/brand/wip-commit.svg
+      kind: logo
+      alt: wip-commit application icon
+      provenance: authored-svg
+      copyright_owner: Nico Stranquist
+      generator: catalog-brand-svg/v2
+      concept: git-shield
+      score: 100
 case_study:
     enabled: false
     evidence: []
