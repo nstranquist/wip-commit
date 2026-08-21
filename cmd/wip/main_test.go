@@ -1031,9 +1031,12 @@ func TestDoctorRejectsLeaseOwnerMismatch(t *testing.T) {
 func TestArchiveRequiresExactPreviewAndPreservesRefs(t *testing.T) {
 	directory := cliTestRepo(t)
 	initializeCLI(t, directory, "archive-cli", "core.txt")
-	release := runCLI(t, []string{"--json", "--repo-dir", directory, "release", "--lane", "archive-cli"}, "")
-	if release.code != 0 || !release.envelope.OK {
-		t.Fatalf("release for archive: %#v stderr=%s", release.envelope, release.stderr)
+	initializeCLI(t, directory, "archive-other", "docs.txt")
+	for _, laneID := range []string{"archive-cli", "archive-other"} {
+		release := runCLI(t, []string{"--json", "--repo-dir", directory, "release", "--lane", laneID}, "")
+		if release.code != 0 || !release.envelope.OK {
+			t.Fatalf("release %s for archive: %#v stderr=%s", laneID, release.envelope, release.stderr)
+		}
 	}
 	repo, err := gitx.Discover(context.Background(), directory)
 	if err != nil {
@@ -1043,40 +1046,55 @@ func TestArchiveRequiresExactPreviewAndPreservesRefs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lane, err := laneStore.Load("archive-cli")
-	if err != nil {
-		t.Fatal(err)
-	}
-	lane.UpdatedAt = time.Now().UTC().Add(-48 * time.Hour)
-	body, err := json.MarshalIndent(lane, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(laneStore.Root, "lanes", lane.ID+".json"), append(body, '\n'), 0o600); err != nil {
-		t.Fatal(err)
+	var lane store.Lane
+	for _, laneID := range []string{"archive-cli", "archive-other"} {
+		current, err := laneStore.Load(laneID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		current.UpdatedAt = time.Now().UTC().Add(-48 * time.Hour)
+		body, err := json.MarshalIndent(current, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(laneStore.Root, "lanes", current.ID+".json"), append(body, '\n'), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if laneID == "archive-cli" {
+			lane = current
+		}
 	}
 	refBefore := cliGit(t, directory, "rev-parse", lane.Ref)
-	preview := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--older-than", "24h"}, "")
+	preview := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--older-than", "24h", "--lane", lane.ID}, "")
 	if preview.code != 0 || !preview.envelope.OK {
 		t.Fatalf("archive preview: %#v stderr=%s", preview.envelope, preview.stderr)
 	}
 	var plan archiveResult
 	decodeData(t, preview.envelope.Data, &plan)
-	if !plan.DryRun || len(plan.Candidates) != 1 || plan.PlanDigest == "" {
+	if !plan.DryRun || len(plan.Candidates) != 1 || plan.PlanDigest == "" || len(plan.LaneFilters) != 1 || plan.LaneFilters[0] != lane.ID {
 		t.Fatalf("archive plan = %#v", plan)
 	}
 	missing := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--older-than", "24h", "--lane", "not-eligible"}, "")
 	if missing.code == 0 || missing.envelope.Error == nil || missing.envelope.Error.Code != "ARCHIVE_REFUSED" {
 		t.Fatalf("missing archive lane = %#v", missing.envelope)
 	}
-	wrong := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--cutoff", plan.Cutoff.Format(time.RFC3339Nano), "--plan-digest", "sha256:wrong", "--apply", "--yes"}, "")
+	wrong := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--lane", lane.ID, "--cutoff", plan.Cutoff.Format(time.RFC3339Nano), "--plan-digest", "sha256:wrong", "--apply", "--yes"}, "")
 	if wrong.code == 0 || wrong.envelope.Error == nil || wrong.envelope.Error.Code != "ARCHIVE_PLAN_MOVED" {
 		t.Fatalf("wrong archive digest = %#v", wrong.envelope)
 	}
 	if _, err := laneStore.Load(lane.ID); err != nil {
 		t.Fatalf("wrong archive digest moved state: %v", err)
 	}
-	applied := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--cutoff", plan.Cutoff.Format(time.RFC3339Nano), "--plan-digest", plan.PlanDigest, "--apply", "--yes"}, "")
+	omittedFilter := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--cutoff", plan.Cutoff.Format(time.RFC3339Nano), "--plan-digest", plan.PlanDigest, "--apply", "--yes"}, "")
+	if omittedFilter.code == 0 || omittedFilter.envelope.Error == nil || omittedFilter.envelope.Error.Code != "ARCHIVE_PLAN_MOVED" || !strings.Contains(omittedFilter.envelope.Error.Message, "--lane") {
+		t.Fatalf("omitted archive lane filter = %#v", omittedFilter.envelope)
+	}
+	for _, laneID := range []string{lane.ID, "archive-other"} {
+		if _, err := laneStore.Load(laneID); err != nil {
+			t.Fatalf("omitted archive lane filter moved %s: %v", laneID, err)
+		}
+	}
+	applied := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--lane", lane.ID, "--cutoff", plan.Cutoff.Format(time.RFC3339Nano), "--plan-digest", plan.PlanDigest, "--apply", "--yes"}, "")
 	if applied.code != 0 || !applied.envelope.OK {
 		t.Fatalf("archive apply: %#v stderr=%s", applied.envelope, applied.stderr)
 	}
@@ -1084,6 +1102,9 @@ func TestArchiveRequiresExactPreviewAndPreservesRefs(t *testing.T) {
 	decodeData(t, applied.envelope.Data, &archived)
 	if archived.Receipt == nil || archived.Receipt.State != "complete" {
 		t.Fatalf("archive receipt = %#v", archived)
+	}
+	if other, err := laneStore.Load("archive-other"); err != nil || other.State != "released" {
+		t.Fatalf("scoped archive moved other lane = %#v err=%v", other, err)
 	}
 	receiptPath := filepath.Join(laneStore.Root, "archive", archived.Receipt.ID, "receipt.json")
 	archived.Receipt.State = "prepared"

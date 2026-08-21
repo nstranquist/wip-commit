@@ -256,6 +256,7 @@ Preview is the default. Important options:
   --lane ID                   narrow to an eligible lane; repeatable
   --cutoff TIME --plan-digest SHA256
                               exact values from the reviewed preview
+                              repeat every preview --lane value on apply
   --apply --yes               apply the exact reviewed archive plan
   --resume ARCHIVE_ID         resume a prepared receipt; requires --apply --yes
   --restore ARCHIVE_ID        restore records; also requires --apply --yes`,
