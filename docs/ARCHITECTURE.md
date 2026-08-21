@@ -250,6 +250,13 @@ deterministic empty batch. Each receipt validates record placement and binds
 lane and released lease records to exact candidates. Extra records fail closed.
 Restore writes the lane manifest last.
 
+A restored receipt is durable history. If a later receipt archives the same
+records, validation follows each non-live record only to one newer,
+non-restored receipt. The newer receipt must be valid and must own that exact
+record. No owner, more than one owner, an invalid owner, or changed candidate
+data stops validation. This rule lets repeated archive and restore cycles keep
+all receipts without weakening missing-record checks.
+
 Resume and restore first inspect the existing domain. They return
 `ARCHIVE_NOT_FOUND` without creating state when the domain is not initialized.
 

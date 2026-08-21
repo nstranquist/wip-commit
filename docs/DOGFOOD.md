@@ -435,3 +435,44 @@ skill files were byte-equal to the source bundle.
 The redacted maintainer receipt is
 [BETA-EXERCISE.maintainer-2026-08-16.json](BETA-EXERCISE.maintainer-2026-08-16.json).
 It validates the protocol without closing the independent beta gate.
+
+## 2026-08-21 repeated archive and restore maintenance
+
+This exercise used the real `wip-commit` coordination store. A reviewed
+preview selected 34 released lanes and excluded the active correction lane.
+
+The first apply used the previously installed binary. It completed as
+`archive-86653415cc3e81cce70e103e`, but `wip doctor` then found that the older
+restored receipt `archive-74f4b31a69187b337ed50e88` no longer had its record
+live or in its own batch. The exact new receipt was restored immediately. The
+store returned to a healthy state, and every WIP ref stayed unchanged.
+
+The failure-boundary regression now runs this sequence:
+
+1. archive a released lane.
+2. restore the receipt.
+3. archive the same records into a different receipt.
+4. validate both the historical and current receipts.
+5. remove one successor record and require `ARCHIVE_FAILED`.
+6. restore the record and the current receipt.
+
+The CLI regression also requires `wip doctor` to stay healthy after the second
+archive. The implementation accepts a non-live historical record only when one
+newer, non-restored, fully validated receipt owns it. Missing, duplicated,
+unbound, or changed records still fail closed.
+
+The full tests, three race-enabled test runs, `go vet`, `actionlint`,
+`golangci-lint`, Linux and Windows cross-builds, and the portable behavioral
+benchmark passed. The benchmark candidate passed 16 of 16 checks. The
+deliberately weakened candidate passed 0 of 16. Both benchmark runs used zero
+AI calls and zero AI tokens.
+
+The source-current binary had SHA-256
+`d57891ca834bfd06e6ccd6e9af54f074034a84bb0dd2fc3e0f35e816861889c6`.
+It applied the reviewed 34-lane plan as
+`archive-1b8c142d0db2e33553893714`, with receipt digest
+`sha256:1b8c142d0db2e3355389371418c26e316e924629eda43cbfcafe9b5be68c568c`.
+The batch contains 118 records. The complete WIP ref inventory was byte-equal
+before and after apply. The final doctor read was healthy with one active lane,
+no archive candidates, no pending recovery, and no findings. No ref was
+deleted, landed, merged, or pushed.

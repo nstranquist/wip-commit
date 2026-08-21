@@ -78,7 +78,7 @@
 | `ARCHIVE_REFUSED` | A lane, lease, or ref is not safe to archive | Run `wip doctor` and repair the reported state first |
 | `ARCHIVE_CONFLICT` | Live and archived records conflict | Preserve both copies and inspect the receipt before retry |
 | `ARCHIVE_NOT_FOUND` | A resume or restore receipt does not exist | Use the exact receipt ID from the earlier result. The command does not initialize state |
-| `ARCHIVE_FAILED` | A receipt, batch layout, record binding, or file placement is invalid | Preserve the live and archived records. Use `wip doctor` and do not move files by hand |
+| `ARCHIVE_FAILED` | A receipt, batch layout, record binding, file placement, or later archive owner is invalid | Preserve the live and archived records. Use `wip doctor` and do not move files by hand |
 
 If archive apply returns a receipt with state `prepared`, preserve the state
 directory and run `wip archive --resume <archive-id> --apply --yes`. Do not run

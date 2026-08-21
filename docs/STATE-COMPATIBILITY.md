@@ -12,7 +12,9 @@ Reviewed captures use capture-intent schema version 2. The legacy `wip commit`
 path can write capture-intent schema version 1.
 
 Archive receipt state values are `prepared`, `complete`, `restoring`, and
-`restored`.
+`restored`. A restored receipt remains valid history after a newer receipt
+archives the same records. Each record must remain live or have exactly one
+validated newer archive owner.
 
 The state is in the Git common directory:
 
