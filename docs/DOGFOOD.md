@@ -83,12 +83,46 @@ The second real capture used `refs/heads/wip/codex/version-provenance`:
   `lane_released` to true.
 
 The complete provenance gate matrix passed `go test ./...`, `go vet ./...`,
-`actionlint`, and `go test -race -count=3 ./...`. The final installed binary
-has SHA-256
+`actionlint`, and `go test -race -count=3 ./...`. The initial source-stamped
+installed binary had SHA-256
 `bd64e76d7cf7e907215ee6786f3a37064730516bad3d25a5fa9402106ec9e5cf`.
 Its JSON version result identifies revision
 `a42693a360b1b9cc987aa0c7926fd5b9792fbe34`, source state `clean`, VCS time
 `2026-08-21T01:02:47-05:00`, and Go `1.26.7`.
+
+### Scoped archive replay follow-up
+
+A preview narrowed to three released lanes returned an exact cutoff and digest.
+An apply that omitted the preview's `--lane` values failed closed with
+`ARCHIVE_PLAN_MOVED`; no record or ref moved. Repeating the three filters
+completed recoverable archive receipt `archive-a6eb70b719044cb82e4063b2`.
+
+That operator error exposed incomplete replay guidance. The follow-up capture
+used `refs/heads/wip/codex/archive-filter-replay`:
+
+- Tip: `4b309328955996e29629fef0a9239bd151266aec`.
+- Plan ID: `plan-13ef6bbf04693d466ec73705`.
+- Capture intent digest:
+  `sha256:2136a8c13e1721560692e3540692b5eab01861237b5eb6fbf3c032232fe24ff4`.
+- Reviewed plan digest:
+  `sha256:cceeacffd954ffaaae783f3b959a75691cc9b17b7bb3fb00858036416841b982`.
+- Four commits added canonical sorted `lane_filters`, actionable help and error
+  text, a two-lane regression test, and matching README and skill guidance.
+- The omitted-filter regression proves both eligible lanes remain unchanged;
+  the replayed filter archives only the reviewed lane.
+
+The follow-up passed `go test ./...`, `go vet ./...`, `actionlint`, and
+`go test -race -count=3 ./...`. A clean build from the captured tip installed
+itself through `wip init --install`. The installed and source binaries are
+byte-equal with SHA-256
+`4adf75c206c5804d98d4acf4a0ca85f5f7573607f621ecaeebfd54e2a69f9dd5`.
+Its JSON version result identifies revision
+`4b309328955996e29629fef0a9239bd151266aec`, source state `clean`, VCS time
+`2026-08-21T01:22:32-05:00`, and Go `1.26.7`.
+
+The installed binary then previewed `archive-filter-replay` with canonical
+`lane_filters`, replayed that filter, and completed recoverable receipt
+`archive-b27618aea8e554548bb6a9b5`. The lane ref and commit remained unchanged.
 
 The final repository doctor was healthy. Both source indexes intentionally kept
 their captured entries staged. No handoff authorized landing.
