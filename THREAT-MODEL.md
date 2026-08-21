@@ -113,6 +113,12 @@ the validated handoff and release.
 Lane creation writes a `creating` manifest before it creates the ref. An exact
 retry can finish either side of that boundary.
 
+Initialization publishes its intent before setup side effects, then holds the
+per-intent transaction lock until every side effect is journaled or the command
+fails. Exact retries and `init-abort` use the same lock. An abort therefore
+cannot remove the recovery intent between lane creation and the corresponding
+journal update.
+
 A capture writes an immutable `prepared` intent before it updates the ref. It
 then records `applied` after the ref compare-and-swap and `complete` after lane
 metadata advances. Intent files use mode `0600`, bounded strict JSON, a digest

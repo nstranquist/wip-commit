@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/nstranquist/wip-commit/internal/fail"
 	"github.com/nstranquist/wip-commit/internal/gitx"
@@ -120,5 +121,101 @@ func TestInitAbortRefusesIntentAfterLaneCreation(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(laneStore.Root, "lanes", intent.Lane+".json")); err != nil {
 		t.Fatalf("lane changed after refusal: %v", err)
+	}
+}
+
+func TestInitAbortWaitsForInitTransactionBeforeLaneDecision(t *testing.T) {
+	directory := cliTestRepo(t)
+	repo, err := gitx.Discover(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laneStore, err := store.Open(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := cliGit(t, directory, "rev-parse", "HEAD")
+	intent, intentPath, err := beginInitIntent(laneStore, initIntent{
+		Lane: "racing-setup", Agent: "agent", Session: "session", Mode: store.ModeShared,
+		BaseSHA: base, Worktree: directory, Paths: []string{"core.txt"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, err = markInitStep(intentPath, intent, "worktree-ready")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	transactionStarted := make(chan struct{})
+	allowLaneCreation := make(chan struct{})
+	transactionDone := make(chan error, 1)
+	go func() {
+		_, transactionErr := runInitTransaction(intentPath, intent, func(transaction *initTransaction) error {
+			close(transactionStarted)
+			<-allowLaneCreation
+			if _, createErr := laneStore.Create(context.Background(), store.CreateOptions{
+				ID: intent.Lane, Agent: intent.Agent, Session: intent.Session,
+				BaseRef: base, Mode: store.ModeShared, Worktree: directory,
+			}); createErr != nil {
+				return createErr
+			}
+			_, markErr := transaction.mark("lane-ready")
+			return markErr
+		})
+		transactionDone <- transactionErr
+	}()
+	select {
+	case <-transactionStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("initialization transaction did not start")
+	}
+
+	type abortOutcome struct {
+		result initAbortResult
+		err    error
+	}
+	abortStarted := make(chan struct{})
+	abortDone := make(chan abortOutcome, 1)
+	go func() {
+		close(abortStarted)
+		result, abortErr := inspectInitAbort(context.Background(), laneStore, intent.ID, intent.Digest, true)
+		abortDone <- abortOutcome{result: result, err: abortErr}
+	}()
+	<-abortStarted
+
+	var premature *abortOutcome
+	select {
+	case outcome := <-abortDone:
+		premature = &outcome
+	case <-time.After(100 * time.Millisecond):
+	}
+	if _, statErr := os.Stat(intentPath); statErr != nil {
+		close(allowLaneCreation)
+		t.Fatalf("abort changed the intent during initialization: %v", statErr)
+	}
+	close(allowLaneCreation)
+	select {
+	case transactionErr := <-transactionDone:
+		if transactionErr != nil {
+			t.Fatalf("initialization transaction: %v", transactionErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("initialization transaction did not finish")
+	}
+	if premature != nil {
+		t.Fatalf("abort completed inside the initialization transaction: result=%#v err=%v", premature.result, premature.err)
+	}
+	var outcome abortOutcome
+	select {
+	case outcome = <-abortDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("abort did not finish after initialization released its lock")
+	}
+	if fail.Code(outcome.err) != "INIT_ABORT_REFUSED" || outcome.result.Applied {
+		t.Fatalf("abort result = %#v, err = %v", outcome.result, outcome.err)
+	}
+	if _, statErr := os.Stat(intentPath); statErr != nil {
+		t.Fatalf("refused abort changed the intent: %v", statErr)
 	}
 }

@@ -451,79 +451,85 @@ func executeInit(ctx context.Context, source gitx.Repo, options initOptions, pro
 		return result, err
 	}
 	updateResultIntent(&result, intent, intentPath)
-	markStep := func(step string) error {
-		updated, markErr := markInitStep(intentPath, intent, step)
-		if markErr != nil {
-			return markErr
-		}
-		intent = updated
+	intent, err = runInitTransaction(intentPath, intent, func(transaction *initTransaction) error {
+		intent = transaction.intent
 		updateResultIntent(&result, intent, intentPath)
-		return nil
-	}
-	target := source
-	if options.createWorktree != "" {
-		var created bool
-		target, created, err = ensureWorktree(ctx, source, options.createWorktree, baseSHA)
-		if err != nil {
-			return result, err
+		markStep := func(step string) error {
+			updated, markErr := transaction.mark(step)
+			if markErr != nil {
+				return markErr
+			}
+			intent = updated
+			updateResultIntent(&result, intent, intentPath)
+			return nil
 		}
-		result.CreatedWorktree = created
-	}
-	result.Worktree = target.Root
-	if err := markStep("worktree-ready"); err != nil {
-		return result, err
-	}
-	laneStore, err := store.Open(target)
-	if err != nil {
-		return result, err
-	}
-	lane, err := ensureLane(ctx, laneStore, options, baseSHA)
-	if err != nil {
-		return result, err
-	}
-	result.Lane = &lane
-	if err := markStep("lane-ready"); err != nil {
-		return result, err
-	}
-	lease, err := laneStore.Claim(lane.ID, lane.Agent, lane.Session, normalized)
-	if err != nil {
-		return result, err
-	}
-	result.Lease = &lease
-	if err := markStep("lease-ready"); err != nil {
-		return result, err
-	}
-	result.ProfilePath, err = writeProfile(laneStore, lane, options.resolvedMessagePolicy)
-	if err != nil {
-		return result, err
-	}
-	if err := markStep("profile-ready"); err != nil {
-		return result, err
-	}
-	saved := profile{SchemaVersion: profileSchemaVersion, Lane: lane.ID, Agent: lane.Agent, Session: lane.Session, Mode: lane.Mode, Worktree: lane.Worktree, MessagePolicy: options.resolvedMessagePolicy}
-	result.Environment = shellEnvironment(saved)
-	if err := inspectStagedGit(ctx, target, &result); err != nil {
-		return result, err
-	}
-	if options.install {
-		result.InstallPath, result.Installed, result.InstallAlreadyValid, err = installSelf(options.installDir)
-		if err != nil {
-			return result, err
+		target := source
+		if options.createWorktree != "" {
+			var created bool
+			target, created, err = ensureWorktree(ctx, source, options.createWorktree, baseSHA)
+			if err != nil {
+				return err
+			}
+			result.CreatedWorktree = created
 		}
-		result.InstallDirOnPath = directoryOnPath(options.installDir)
-	}
-	if err := markStep("binary-ready"); err != nil {
-		return result, err
-	}
-	if options.installSkill {
-		result.SkillPath, result.SkillInstalled, result.SkillAlreadyValid, err = installPortableSkill(options.skillDir)
-		if err != nil {
-			return result, err
+		result.Worktree = target.Root
+		if err := markStep("worktree-ready"); err != nil {
+			return err
 		}
-	}
-	if err := markStep("skill-ready"); err != nil {
+		laneStore, err := store.Open(target)
+		if err != nil {
+			return err
+		}
+		lane, err := ensureLane(ctx, laneStore, options, baseSHA)
+		if err != nil {
+			return err
+		}
+		result.Lane = &lane
+		if err := markStep("lane-ready"); err != nil {
+			return err
+		}
+		lease, err := laneStore.Claim(lane.ID, lane.Agent, lane.Session, normalized)
+		if err != nil {
+			return err
+		}
+		result.Lease = &lease
+		if err := markStep("lease-ready"); err != nil {
+			return err
+		}
+		result.ProfilePath, err = writeProfile(laneStore, lane, options.resolvedMessagePolicy)
+		if err != nil {
+			return err
+		}
+		if err := markStep("profile-ready"); err != nil {
+			return err
+		}
+		saved := profile{SchemaVersion: profileSchemaVersion, Lane: lane.ID, Agent: lane.Agent, Session: lane.Session, Mode: lane.Mode, Worktree: lane.Worktree, MessagePolicy: options.resolvedMessagePolicy}
+		result.Environment = shellEnvironment(saved)
+		if err := inspectStagedGit(ctx, target, &result); err != nil {
+			return err
+		}
+		if options.install {
+			result.InstallPath, result.Installed, result.InstallAlreadyValid, err = installSelf(options.installDir)
+			if err != nil {
+				return err
+			}
+			result.InstallDirOnPath = directoryOnPath(options.installDir)
+		}
+		if err := markStep("binary-ready"); err != nil {
+			return err
+		}
+		if options.installSkill {
+			result.SkillPath, result.SkillInstalled, result.SkillAlreadyValid, err = installPortableSkill(options.skillDir)
+			if err != nil {
+				return err
+			}
+		}
+		return markStep("skill-ready")
+	})
+	if err != nil {
 		return result, err
 	}
+	updateResultIntent(&result, intent, intentPath)
 	return result, nil
 }
 

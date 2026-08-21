@@ -56,6 +56,11 @@ type initIntent struct {
 	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
+type initTransaction struct {
+	path   string
+	intent initIntent
+}
+
 func beginInitIntent(laneStore store.Store, candidate initIntent) (initIntent, string, error) {
 	candidate.SchemaVersion = initIntentSchemaVersion
 	if candidate.MessagePolicy == nil {
@@ -101,6 +106,45 @@ func beginInitIntent(laneStore store.Store, candidate initIntent) (initIntent, s
 }
 
 func markInitStep(path string, intent initIntent, step string) (initIntent, error) {
+	lock, err := filelock.Acquire(initIntentLockPath(path), 0)
+	if err != nil {
+		return initIntent{}, fail.Wrap("INIT_INTENT_FAILED", err)
+	}
+	defer func() { _ = lock.Release() }()
+	return markInitStepLocked(path, intent, step)
+}
+
+func runInitTransaction(path string, intent initIntent, run func(*initTransaction) error) (initIntent, error) {
+	lock, err := filelock.Acquire(initIntentLockPath(path), 0)
+	if err != nil {
+		return initIntent{}, fail.Wrap("INIT_INTENT_FAILED", err)
+	}
+	defer func() { _ = lock.Release() }()
+
+	current, err := loadInitIntent(path)
+	if err != nil {
+		return initIntent{}, err
+	}
+	if current.Digest != intent.Digest {
+		return initIntent{}, fail.New("INIT_INTENT_CONFLICT", "initialization intent changed while setup was running")
+	}
+	transaction := initTransaction{path: path, intent: current}
+	if err := run(&transaction); err != nil {
+		return transaction.intent, err
+	}
+	return transaction.intent, nil
+}
+
+func (transaction *initTransaction) mark(step string) (initIntent, error) {
+	updated, err := markInitStepLocked(transaction.path, transaction.intent, step)
+	if err != nil {
+		return initIntent{}, err
+	}
+	transaction.intent = updated
+	return updated, nil
+}
+
+func markInitStepLocked(path string, intent initIntent, step string) (initIntent, error) {
 	stepIndex := -1
 	for index, candidate := range initStepOrder {
 		if candidate == step {
@@ -111,11 +155,6 @@ func markInitStep(path string, intent initIntent, step string) (initIntent, erro
 	if stepIndex < 0 {
 		return initIntent{}, fail.New("INIT_INTENT_FAILED", "unknown initialization step: "+step)
 	}
-	lock, err := filelock.Acquire(initIntentLockPath(path), 0)
-	if err != nil {
-		return initIntent{}, fail.Wrap("INIT_INTENT_FAILED", err)
-	}
-	defer func() { _ = lock.Release() }()
 	current, err := loadInitIntent(path)
 	if err != nil {
 		return initIntent{}, err

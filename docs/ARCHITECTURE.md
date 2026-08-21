@@ -95,14 +95,17 @@ uses component boundaries after this canonicalization.
 
 Commands use this lock order:
 
-1. coordination-domain lock during store creation;
-2. archive lock during archive or restore;
-3. lane locks in sorted lane order;
-4. lease-registry lock.
+1. initialization-intent lock during setup or a reviewed init abort;
+2. coordination-domain lock during store creation;
+3. archive lock during archive or restore;
+4. lane locks in sorted lane order;
+5. lease-registry lock.
 
 No command acquires those locks in the opposite order. Different lanes can run
-capture work in parallel. One lane is serialized. An initialization-intent
-lock is acquired by itself when a completed step is recorded.
+capture work in parallel. One lane is serialized. Initialization holds its
+per-intent lock from before the first setup side effect through the final
+journaled step. An exact retry therefore serializes with both another retry and
+`init-abort`. The abort path acquires no lower-order state lock.
 
 An active handoff holds the lane lock through intent selection, validation,
 lease renewal, and status construction. A final guided capture keeps its lane
