@@ -143,6 +143,27 @@ and `plan_digest`. Run `wip reconcile` with both values. Do not edit an intent
 or guess a digest. Do not rerun the plan until reconciliation proves that the
 ref did not move.
 
+## Run the product benchmark
+
+If the task changes a safety contract, run the benchmark from the repository
+root:
+
+```text
+go run ./skills/wip-commit/benchmark/regression.go
+```
+
+Require all 16 checks and the reviewed baseline comparison to pass. The runner
+uses disposable repositories and makes no network or AI calls.
+
+Run the weakened-candidate proof after benchmark or harness changes:
+
+```text
+go run ./skills/wip-commit/benchmark/regression.go --prove-weakened
+```
+
+Do not change `skills/wip-commit/benchmark/baseline.json` to admit a failure.
+The runner writes mutable reports outside the repository.
+
 ## Finish without landing
 
 Run `wip --json handoff` to validate the complete capture receipt. Then run:
