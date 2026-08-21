@@ -377,27 +377,27 @@ func caseDisjointParallelLanes(h harness) caseResult {
 
 func caseReviewedSplitDefault(h harness) caseResult {
 	started := time.Now()
-	fix, err := newFixture(h.root, "reviewed-split", map[string]string{"cmd/tool.txt": "base tool\n", "docs/guide.md": "base guide\n"})
+	fix, err := newFixture(h.root, "reviewed-split", map[string]string{".staticcheck-version": "v0.7.0\n", "cmd/tool.txt": "base tool\n", "docs/guide.md": "base guide\n"})
 	if err != nil {
 		return failedFixtureCase("reviewed-split-default", started)
 	}
-	if writeAndStage(fix, "cmd/tool.txt", "changed tool\n") != nil || writeAndStage(fix, "docs/guide.md", "changed guide\n") != nil {
+	if writeAndStage(fix, ".staticcheck-version", "v0.8.0-rc.1\n") != nil || writeAndStage(fix, "cmd/tool.txt", "changed tool\n") != nil || writeAndStage(fix, "docs/guide.md", "changed guide\n") != nil {
 		return failedFixtureCase("reviewed-split-default", started)
 	}
-	initialized := h.initLane(fix, "shared", "reviewed-split", "", "cmd/tool.txt", "docs/guide.md")
+	initialized := h.initLane(fix, "shared", "reviewed-split", "", ".staticcheck-version", "cmd/tool.txt", "docs/guide.md")
 	planPath := filepath.Join(h.root, "reviewed-split-plan.json")
 	planned := h.runWIP(fix, append([]string{"plan"}, append(identityArgs("reviewed-split"), "--out", planPath)...)...)
-	state, groupCount, inspectErr := inspectPlan(planPath)
+	state, groupCount, rootConfigGuidance, inspectErr := inspectPlan(planPath)
 	draftCapture := h.runWIP(fix, append([]string{"capture"}, append(identityArgs("reviewed-split"), "--plan", planPath)...)...)
 	reviewErr := reviewPlan(planPath, nil)
 	captured := h.runWIP(fix, append([]string{"capture"}, append(identityArgs("reviewed-split"), "--plan", planPath)...)...)
 	var data guidedCapture
 	decodeErr := decodeEnvelopeData(captured.Envelope, &data)
-	positivePassed := initialized.succeeded() && planned.succeeded() && inspectErr == nil && state == "draft" && groupCount >= 2 && reviewErr == nil && captured.succeeded() && decodeErr == nil && data.Capture.RefUpdated && data.Capture.GateOutcome == "passed" && len(data.Capture.Commits) == groupCount && data.Handoff.CaptureOnly && !data.Handoff.LandingAuthorized
+	positivePassed := initialized.succeeded() && planned.succeeded() && inspectErr == nil && state == "draft" && groupCount >= 3 && rootConfigGuidance && reviewErr == nil && captured.succeeded() && decodeErr == nil && data.Capture.RefUpdated && data.Capture.GateOutcome == "passed" && len(data.Capture.Commits) == groupCount && data.Handoff.CaptureOnly && !data.Handoff.LandingAuthorized
 	negativePassed := draftCapture.failedWith("PLAN_NOT_REVIEWED")
 	return resultCase(
 		"reviewed-split-default", started,
-		positivePassed, "the draft grouped multiple components and the reviewed plan emitted a capture-only handoff", "reviewed split-plan behavior was not observed",
+		positivePassed, "the draft guided root config and component groups before a capture-only handoff", "reviewed split-plan behavior or root-config guidance was not observed",
 		negativePassed, "capture refused the unreviewed draft", "expected PLAN_NOT_REVIEWED refusal was not observed",
 	)
 }
@@ -665,17 +665,33 @@ func runGitAt(f fixture, directory string, args ...string) (string, error) {
 	return strings.TrimSpace(result.Stdout), nil
 }
 
-func inspectPlan(path string) (string, int, error) {
+func inspectPlan(path string) (string, int, bool, error) {
 	var plan map[string]any
 	if err := readBoundedJSON(path, &plan); err != nil {
-		return "", 0, err
+		return "", 0, false, err
 	}
 	state, _ := plan["state"].(string)
 	groups, ok := plan["groups"].([]any)
 	if !ok || len(groups) == 0 {
-		return state, 0, errors.New("plan groups missing")
+		return state, 0, false, errors.New("plan groups missing")
 	}
-	return state, len(groups), nil
+	rootConfig := false
+	for _, raw := range groups {
+		group, ok := raw.(map[string]any)
+		if !ok {
+			return state, len(groups), false, errors.New("plan group is invalid")
+		}
+		for _, field := range []string{"key", "suggested_scope", "suggested_prefix", "rationale"} {
+			value, ok := group[field].(string)
+			if !ok || strings.TrimSpace(value) == "" {
+				return state, len(groups), false, errors.New("plan review guidance is missing")
+			}
+		}
+		if group["key"] == "repository-config" {
+			rootConfig = true
+		}
+	}
+	return state, len(groups), rootConfig, nil
 }
 
 func reviewPlan(path string, verifyArgv []string) error {
