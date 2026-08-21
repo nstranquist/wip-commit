@@ -324,6 +324,46 @@ func TestPlanPreviewUsesComponentBoundariesWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestPlanForRootDotfileHasGuidanceAndPassesReviewedDryRun(t *testing.T) {
+	directory := cliTestRepo(t)
+	writeCLI(t, directory, ".staticcheck-version", "v0.8.0-rc.1\n")
+	cliGit(t, directory, "add", ".staticcheck-version")
+	initializeCLI(t, directory, "root-config-plan", ".staticcheck-version")
+	head := cliGit(t, directory, "rev-parse", "HEAD")
+	index := cliGitRaw(t, directory, "ls-files", "-s", "-z")
+
+	planPath := filepath.Join(t.TempDir(), "plan.json")
+	drafted := runCLI(t, []string{"--json", "--repo-dir", directory, "plan", "--lane", "root-config-plan", "--out", planPath}, "")
+	if drafted.code != 0 || !drafted.envelope.OK {
+		t.Fatalf("draft root config plan: %#v stderr=%s", drafted.envelope, drafted.stderr)
+	}
+	var plan planProposal
+	decodeData(t, drafted.envelope.Data, &plan)
+	if len(plan.Groups) != 1 || plan.Groups[0].Key != "repository-config" || plan.Groups[0].SuggestedScope != "config" || plan.Groups[0].Rationale == "" {
+		t.Fatalf("root config guidance = %#v", plan.Groups)
+	}
+	plan.State = "reviewed"
+	plan.Groups[0].Message = "build(config): pin compatible analyzer"
+	body, err := json.MarshalIndent(plan, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planPath, append(body, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	dryRun := runCLI(t, []string{"--json", "--repo-dir", directory, "commit", "--lane", "root-config-plan", "--dry-run", "--plan", planPath}, "")
+	if dryRun.code != 0 || !dryRun.envelope.OK {
+		t.Fatalf("reviewed root config dry-run: %#v stderr=%s", dryRun.envelope, dryRun.stderr)
+	}
+	if got := cliGit(t, directory, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("dry-run moved HEAD: %s -> %s", head, got)
+	}
+	if got := cliGitRaw(t, directory, "ls-files", "-s", "-z"); got != index {
+		t.Fatal("dry-run changed the source index")
+	}
+}
+
 func TestPlanPreviewExcludesAlreadyCapturedStagedPaths(t *testing.T) {
 	directory := cliTestRepo(t)
 	writeCLI(t, directory, "core.txt", "new core\n")

@@ -185,7 +185,11 @@ func splitGroupKey(path string) string {
 		case "CHANGELOG.md":
 			return "changelog"
 		}
-		return strings.TrimSuffix(name, filepath.Ext(name))
+		key := strings.TrimSuffix(name, filepath.Ext(name))
+		if strings.TrimSpace(key) == "" {
+			return "repository-config"
+		}
+		return key
 	}
 	if parts[0] == ".github" && len(parts) >= 2 {
 		return strings.Join(parts[:2], "/")
@@ -210,6 +214,8 @@ func splitScope(key string) string {
 		return "deps"
 	case "repository-docs", "docs":
 		return "docs"
+	case "repository-config":
+		return "config"
 	case ".github/workflows":
 		return "ci"
 	}
@@ -243,6 +249,8 @@ func splitRationale(key string) string {
 		return "dependency manifests and lockfiles must stay synchronized"
 	case "repository-docs":
 		return "repository-level policy and onboarding documentation"
+	case "repository-config":
+		return "repository-level configuration and tool pins"
 	case "changelog":
 		return "release history remains an explicit concern"
 	case ".github/workflows":
