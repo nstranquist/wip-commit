@@ -70,6 +70,10 @@ Load the saved identity in an interactive shell:
 eval "$(wip env --lane <task-slug>)"
 ```
 
+Run `wip env` from the checkout recorded for the lane. A worktree-bound lane
+must return `WORKTREE_MISMATCH` from any other checkout without renewing its
+lease.
+
 When shell environment changes are not suitable, pass `--lane`, `--agent`, and
 `--session` explicitly.
 
