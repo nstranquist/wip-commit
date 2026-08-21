@@ -1184,6 +1184,36 @@ func TestArchiveRequiresExactPreviewAndPreservesRefs(t *testing.T) {
 	if got := cliGit(t, directory, "rev-parse", lane.Ref); got != refBefore {
 		t.Fatalf("restore moved ref: %s -> %s", refBefore, got)
 	}
+	secondPreview := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--older-than", "23h", "--lane", lane.ID}, "")
+	if secondPreview.code != 0 || !secondPreview.envelope.OK {
+		t.Fatalf("rearchive preview: %#v stderr=%s", secondPreview.envelope, secondPreview.stderr)
+	}
+	var secondPlan archiveResult
+	decodeData(t, secondPreview.envelope.Data, &secondPlan)
+	secondApply := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--lane", lane.ID, "--cutoff", secondPlan.Cutoff.Format(time.RFC3339Nano), "--plan-digest", secondPlan.PlanDigest, "--apply", "--yes"}, "")
+	if secondApply.code != 0 || !secondApply.envelope.OK {
+		t.Fatalf("rearchive apply: %#v stderr=%s", secondApply.envelope, secondApply.stderr)
+	}
+	var secondArchive archiveResult
+	decodeData(t, secondApply.envelope.Data, &secondArchive)
+	if secondArchive.Receipt == nil || secondArchive.Receipt.State != "complete" || secondArchive.Receipt.ID == archived.Receipt.ID {
+		t.Fatalf("rearchive receipt = %#v; first=%s", secondArchive, archived.Receipt.ID)
+	}
+	doctor = runCLI(t, []string{"--json", "--repo-dir", directory, "doctor"}, "")
+	if doctor.code != 0 || !doctor.envelope.OK {
+		t.Fatalf("doctor after rearchive: %#v stderr=%s", doctor.envelope, doctor.stderr)
+	}
+	decodeData(t, doctor.envelope.Data, &doctorState)
+	if !doctorState.Healthy || len(doctorState.Findings) != 0 || stringContains(doctorState.ArchiveCandidates, lane.ID) {
+		t.Fatalf("doctor after rearchive report = %#v", doctorState)
+	}
+	secondRestored := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--restore", secondArchive.Receipt.ID, "--apply", "--yes"}, "")
+	if secondRestored.code != 0 || !secondRestored.envelope.OK {
+		t.Fatalf("rearchive restore: %#v stderr=%s", secondRestored.envelope, secondRestored.stderr)
+	}
+	if got := cliGit(t, directory, "rev-parse", lane.Ref); got != refBefore {
+		t.Fatalf("rearchive lifecycle moved ref: %s -> %s", refBefore, got)
+	}
 }
 
 func TestReconcileFinishesInterruptedRefPublicationIdempotently(t *testing.T) {
