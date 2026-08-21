@@ -79,6 +79,9 @@ func (application *app) run(ctx context.Context, args []string) int {
 	if command == "archive" {
 		return application.runArchive(ctx, repo, rest)
 	}
+	if command == "init-abort" {
+		return application.runInitAbort(ctx, repo, rest)
+	}
 	readOnly := false
 	switch command {
 	case "env":
@@ -191,6 +194,7 @@ Usage:
 
 Commands:
   init        interactively install and initialize a shared or worktree lane
+  init-abort  preview or abort one safe pre-lane initialization intent
   doctor      audit bounded state, refs, and recovery requirements
   archive     preview or apply recoverable state-record archival
   status      classify staged state and show lane, lease, ref, and intent health
@@ -226,6 +230,12 @@ Interactively initialize and optionally install wip. Important options:
                                install the embedded portable skill safely
   --non-interactive --yes      do not prompt
   --dry-run                    validate without changing Git or installing`,
+		"init-abort": `Usage: wip init-abort --intent ID [options]
+
+Preview is the default. Apply requires the digest from that preview.
+  --intent ID                  pending initialization intent
+  --intent-digest SHA256       exact digest from the reviewed preview
+  --apply --yes                remove a safe intent before lane creation`,
 		"commit": `Usage: wip commit [options]
 
 Capture one all-or-nothing staged split plan. Important options:

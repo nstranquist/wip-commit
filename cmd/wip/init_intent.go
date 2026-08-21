@@ -149,6 +149,11 @@ func loadInitIntent(path string) (initIntent, error) {
 	if err != nil {
 		return intent, fail.Wrap("INIT_INTENT_FAILED", err)
 	}
+	return decodeInitIntent(body)
+}
+
+func decodeInitIntent(body []byte) (initIntent, error) {
+	var intent initIntent
 	if err := strictjson.Decode(body, &intent); err != nil {
 		return initIntent{}, fail.Wrap("INIT_INTENT_FAILED", err)
 	}
