@@ -144,6 +144,10 @@ Load the lane identity in each agent shell:
 eval "$(wip env --lane parser-errors)"
 ```
 
+Run this command from the checkout recorded for the lane. A worktree-bound
+lane returns `WORKTREE_MISMATCH` from another checkout and does not renew its
+lease.
+
 Stage only the paths that the agent owns. Other staged paths can remain in the
 same index.
 
