@@ -42,7 +42,14 @@ Build the current checkout with:
 ```text
 go build -trimpath -o ./bin/wip ./cmd/wip
 ./bin/wip version
+./bin/wip --json version
 ```
+
+Release binaries report the exact VCS revision and a clean source state. A
+local Go build reports the same fields when the toolchain supplies VCS metadata
+or the builder supplies the documented linker values. If `revision` is absent,
+the binary has no source stamp. Use a source-stamped binary and run `wip --json
+doctor` before you let it read or change existing coordination state.
 
 For a published `v0.1.0-beta.1` tag, the install command is:
 
