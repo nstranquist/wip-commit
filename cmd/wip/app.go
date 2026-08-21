@@ -57,7 +57,8 @@ func (application *app) run(ctx context.Context, args []string) int {
 		}
 		return 0
 	case "version", "--version":
-		return application.success("version", map[string]string{"version": version}, "wip "+version)
+		build := currentVersionInfo()
+		return application.success("version", build, build.human())
 	}
 	if len(rest) == 1 && (rest[0] == "--help" || rest[0] == "-h") {
 		if application.printCommandHelp(command) {
