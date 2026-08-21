@@ -236,7 +236,7 @@ func buildRelease(root, outPath, version, commit string, epoch int64, targets []
 			binaryName += ".exe"
 		}
 		binaryPath := filepath.Join(buildDir, item.OS+"-"+item.Arch+"-"+binaryName)
-		if err := buildBinary(root, binaryPath, strings.TrimPrefix(version, "v"), item); err != nil {
+		if err := buildBinary(root, binaryPath, strings.TrimPrefix(version, "v"), commit, epoch, item); err != nil {
 			return err
 		}
 		entries, err := releaseEntries(root, binaryPath, binaryName)
@@ -292,13 +292,14 @@ func buildRelease(root, outPath, version, commit string, epoch int64, targets []
 	return nil
 }
 
-func buildBinary(root, output, version string, item target) error {
+func buildBinary(root, output, version, commit string, epoch int64, item target) error {
+	vcsTime := time.Unix(epoch, 0).UTC().Format(time.RFC3339)
 	args := []string{
 		"build",
 		"-mod=readonly",
 		"-trimpath",
 		"-buildvcs=false",
-		"-ldflags=-s -w -buildid= -X main.version=" + version,
+		"-ldflags=-s -w -buildid= -X main.version=" + version + " -X main.buildRevision=" + commit + " -X main.buildSourceState=clean -X main.buildVCSTime=" + vcsTime,
 		"-o", output,
 		commandPackage,
 	}

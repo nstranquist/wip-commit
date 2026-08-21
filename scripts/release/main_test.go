@@ -144,10 +144,12 @@ func TestWriteChecksumsUsesSortedArtifactInput(t *testing.T) {
 func TestBuildHostBinary(t *testing.T) {
 	root := moduleRoot(t)
 	binary := filepath.Join(t.TempDir(), "wip")
+	commit := strings.Repeat("b", 40)
+	epoch := int64(1_700_000_000)
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	if err := buildBinary(root, binary, "0.1.0-test", target{OS: runtime.GOOS, Arch: runtime.GOARCH}); err != nil {
+	if err := buildBinary(root, binary, "0.1.0-test", commit, epoch, target{OS: runtime.GOOS, Arch: runtime.GOARCH}); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(binary)
@@ -156,6 +158,24 @@ func TestBuildHostBinary(t *testing.T) {
 	}
 	if info.Size() == 0 {
 		t.Fatal("built binary is empty")
+	}
+	output, err := exec.Command(binary, "--json", "version").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Revision    string `json:"revision"`
+			SourceState string `json:"source_state"`
+			VCSTime     string `json:"vcs_time"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.OK || result.Data.Revision != commit || result.Data.SourceState != "clean" || result.Data.VCSTime != time.Unix(epoch, 0).UTC().Format(time.RFC3339) {
+		t.Fatalf("built binary provenance = %#v", result)
 	}
 }
 
