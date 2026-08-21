@@ -333,6 +333,65 @@ func TestInitCanCreateAndCaptureLinkedWorktreeWithoutMovingCheckouts(t *testing.
 	assertCLIFileAtCommit(t, directory, capture.FinalCommit, "core.txt", "linked core")
 }
 
+func TestEnvRejectsWrongWorktreeWithoutChangingLeaseOrGitState(t *testing.T) {
+	directory := cliTestRepo(t)
+	linked := filepath.Join(t.TempDir(), "agent-worktree")
+	initialized := runCLI(t, []string{
+		"--json", "--repo-dir", directory, "init", "--mode", "worktree",
+		"--create-worktree", linked, "--lane", "bound-env", "--agent", "agent",
+		"--session", "session", "--path", "core.txt", "--non-interactive", "--no-install",
+	}, "")
+	if initialized.code != 0 || !initialized.envelope.OK {
+		t.Fatalf("worktree init: %#v stderr=%s", initialized.envelope, initialized.stderr)
+	}
+
+	repo, err := gitx.Discover(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laneStore, err := store.Open(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := laneStore.Status("bound-env")
+	if err != nil || len(before.Leases) != 1 {
+		t.Fatalf("initial status = %#v, err=%v", before, err)
+	}
+	head := cliGit(t, directory, "rev-parse", "HEAD")
+	anchorIndex := cliGitRaw(t, directory, "ls-files", "-s", "-z")
+	linkedIndex := cliGitRaw(t, linked, "ls-files", "-s", "-z")
+
+	wrong := runCLI(t, []string{"--json", "--repo-dir", directory, "env", "--lane", "bound-env"}, "")
+	if wrong.code != 1 || wrong.envelope.OK || wrong.envelope.Error == nil || wrong.envelope.Error.Code != "WORKTREE_MISMATCH" {
+		t.Fatalf("wrong-worktree env = %#v code=%d stderr=%s", wrong.envelope, wrong.code, wrong.stderr)
+	}
+	after, err := laneStore.Status("bound-env")
+	if err != nil || len(after.Leases) != 1 {
+		t.Fatalf("status after refusal = %#v, err=%v", after, err)
+	}
+	expiryChanged := (before.Leases[0].ExpiresAt == nil) != (after.Leases[0].ExpiresAt == nil)
+	if before.Leases[0].ExpiresAt != nil && after.Leases[0].ExpiresAt != nil {
+		expiryChanged = !after.Leases[0].ExpiresAt.Equal(*before.Leases[0].ExpiresAt)
+	}
+	if !after.Leases[0].UpdatedAt.Equal(before.Leases[0].UpdatedAt) || expiryChanged {
+		t.Fatalf("wrong-worktree env changed lease: before=%#v after=%#v", before.Leases[0], after.Leases[0])
+	}
+	if got := cliGit(t, directory, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("wrong-worktree env moved HEAD: %s", got)
+	}
+	if got := cliGitRaw(t, directory, "ls-files", "-s", "-z"); got != anchorIndex {
+		t.Fatal("wrong-worktree env changed anchor index")
+	}
+	if got := cliGitRaw(t, linked, "ls-files", "-s", "-z"); got != linkedIndex {
+		t.Fatal("wrong-worktree env changed linked index")
+	}
+
+	correct := runCLI(t, []string{"--json", "--repo-dir", linked, "env", "--lane", "bound-env"}, "")
+	if correct.code != 0 || !correct.envelope.OK {
+		t.Fatalf("bound-worktree env = %#v code=%d stderr=%s", correct.envelope, correct.code, correct.stderr)
+	}
+}
+
 func TestInitDryRunAndInstallerAreNonDestructive(t *testing.T) {
 	directory := cliTestRepo(t)
 	linked := filepath.Join(t.TempDir(), "not-created")

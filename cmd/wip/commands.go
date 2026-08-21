@@ -58,6 +58,9 @@ func (application app) runEnv(laneStore store.Store, args []string) int {
 	if err != nil {
 		return application.failure("env", err, nil, 1)
 	}
+	if laneStore.Repo.Root != saved.Worktree {
+		return application.failure("env", fail.New("WORKTREE_MISMATCH", "lane is bound to a different checkout"), nil, 1)
+	}
 	return application.success("env", saved, shellEnvironment(saved))
 }
 
