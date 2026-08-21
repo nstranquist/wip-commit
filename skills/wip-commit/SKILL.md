@@ -19,7 +19,9 @@ unchanged.
    operator to finish or cancel that Git operation.
 4. Identify the exact paths owned by this task. Do not claim or stage a broad
    directory. When another agent can change a child path, use a narrower claim.
-5. Run `wip version`. If the command is absent, build or install it by using
+5. Run `wip --json version`. Record its exact revision and source state. Do not
+   use an unstamped binary with existing coordination state. If the command is
+   absent or has no revision, build or install a source-stamped binary by using
    this repository's documented method.
 6. Run `wip --json doctor`. If it reports another coordination domain, stop.
    Preserve both state roots and select one domain before setup.
