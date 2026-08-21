@@ -1,5 +1,98 @@
 # Dogfood evidence
 
+## 2026-08-21 installed workflow and source-provenance exercise
+
+This exercise started with no `wip` executable on `PATH`. The complete portable
+skill was available in the standalone source tree. The existing agent skill
+paths remained bound to the broader Nicos-integrated workflow and were not
+overwritten.
+
+Evidence scope: local maintainer evidence. The exercise did not land, merge,
+push, tag, or publish any captured commit.
+
+### Disposable protocol
+
+The source-current beta binary installed itself at `~/.local/bin/wip`. Its
+installer also wrote a complete portable skill bundle to an isolated test
+directory. The installed binary and source binary were byte-equal. The three
+portable skill files were byte-equal to their source files.
+
+A disposable repository then passed these behaviors:
+
+- A shared lane captured a reviewed two-commit split at
+  `d962bd56dfde3064392499578d5e901f3f0169cc`.
+- The shared source `HEAD`, complete index digest, and staged tree stayed
+  unchanged. A foreign staged path stayed staged and did not enter the lane.
+- An overlapping claim returned `PATH_LEASE_CONFLICT`. The exact pending
+  initialization receipt completed after the first owner released its lease.
+- Two reconciliation calls returned the same already-complete receipt.
+- A linked-worktree lane captured a reviewed two-commit split at
+  `2385e60e9d9acec9479ccc3a9f52fd5d87c722a5`.
+- Both linked and anchor `HEAD` values and complete index digests stayed
+  unchanged.
+- Release preserved both lane refs and commits. Final doctor output was healthy
+  with no active lane or pending recovery.
+
+The first wrong-checkout probe found that the older product-passport branch let
+`wip env` return a worktree-bound identity from the anchor checkout. It did not
+renew the lease. The agent-facing branch already contained the intended
+`WORKTREE_MISMATCH` check. The older branch received the same fail-closed check,
+a lease and Git-state regression test, and matching user and skill guidance.
+
+The complete gate matrix for that correction passed `go test ./...`, `go vet
+./...`, `actionlint`, and `go test -race -count=3 ./...`.
+
+### Real self-hosted captures
+
+The older branch could not read the current store because its strict readers
+rejected newer `message_policy` and `review_plan_digest` fields. It stopped
+before staging or lane creation. The compatible agent-facing binary read the
+same store as healthy with no active or pending lane.
+
+The first real capture used
+`refs/heads/wip/codex/env-worktree-binding-fix`:
+
+- Tip: `b7e77a2a48c32e44ecf89c7fe188e1bcf8393e1b`.
+- Plan ID: `plan-128b94b2cee8fc6ce1dcf054`.
+- Capture intent digest:
+  `sha256:54b27961ca98ec067b85cbb010fbe74e8095bb56ba55015c5da7c5076b939335`.
+- Reviewed plan digest:
+  `sha256:19184ab8ce0844282e38bcb12f4b01ac0ab61bce48255b5c966f2a7446658461`.
+- Four commits covered the code and test, error guide, README, and portable
+  skill.
+- Final capture set `capture_only` to true, `landing_authorized` to false, and
+  `lane_released` to true.
+
+The compatibility exercise also showed that different development revisions
+reported the same plain beta version. A new typed version result now reports
+the exact source revision, source state, VCS time, and Go version. The release
+builder injects clean deterministic source identity even though it disables
+automatic Go VCS stamping.
+
+The second real capture used `refs/heads/wip/codex/version-provenance`:
+
+- Tip: `a42693a360b1b9cc987aa0c7926fd5b9792fbe34`.
+- Plan ID: `plan-578a7037a7436d366414b15a`.
+- Capture intent digest:
+  `sha256:093284cdd0570df0d5caee50225558f9fb6edd9251cad7189bb872a12d94901f`.
+- Reviewed plan digest:
+  `sha256:a9be503d8b60578dd899734c0f98469e7ac192aa95c4b2f06cc304f162ca2a83`.
+- Four commits covered typed version output, README guidance, deterministic
+  release stamping, and skill policy.
+- Final capture set `capture_only` to true, `landing_authorized` to false, and
+  `lane_released` to true.
+
+The complete provenance gate matrix passed `go test ./...`, `go vet ./...`,
+`actionlint`, and `go test -race -count=3 ./...`. The final installed binary
+has SHA-256
+`bd64e76d7cf7e907215ee6786f3a37064730516bad3d25a5fa9402106ec9e5cf`.
+Its JSON version result identifies revision
+`a42693a360b1b9cc987aa0c7926fd5b9792fbe34`, source state `clean`, VCS time
+`2026-08-21T01:02:47-05:00`, and Go `1.26.7`.
+
+The final repository doctor was healthy. Both source indexes intentionally kept
+their captured entries staged. No handoff authorized landing.
+
 ## 2026-08-18 atomic finalization and schema review
 
 This exercise used a source-current binary in the isolated
