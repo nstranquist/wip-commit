@@ -904,6 +904,50 @@ func TestArchiveIsRecoverableAndResumesPartialMoves(t *testing.T) {
 	if err != nil || again.State != "restored" {
 		t.Fatalf("idempotent restore = %#v err=%v", again, err)
 	}
+
+	secondCutoff := cutoff.Add(time.Second)
+	secondCandidates, err := laneStore.ArchiveCandidates(secondCutoff)
+	if err != nil || len(secondCandidates) != 1 {
+		t.Fatalf("rearchive candidates = %#v err=%v", secondCandidates, err)
+	}
+	rearchived, err := laneStore.Archive(context.Background(), secondCutoff, secondCandidates)
+	if err != nil || rearchived.State != "complete" || rearchived.ID == receipt.ID {
+		t.Fatalf("rearchive receipt = %#v err=%v; first=%s", rearchived, err, receipt.ID)
+	}
+	if err := laneStore.ValidateArchiveFiles(restored); err != nil {
+		t.Fatalf("restored receipt did not follow rearchived records: %v", err)
+	}
+	if err := laneStore.ValidateArchiveFiles(rearchived); err != nil {
+		t.Fatalf("rearchived receipt placement: %v", err)
+	}
+	if _, err := laneStore.Load(lane.ID); fail.Code(err) != "LANE_NOT_FOUND" {
+		t.Fatalf("rearchive left live lane: %v (%s)", err, fail.Code(err))
+	}
+
+	heldRecord := filepath.Join(laneStore.Root, "locks", "held-rearchived-record")
+	archivedRecord := filepath.Join(laneStore.Root, "archive", rearchived.ID, filepath.FromSlash(rearchived.Files[0]))
+	if err := os.Rename(archivedRecord, heldRecord); err != nil {
+		t.Fatal(err)
+	}
+	if err := laneStore.ValidateArchiveFiles(restored); fail.Code(err) != "ARCHIVE_FAILED" {
+		t.Fatalf("missing successor record error = %v (%s)", err, fail.Code(err))
+	}
+	if err := os.Rename(heldRecord, archivedRecord); err != nil {
+		t.Fatal(err)
+	}
+
+	secondRestore, err := laneStore.RestoreArchive(context.Background(), rearchived.ID)
+	if err != nil || secondRestore.State != "restored" {
+		t.Fatalf("rearchive restore = %#v err=%v", secondRestore, err)
+	}
+	for _, historical := range []ArchiveReceipt{restored, secondRestore} {
+		if err := laneStore.ValidateArchiveFiles(historical); err != nil {
+			t.Fatalf("restored archive history %s: %v", historical.ID, err)
+		}
+	}
+	if got := git(t, repo.Root, "rev-parse", lane.Ref); got != lane.CurrentSHA {
+		t.Fatalf("rearchive lifecycle moved lane ref: %s", got)
+	}
 }
 
 func TestArchiveRejectsCandidateMovementAfterPreview(t *testing.T) {

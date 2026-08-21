@@ -528,6 +528,13 @@ func (store Store) ValidateArchiveFiles(receipt ArchiveReceipt) error {
 	if err := validateArchiveBatchContents(root, receipt); err != nil {
 		return err
 	}
+	historicalSources := map[string]string{}
+	if receipt.State == "restored" {
+		historicalSources, err = store.restoredArchiveSources(root, receipt)
+		if err != nil {
+			return err
+		}
+	}
 	candidates := make(map[string]ArchiveCandidate, len(receipt.Candidates))
 	laneRecords := map[string]bool{}
 	leaseCounts := map[string]int{}
@@ -544,15 +551,28 @@ func (store Store) ValidateArchiveFiles(receipt ArchiveReceipt) error {
 		if err != nil {
 			return err
 		}
-		if live == stored {
-			return fail.New("ARCHIVE_FAILED", "archive receipt file exists on both sides or neither side: "+relative)
-		}
-		if receipt.State == "complete" && !stored || receipt.State == "restored" && !live {
-			return fail.New("ARCHIVE_FAILED", "archive receipt file is on the wrong side for state "+receipt.State+": "+relative)
-		}
 		source := relative
-		if stored {
-			source = archived
+		if receipt.State == "restored" {
+			historical, rearchived := historicalSources[relative]
+			if stored {
+				return fail.New("ARCHIVE_FAILED", "archive receipt file is on the wrong side for state restored: "+relative)
+			}
+			if live == rearchived {
+				return fail.New("ARCHIVE_FAILED", "restored archive receipt file exists live and in a successor archive, or in neither location: "+relative)
+			}
+			if rearchived {
+				source = historical
+			}
+		} else {
+			if live == stored {
+				return fail.New("ARCHIVE_FAILED", "archive receipt file exists on both sides or neither side: "+relative)
+			}
+			if receipt.State == "complete" && !stored {
+				return fail.New("ARCHIVE_FAILED", "archive receipt file is on the wrong side for state "+receipt.State+": "+relative)
+			}
+			if stored {
+				source = archived
+			}
 		}
 		parts := strings.Split(relative, "/")
 		id := strings.TrimSuffix(parts[1], ".json")
@@ -605,6 +625,63 @@ func (store Store) ValidateArchiveFiles(receipt ArchiveReceipt) error {
 		}
 	}
 	return nil
+}
+
+// restoredArchiveSources resolves records that a later validated receipt has
+// archived again. Restored receipts remain durable history, so a missing live
+// record is valid only when exactly one newer non-restored receipt owns it.
+func (store Store) restoredArchiveSources(root *os.Root, receipt ArchiveReceipt) (map[string]string, error) {
+	targets := make(map[string]bool, len(receipt.Files))
+	for _, relative := range receipt.Files {
+		targets[relative] = true
+	}
+	sources := make(map[string]string, len(receipt.Files))
+	entries, err := rootDirectoryEntries(root, "archive", maxRecordEntries)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			return nil, fail.New("ARCHIVE_FAILED", "archive batch is not a regular directory: "+entry.Name())
+		}
+		if entry.Name() == receipt.ID {
+			continue
+		}
+		other, err := loadArchiveReceipt(store.Root, entry.Name())
+		if err != nil {
+			return nil, err
+		}
+		if other.State == "restored" || !other.CreatedAt.After(receipt.UpdatedAt) {
+			continue
+		}
+		intersecting := make([]string, 0)
+		for _, relative := range other.Files {
+			if targets[relative] {
+				intersecting = append(intersecting, relative)
+			}
+		}
+		if len(intersecting) == 0 {
+			continue
+		}
+		if err := store.ValidateArchiveFiles(other); err != nil {
+			return nil, err
+		}
+		for _, relative := range intersecting {
+			archived := filepath.ToSlash(filepath.Join("archive", other.ID, filepath.FromSlash(relative)))
+			stored, err := archiveRegularExists(root, archived)
+			if err != nil {
+				return nil, err
+			}
+			if !stored {
+				continue
+			}
+			if _, duplicate := sources[relative]; duplicate {
+				return nil, fail.New("ARCHIVE_FAILED", "restored archive receipt file has multiple successor owners: "+relative)
+			}
+			sources[relative] = archived
+		}
+	}
+	return sources, nil
 }
 
 func validateArchiveBatchContents(root *os.Root, receipt ArchiveReceipt) error {
