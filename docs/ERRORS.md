@@ -73,7 +73,7 @@
 | Code | Meaning | Action |
 | --- | --- | --- |
 | `ARCHIVE_PLAN_REQUIRED` | Apply has no reviewed cutoff or digest | Run the preview, then reuse its exact `--cutoff` and `--plan-digest` |
-| `ARCHIVE_PLAN_MOVED` | The eligible record set differs from the preview | Run a new preview. Do not reuse the old digest |
+| `ARCHIVE_PLAN_MOVED` | The eligible record set differs from the preview | Repeat every `--lane` filter from the preview, or run a new preview. Do not reuse a digest after records change |
 | `ARCHIVE_EMPTY` | The reviewed plan has no exact eligible candidate | Run a new preview with an older cutoff or a valid lane |
 | `ARCHIVE_REFUSED` | A lane, lease, or ref is not safe to archive | Run `wip doctor` and repair the reported state first |
 | `ARCHIVE_CONFLICT` | Live and archived records conflict | Preserve both copies and inspect the receipt before retry |
