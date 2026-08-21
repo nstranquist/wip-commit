@@ -355,14 +355,20 @@ Preview old released records:
 wip archive --older-than 720h
 ```
 
-The preview returns an exact cutoff and plan digest. Reuse both values:
+The preview returns an exact cutoff and plan digest. Reuse both values. If the
+preview used one or more `--lane` filters, repeat the same filters on apply:
 
 ```text
 wip archive \
+  --lane '<same-preview-lane>' \
   --cutoff '<exact-preview-cutoff>' \
   --plan-digest '<exact-preview-sha256>' \
   --apply --yes
 ```
+
+JSON previews also return `lane_filters` as the canonical sorted list to
+replay. Omitting a preview filter changes the eligible set and fails closed
+with `ARCHIVE_PLAN_MOVED`.
 
 The store compares every reviewed candidate again while it holds the archive,
 lane, and lease-registry locks. It then moves records into a recoverable archive
