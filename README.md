@@ -426,6 +426,12 @@ Restore writes a durable `restoring` state before it moves the first record. If
 restore stops, run the same restore command again. `wip doctor` reports the
 receipt until recovery completes.
 
+A `restored` receipt remains as history. If you archive the same records again,
+`wip doctor` requires each non-live record to have exactly one validated newer
+archive owner. A missing, duplicated, or unbound record fails closed. Restore
+the current complete receipt to make rearchived records live. Repeating an
+older restored receipt only confirms that its earlier restore completed.
+
 ## Important index behavior
 
 A successful capture leaves the source `HEAD`, worktree, and complete Git index
