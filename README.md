@@ -72,6 +72,36 @@ plans and treats typed JSON evidence as the capture result.
 An internal integration can add repository policy around this skill. It must
 not weaken the path-ownership, split-plan, result-check, or no-landing rules.
 
+## Prove portable behavior
+
+Run the behavioral benchmark from the repository root:
+
+```text
+go run ./skills/wip-commit/benchmark/regression.go
+```
+
+The runner builds the candidate with `GOPROXY=off`. It then uses the shipped
+entrypoints in disposable Git repositories. It makes no network or AI calls.
+
+The benchmark checks eight semantic cases and eight negative controls. The
+reviewed baseline requires all 16 checks to pass.
+
+Run the deliberately weakened candidate proof:
+
+```text
+go run ./skills/wip-commit/benchmark/regression.go --prove-weakened
+```
+
+The proof requires the benchmark to reject the unsafe candidate. The runner
+cannot modify [the reviewed baseline](skills/wip-commit/benchmark/baseline.json).
+
+If `ndev` is available, run `ndev --json skills benchmark wip-commit`. It finds
+this external repository before it uses an internal skill fallback.
+
+The cross-platform benchmark CI job runs the same cases on Linux, macOS, and
+Windows. Read [the benchmark guide](skills/wip-commit/benchmark/README.md) for
+the report schema, artifact location, and baseline policy.
+
 ## Start with `wip init`
 
 Run the wizard in a Git checkout:
