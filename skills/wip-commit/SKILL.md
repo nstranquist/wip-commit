@@ -160,5 +160,7 @@ the validated handoff and lane release under one lane lock. It does not
 authorize landing.
 
 Run `wip doctor` before you archive old state. Use `wip archive` without
-`--apply` first. Reuse the exact cutoff and plan digest only after review. If
-apply returns a prepared receipt, use its exact ID with `wip archive --resume`.
+`--apply` first. Reuse the exact cutoff and plan digest only after review, and
+repeat every `--lane` filter from the preview. JSON previews return the sorted
+filters as `lane_filters`. If apply returns a prepared receipt, use its exact
+ID with `wip archive --resume`.

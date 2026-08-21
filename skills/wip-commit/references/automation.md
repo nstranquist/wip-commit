@@ -79,8 +79,9 @@ active set during hooks and verification.
 ## State maintenance
 
 Run `wip --json doctor` before archival. Archive only a reviewed preview. Reuse
-the exact `cutoff` and `plan_digest` with `--apply --yes`. If a failed apply
-returns a prepared receipt, continue only with:
+the exact `cutoff` and `plan_digest` with `--apply --yes`, and repeat every lane
+in the preview's `lane_filters`. If a failed apply returns a prepared receipt,
+continue only with:
 
 ```text
 wip --json archive --resume <archive-id> --apply --yes
