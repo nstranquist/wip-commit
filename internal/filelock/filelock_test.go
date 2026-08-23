@@ -121,6 +121,28 @@ func TestAcquireExistingPreservesLockFile(t *testing.T) {
 	}
 }
 
+func TestAcquireDoesNotFollowExistingSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs optional Windows privileges")
+	}
+	directory := t.TempDir()
+	target := filepath.Join(directory, "target")
+	if err := os.WriteFile(target, []byte("preserve\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(directory, "lock")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Acquire(link, 0); err == nil {
+		t.Fatal("Acquire followed an existing lock symlink")
+	}
+	body, err := os.ReadFile(target)
+	if err != nil || string(body) != "preserve\n" {
+		t.Fatalf("lock symlink target changed: %q err=%v", body, err)
+	}
+}
+
 func TestValidateExistingPathRejectsReplacement(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "lane.lock")

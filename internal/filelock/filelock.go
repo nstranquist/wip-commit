@@ -10,7 +10,12 @@ import (
 
 type Lock struct{ file *os.File }
 
-const MaxWait = 24 * time.Hour
+const (
+	// DefaultWait is an explicit bound for internal serialization. Callers that
+	// expose a wait option must pass the user's value so zero remains fail-fast.
+	DefaultWait = 2 * time.Minute
+	MaxWait     = 24 * time.Hour
+)
 
 func Acquire(path string, wait time.Duration) (*Lock, error) {
 	return acquire(path, wait, true)
@@ -37,7 +42,7 @@ func acquire(path string, wait time.Duration, writeOwner bool) (*Lock, error) {
 	var file *os.File
 	var err error
 	if writeOwner {
-		file, err = os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+		file, err = openOrCreate(path)
 	} else {
 		file, err = openExisting(path)
 	}
@@ -81,6 +86,19 @@ func acquire(path string, wait time.Duration, writeOwner bool) (*Lock, error) {
 			time.Sleep(pause)
 		}
 	}
+}
+
+func openOrCreate(path string) (*os.File, error) {
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	if err == nil {
+		return file, nil
+	}
+	if !errors.Is(err, os.ErrExist) {
+		return nil, err
+	}
+	// The exclusive create prevents following an existing symlink. Opening an
+	// existing lock then verifies both its type and path identity.
+	return openExisting(path)
 }
 
 func openExisting(path string) (*os.File, error) {

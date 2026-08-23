@@ -7,6 +7,7 @@ import (
 
 	"github.com/nstranquist/wip-commit/internal/engine"
 	"github.com/nstranquist/wip-commit/internal/fail"
+	"github.com/nstranquist/wip-commit/internal/filelock"
 	"github.com/nstranquist/wip-commit/internal/policy"
 	"github.com/nstranquist/wip-commit/internal/store"
 )
@@ -103,7 +104,7 @@ func (application app) runHandoff(ctx context.Context, laneStore store.Store, ar
 		}
 		laneStore = writable
 	}
-	lock, err := laneStore.ExistingLaneLock(status.Lane.ID, 0)
+	lock, err := laneStore.ExistingLaneLock(status.Lane.ID, filelock.DefaultWait)
 	if err != nil {
 		return application.failure("handoff", err, nil, 1)
 	}

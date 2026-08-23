@@ -9,7 +9,7 @@ func TestVersionInfoReportsExactSourceProvenance(t *testing.T) {
 	revision := "0123456789abcdef0123456789abcdef01234567"
 	result := versionInfoFromSettings(versionResult{
 		SchemaVersion: versionResultSchema,
-		Version:       "0.1.0-beta.1",
+		Version:       "0.1.0-dev",
 		GoVersion:     "go1.26.7",
 	}, []debug.BuildSetting{
 		{Key: "vcs.revision", Value: revision},
@@ -20,15 +20,32 @@ func TestVersionInfoReportsExactSourceProvenance(t *testing.T) {
 	if result.Revision != revision || result.SourceState != "clean" || result.VCSTime != "2026-08-21T05:00:00Z" {
 		t.Fatalf("version provenance = %#v", result)
 	}
-	if got := result.human(); got != "wip 0.1.0-beta.1 (0123456789ab, clean)" {
+	if result.Channel != "development" || !result.SourceStamped {
+		t.Fatalf("development identity = %#v", result)
+	}
+	if got := result.human(); got != "wip 0.1.0-dev (0123456789ab, clean)" {
 		t.Fatalf("human version = %q", got)
 	}
 }
 
-func TestVersionInfoKeepsLegacyHumanOutputWithoutVCSMetadata(t *testing.T) {
-	result := versionResult{SchemaVersion: versionResultSchema, Version: "0.1.0-beta.1", GoVersion: "go1.26.7"}
-	if got := result.human(); got != "wip 0.1.0-beta.1" {
+func TestVersionInfoKeepsHumanOutputWithoutVCSMetadata(t *testing.T) {
+	result := finalizeVersionIdentity(versionResult{SchemaVersion: versionResultSchema, Version: "0.1.0-dev", GoVersion: "go1.26.7"})
+	if result.Channel != "development" || result.SourceStamped {
+		t.Fatalf("unstamped development identity = %#v", result)
+	}
+	if got := result.human(); got != "wip 0.1.0-dev" {
 		t.Fatalf("human version = %q", got)
+	}
+}
+
+func TestVersionInfoRequiresMatchingInjectedReleaseTag(t *testing.T) {
+	release := finalizeVersionIdentity(versionResult{SchemaVersion: versionResultSchema, Version: "0.1.0-beta.1", ReleaseTag: "v0.1.0-beta.1", Revision: "abc"})
+	if release.Channel != "release" || !release.SourceStamped {
+		t.Fatalf("release identity = %#v", release)
+	}
+	unverified := finalizeVersionIdentity(versionResult{SchemaVersion: versionResultSchema, Version: "0.1.0-beta.1", ReleaseTag: "v0.1.0-beta.2"})
+	if unverified.Channel != "unverified" {
+		t.Fatalf("mismatched release identity = %#v", unverified)
 	}
 }
 

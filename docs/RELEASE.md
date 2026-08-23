@@ -10,6 +10,11 @@ name and capture-only scope is not tag approval.
 The local release command creates files only. It does not create a tag, push a
 ref, create a remote repository, or publish a release.
 
+Committed source keeps `cmd/wip` at the matching `X.Y.Z-dev` identity. The
+release builder accepts only a `vX.Y.Z...` tag on that development line. It
+injects both the artifact SemVer and the exact tag. A binary reports
+`channel: release` only when those injected values match.
+
 The hosted workflow runs only for a tag name that contains a prerelease
 suffix, such as `v0.1.0-beta.1`. It builds six archives:
 

@@ -9,6 +9,12 @@ Planned first prerelease: `v0.1.0-beta.1`.
 
 ### Added
 
+- A machine-readable `wip.command/2.0.0` capability contract and a digest-bound
+  portable-skill contract.
+- Preview/apply upgrades for the state marker, installed binary, and portable
+  skill. Each apply requires the exact reviewed byte digest.
+- A version 2 coordination-domain marker with a minimum reader protocol and
+  required reader capabilities.
 - Portable `wip-commit` agent skill with a public-only safety contract.
 - Deterministic six-target release builder, checksums, receipt, and attested
   prerelease workflow.
@@ -46,6 +52,10 @@ Planned first prerelease: `v0.1.0-beta.1`.
 
 ### Changed
 
+- Source builds now report `0.1.0-dev`; release builds receive both SemVer and
+  exact tag identity from the deterministic release builder.
+- A zero lock wait now fails after one acquisition attempt. Internal
+  serialization uses an explicit bounded wait.
 - Operational lane and lease reads now use the same registry fence as atomic
   record replacement. This prevents Windows sharing violations during capture.
 - Unsupported state-directory, lane, lease, intent, and profile schemas now

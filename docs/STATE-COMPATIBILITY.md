@@ -2,8 +2,8 @@
 
 ## Supported state
 
-`v0.1.0-beta.1` reads and writes state directory version 1. Lane, lease, and
-archive-receipt records use JSON schema version 1.
+The current development command reads and writes state directory version 1.
+Lane, lease, and archive-receipt records use JSON schema version 1.
 
 New profiles and initialization intents use record schema version 2. Their
 readers also accept version 1.
@@ -22,8 +22,16 @@ The state is in the Git common directory:
 <git-common-dir>/wip/v1/
 ```
 
-The owner marker is `<git-common-dir>/wip/domain.json`. It binds the state
-owner and writable version before a command creates record directories.
+The owner marker is `<git-common-dir>/wip/domain.json`. Marker schema version 2
+binds the owner, writable state version, minimum reader protocol, and sorted
+required reader capabilities. New repositories write marker version 2.
+
+The command reads marker version 1 without changing it. Read-only doctor,
+handoff, status-observe, and environment-observe operations remain available.
+Every mutation stops with `MIGRATION_REQUIRED` until the operator applies the
+digest-bound marker upgrade. An old binary rejects marker version 2 because it
+does not recognize the reader-floor fields. This is the required fail-closed
+behavior.
 
 Legacy Nicos Tools state uses `<git-common-dir>/ndev-wip/v1/`. Both
 implementations acquire `<git-common-dir>/wip-coordination.lock` before domain
@@ -40,7 +48,9 @@ When the command finds either of these items, it returns
 
 - a state directory with a version other than the exact name `v1`.
 - an unknown top-level entry inside the `v1` directory.
-- a domain marker schema version other than 1.
+- a domain marker schema version other than 1 or 2.
+- a marker version 2 reader floor above `wip.command/2.0.0`, a different
+  protocol major, or a required capability that the binary does not advertise.
 - a lane, lease, or archive receipt with a schema version other than 1.
 - a capture intent, initialization intent, or profile with a schema version
   other than 1 or 2.
@@ -53,8 +63,10 @@ The domain marker closes the concurrent initialization gap. A future writer
 must acquire the same domain lock before it changes the marker or creates a new
 version directory.
 
-`wip` does not migrate, rename, delete, or rewrite unsupported state. It does
-not guess how a future schema works.
+`wip` does not migrate, rename, delete, or rewrite an unsupported state
+directory or record. It does not guess how a future schema works. The only
+current upgrade changes the validated owner marker from schema 1 to schema 2;
+it does not change `wip/v1` records.
 
 A version 1 profile implies the historical `conventional-v1` policy. Version 1
 initialization and capture intents keep their original digest form.
@@ -70,9 +82,9 @@ reported by `wip doctor`.
 
 Only a non-dry-run `wip init` claims an uninitialized repository. Other lane
 commands inspect the domain first and return `LANE_NOT_ACTIVE` without creating
-the marker, version directory, or shared coordination lock. Once version 1
-state exists, a mutating command can create only the additive directories that
-are missing from that same validated domain.
+the marker, version directory, or shared coordination lock. Once marker
+version 2 owns version 1 state, a mutating command can create only the additive
+directories that are missing from that same validated domain.
 
 Archive resume and restore also inspect before mutation. They return
 `ARCHIVE_NOT_FOUND` without creating a domain when no state exists. Legacy
@@ -83,22 +95,44 @@ Every version 1 writer bounds the complete encoded record before publication.
 The bound includes the final newline. This rule keeps each new record readable
 by the same release.
 
-## Upgrade procedure
+## Marker upgrade procedure
 
-Before an upgrade that changes the state version:
+Before a marker upgrade:
 
 1. Stop all `wip` processes for the repository.
 2. Use the current compatible binary to inspect every active lane.
 3. Reconcile any capture that moved a lane ref but did not complete its intent.
 4. Record each lane ref and commit ID.
 5. Release each finished lane. Preserve every lane ref.
-6. Make a filesystem backup of `<git-common-dir>/wip/v1/`.
-7. Read the new release notes and use only its documented migration command.
+6. Make a filesystem backup of `<git-common-dir>/wip/`, including
+   `domain.json`.
+7. Require a healthy `wip --json doctor` result with no active lanes or pending
+   initialization, capture, or archive recovery.
+8. Run the read-only preview:
 
-The beta has no migration command because it has no earlier public schema. A
-future migration must be explicit, idempotent, bounded, and recoverable. It
-must preserve the original state until the new state and its receipt are
-durable.
+   ```text
+   wip --json upgrade --state
+   ```
+
+9. Review `path`, `current_sha256`, `desired_sha256`, and `plan_digest`. Apply
+   only that plan:
+
+   ```text
+   wip --json upgrade --state --apply --yes \
+     --plan-digest sha256:<reviewed-digest>
+   ```
+
+10. Run `wip --json doctor` again. Require marker schema 2, the expected reader
+    floor, no pending recovery, and `healthy: true`.
+
+Preview does not write. Apply acquires the coordination lock, compares the
+exact old marker digest again, atomically replaces only `domain.json`, and
+verifies the desired digest. A repeated apply to the current marker is
+idempotent. Any byte change requires a new preview.
+
+A future state-directory or record migration must also be explicit,
+idempotent, bounded, and recoverable. It must preserve the original state until
+the new state and its receipt are durable.
 
 Do not change JSON records by hand. Do not rename `v2` to `v1`. Do not copy a
 partial state directory between repositories.

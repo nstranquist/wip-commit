@@ -19,15 +19,27 @@ unchanged.
    operator to finish or cancel that Git operation.
 4. Identify the exact paths owned by this task. Do not claim or stage a broad
    directory. When another agent can change a child path, use a narrower claim.
-5. Run `wip --json version`. Record its exact revision and source state. Do not
+5. Run `wip --json contract`. Require every identity and capability in
+   [contract.json](contract.json), including the portable payload digest. Then
+   run `wip --json version`. Require schema `2.0.0`; record its channel, exact
+   revision, and source state. Do not
    use an unstamped binary with existing coordination state. If the command is
    absent or has no revision, build or install a source-stamped binary by using
    this repository's documented method.
 6. Run `wip --json doctor`. If it reports another coordination domain, stop.
-   Preserve both state roots and select one domain before setup.
+   Preserve both state roots and select one domain before setup. If doctor
+   reports healthy initialized state, run `wip --json status --observe`.
+   `LANE_NOT_ACTIVE` means this standalone domain remains authoritative and a
+   new standalone lane is required. Run `wip init`; never fall through to a
+   legacy coordination implementation.
 
 Never stash, reset, restore, clean, merge, push, or force-update a ref. Do not
 delete another lane, worktree, lock, profile, intent, or receipt.
+
+If the installed binary or portable skill differs, preview exactly one target
+with `wip --json upgrade --binary` or `wip --json upgrade --skill`. Apply only
+the reviewed `plan_digest` with `--apply --yes`. Never combine targets or treat
+upgrade as first installation.
 
 ## Initialize one lane
 

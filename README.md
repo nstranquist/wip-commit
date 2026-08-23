@@ -43,13 +43,19 @@ Build the current checkout with:
 go build -trimpath -o ./bin/wip ./cmd/wip
 ./bin/wip version
 ./bin/wip --json version
+./bin/wip --json contract
 ```
 
-Release binaries report the exact VCS revision and a clean source state. A
-local Go build reports the same fields when the toolchain supplies VCS metadata
-or the builder supplies the documented linker values. If `revision` is absent,
-the binary has no source stamp. Use a source-stamped binary and run `wip --json
-doctor` before you let it read or change existing coordination state.
+Source builds identify themselves as `0.1.0-dev` with `channel: development`.
+The release builder injects both the selected SemVer and its exact tag; only
+that pair reports `channel: release`. Release binaries also report the exact
+VCS revision and a clean source state. A local Go build reports VCS fields when
+the toolchain supplies them. If `source_stamped` is false, do not let the
+binary read or change existing coordination state.
+
+`wip --json contract` reports the command protocol, explicit capabilities,
+portable-skill contract, and embedded portable payload digest. Integrations
+must validate those fields. Do not infer compatibility from a display version.
 
 For a published `v0.1.0-beta.1` tag, the install command is:
 
@@ -98,6 +104,27 @@ plans and treats typed JSON evidence as the capture result.
 
 An internal integration can add repository policy around this skill. It must
 not weaken the path-ownership, split-plan, result-check, or no-landing rules.
+
+## Upgrade an existing installation
+
+Upgrade one target at a time. Preview is read-only. Apply requires the exact
+digest from that preview:
+
+```text
+wip --json upgrade --binary --install-dir ~/.local/bin
+wip --json upgrade --binary --install-dir ~/.local/bin \
+  --apply --yes --plan-digest sha256:<reviewed-digest>
+
+wip --json upgrade --skill --skill-dir ~/.agents/skills
+wip --json upgrade --skill --skill-dir ~/.agents/skills \
+  --apply --yes --plan-digest sha256:<reviewed-digest>
+```
+
+The binary target must already be a regular executable. The skill target can
+be an older canonical bundle, but it cannot contain unknown files, directories,
+or symbolic links. Use `wip init --install` or `--install-skill` for a missing
+target. See [State compatibility](docs/STATE-COMPATIBILITY.md) for the separate
+coordination-marker upgrade.
 
 ## Prove portable behavior
 

@@ -84,7 +84,7 @@ func inspectInitAbort(ctx context.Context, laneStore store.Store, id, expectedDi
 		return result, err
 	}
 	intentPath := filepath.Join(laneStore.Root, "init-intents", id+".json")
-	lock, err := filelock.Acquire(initIntentLockPath(intentPath), 0)
+	lock, err := filelock.Acquire(initIntentLockPath(intentPath), filelock.DefaultWait)
 	if err != nil {
 		return result, fail.Wrap("LOCK_TIMEOUT", err)
 	}

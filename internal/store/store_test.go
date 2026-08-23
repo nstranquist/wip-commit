@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -553,7 +554,7 @@ func TestInspectReportsMarkerOnlyDomainWithoutCreatingState(t *testing.T) {
 	if err := os.Mkdir(stateRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	body, err := json.Marshal(domainRecord{SchemaVersion: domainSchemaVersion, Domain: domainID, StateVersion: SchemaVersion})
+	body, err := json.Marshal(currentDomainRecord())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -708,8 +709,59 @@ func TestCoordinationDomainMarkerAndForeignDomainFailClosed(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(body), domainID) || laneStore.Root != filepath.Join(repo.CommonDir, "wip", "v1") {
+		if !strings.Contains(string(body), domainID) || !strings.Contains(string(body), `"minimum_reader_protocol": "wip.command/2.0.0"`) || laneStore.Root != filepath.Join(repo.CommonDir, "wip", "v1") {
 			t.Fatalf("domain marker/root mismatch: %s root=%s", body, laneStore.Root)
+		}
+		if laneStore.Domain.SchemaVersion != domainSchemaVersion || laneStore.Domain.UpgradeRequired {
+			t.Fatalf("domain metadata = %#v", laneStore.Domain)
+		}
+	})
+
+	t.Run("legacy marker is read-only", func(t *testing.T) {
+		repo := testRepo(t)
+		if _, err := Open(repo); err != nil {
+			t.Fatal(err)
+		}
+		marker := filepath.Join(repo.CommonDir, "wip", "domain.json")
+		legacy, err := json.MarshalIndent(domainRecord{SchemaVersion: legacyDomainSchemaVersion, Domain: domainID, StateVersion: SchemaVersion}, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		legacy = append(legacy, '\n')
+		if err := os.WriteFile(marker, legacy, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		inspected, initialized, err := Inspect(repo)
+		if err != nil || !initialized || !inspected.Domain.UpgradeRequired || inspected.Domain.SchemaVersion != legacyDomainSchemaVersion {
+			t.Fatalf("legacy inspection = %#v initialized=%v err=%v", inspected.Domain, initialized, err)
+		}
+		if _, err := Open(repo); fail.Code(err) != "MIGRATION_REQUIRED" {
+			t.Fatalf("legacy mutation error = %v (%s)", err, fail.Code(err))
+		}
+		body, err := os.ReadFile(marker)
+		if err != nil || string(body) != string(legacy) {
+			t.Fatalf("legacy marker changed after refused mutation: %q err=%v", body, err)
+		}
+	})
+
+	t.Run("unsupported reader capability fails closed", func(t *testing.T) {
+		repo := testRepo(t)
+		if _, err := Open(repo); err != nil {
+			t.Fatal(err)
+		}
+		marker := filepath.Join(repo.CommonDir, "wip", "domain.json")
+		current := currentDomainRecord()
+		current.RequiredCapabilities = append(current.RequiredCapabilities, "state.future.v1")
+		sort.Strings(current.RequiredCapabilities)
+		body, err := json.Marshal(current)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(marker, body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := Inspect(repo); fail.Code(err) != "MIGRATION_REQUIRED" {
+			t.Fatalf("unsupported capability error = %v (%s)", err, fail.Code(err))
 		}
 	})
 
@@ -755,7 +807,7 @@ func TestCoordinationDomainMarkerAndForeignDomainFailClosed(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		body = []byte(strings.Replace(string(body), `"schema_version": 1`, `"schema_version": 2`, 1))
+		body = []byte(strings.Replace(string(body), `"schema_version": 2`, `"schema_version": 3`, 1))
 		if err := os.WriteFile(marker, body, 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -782,7 +834,7 @@ func TestCoordinationLockPreventsDualDomainCreationRace(t *testing.T) {
 		}()
 		go func() {
 			<-start
-			lock, err := filelock.Acquire(filepath.Join(repo.CommonDir, "wip-coordination.lock"), 0)
+			lock, err := filelock.Acquire(filepath.Join(repo.CommonDir, "wip-coordination.lock"), filelock.DefaultWait)
 			if err != nil {
 				results <- "legacy-error:" + err.Error()
 				return

@@ -51,7 +51,7 @@ func (store Store) ArchiveCandidates(before time.Time) ([]ArchiveCandidate, erro
 	if before.IsZero() {
 		return nil, fail.New("INVALID_ARGS", "archive cutoff cannot be zero")
 	}
-	registry, err := store.registryLock(0)
+	registry, err := store.registryLock(filelock.DefaultWait)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +112,7 @@ func (store Store) Archive(ctx context.Context, before time.Time, expected []Arc
 	if err := validateArchiveCandidates(expected, before); err != nil {
 		return ArchiveReceipt{}, err
 	}
-	archiveLock, err := filelock.Acquire(filepath.Join(store.Root, "locks", "archive.lock"), 0)
+	archiveLock, err := filelock.Acquire(filepath.Join(store.Root, "locks", "archive.lock"), filelock.DefaultWait)
 	if err != nil {
 		return ArchiveReceipt{}, fail.Wrap("LOCK_TIMEOUT", err)
 	}
@@ -125,7 +125,7 @@ func (store Store) ResumeArchive(ctx context.Context, id string) (ArchiveReceipt
 	if err := validateID(id, "archive"); err != nil {
 		return ArchiveReceipt{}, err
 	}
-	archiveLock, err := filelock.Acquire(filepath.Join(store.Root, "locks", "archive.lock"), 0)
+	archiveLock, err := filelock.Acquire(filepath.Join(store.Root, "locks", "archive.lock"), filelock.DefaultWait)
 	if err != nil {
 		return ArchiveReceipt{}, fail.Wrap("LOCK_TIMEOUT", err)
 	}
@@ -152,7 +152,7 @@ func (store Store) ResumeArchive(ctx context.Context, id string) (ArchiveReceipt
 func (store Store) archiveLocked(ctx context.Context, receipt ArchiveReceipt, resume bool) (ArchiveReceipt, error) {
 	locks := make([]*filelock.Lock, 0, len(receipt.Candidates))
 	for _, candidate := range receipt.Candidates {
-		lock, err := store.LaneLock(candidate.LaneID, 0)
+		lock, err := store.LaneLock(candidate.LaneID, filelock.DefaultWait)
 		if err != nil {
 			for index := len(locks) - 1; index >= 0; index-- {
 				_ = locks[index].Release()
@@ -166,7 +166,7 @@ func (store Store) archiveLocked(ctx context.Context, receipt ArchiveReceipt, re
 			_ = locks[index].Release()
 		}
 	}()
-	registry, err := store.registryLock(0)
+	registry, err := store.registryLock(filelock.DefaultWait)
 	if err != nil {
 		return ArchiveReceipt{}, err
 	}
@@ -244,7 +244,7 @@ func (store Store) RestoreArchive(ctx context.Context, id string) (ArchiveReceip
 	if err := validateID(id, "archive"); err != nil {
 		return ArchiveReceipt{}, err
 	}
-	archiveLock, err := filelock.Acquire(filepath.Join(store.Root, "locks", "archive.lock"), 0)
+	archiveLock, err := filelock.Acquire(filepath.Join(store.Root, "locks", "archive.lock"), filelock.DefaultWait)
 	if err != nil {
 		return ArchiveReceipt{}, fail.Wrap("LOCK_TIMEOUT", err)
 	}
@@ -264,7 +264,7 @@ func (store Store) RestoreArchive(ctx context.Context, id string) (ArchiveReceip
 	}
 	locks := make([]*filelock.Lock, 0, len(receipt.Candidates))
 	for _, candidate := range receipt.Candidates {
-		lock, err := store.LaneLock(candidate.LaneID, 0)
+		lock, err := store.LaneLock(candidate.LaneID, filelock.DefaultWait)
 		if err != nil {
 			for index := len(locks) - 1; index >= 0; index-- {
 				_ = locks[index].Release()
@@ -278,7 +278,7 @@ func (store Store) RestoreArchive(ctx context.Context, id string) (ArchiveReceip
 			_ = locks[index].Release()
 		}
 	}()
-	registry, err := store.registryLock(0)
+	registry, err := store.registryLock(filelock.DefaultWait)
 	if err != nil {
 		return ArchiveReceipt{}, err
 	}

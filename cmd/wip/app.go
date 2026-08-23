@@ -59,12 +59,21 @@ func (application *app) run(ctx context.Context, args []string) int {
 	case "version", "--version":
 		build := currentVersionInfo()
 		return application.success("version", build, build.human())
+	case "contract":
+		result, contractErr := currentContractResult()
+		if contractErr != nil {
+			return application.failure("contract", fail.Wrap("CONTRACT_FAILED", contractErr), nil, 1)
+		}
+		return application.success("contract", result, result.human())
 	}
 	if len(rest) == 1 && (rest[0] == "--help" || rest[0] == "-h") {
 		if application.printCommandHelp(command) {
 			return 0
 		}
 		return 2
+	}
+	if command == "upgrade" {
+		return application.runUpgrade(ctx, rest)
 	}
 	repo, err := gitx.Discover(ctx, application.repoDir)
 	if err != nil {
@@ -197,6 +206,7 @@ Commands:
   init-abort  preview or abort one safe pre-lane initialization intent
   doctor      audit bounded state, refs, and recovery requirements
   archive     preview or apply recoverable state-record archival
+  upgrade     preview or apply one digest-bound state, binary, or skill upgrade
   status      classify staged state and show lane, lease, ref, and intent health
   env         print shell environment for a lane
   claim       claim additional paths
@@ -209,6 +219,7 @@ Commands:
   release     release the lane and its leases
   abort       abort the lane and release its leases
   version     print the version
+  contract    print the machine-readable command and skill contract
 
 Run wip <command> --help for command options.`)
 }
@@ -278,6 +289,14 @@ Preview is the default. Important options:
 		"release":   "Usage: wip release [--lane ID] [--agent ID] [--session ID]",
 		"abort":     "Usage: wip abort [--lane ID] [--agent ID] [--session ID]",
 		"version":   "Usage: wip version",
+		"contract":  "Usage: wip contract\n\nPrint the command protocol, capabilities, and portable skill digest.",
+		"upgrade": `Usage: wip upgrade (--state | --binary | --skill) [options]
+
+Preview is the default. Apply one exact reviewed target at a time.
+  --plan-digest SHA256         exact digest from the reviewed preview
+  --apply --yes                apply only that byte-bound plan
+  --install-dir DIR            binary install directory (default ~/.local/bin)
+  --skill-dir DIR              agent skill directory (default ~/.agents/skills)`,
 	}
 	if text, ok := usage[command]; ok {
 		_, _ = fmt.Fprintln(application.stdout, text)

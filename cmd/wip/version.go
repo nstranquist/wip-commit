@@ -6,17 +6,21 @@ import (
 	"strings"
 )
 
-const versionResultSchema = "1.0.0"
+const versionResultSchema = "2.0.0"
 
 var (
 	buildRevision    string
 	buildSourceState string
 	buildVCSTime     string
+	buildReleaseTag  string
 )
 
 type versionResult struct {
 	SchemaVersion string `json:"schema_version"`
 	Version       string `json:"version"`
+	Channel       string `json:"channel"`
+	ReleaseTag    string `json:"release_tag,omitempty"`
+	SourceStamped bool   `json:"source_stamped"`
 	Revision      string `json:"revision,omitempty"`
 	SourceState   string `json:"source_state,omitempty"`
 	VCSTime       string `json:"vcs_time,omitempty"`
@@ -27,6 +31,7 @@ func currentVersionInfo() versionResult {
 	result := versionResult{
 		SchemaVersion: versionResultSchema,
 		Version:       version,
+		ReleaseTag:    strings.TrimSpace(buildReleaseTag),
 		Revision:      strings.TrimSpace(buildRevision),
 		SourceState:   strings.TrimSpace(buildSourceState),
 		VCSTime:       strings.TrimSpace(buildVCSTime),
@@ -34,7 +39,7 @@ func currentVersionInfo() versionResult {
 	}
 	build, ok := debug.ReadBuildInfo()
 	if !ok {
-		return result
+		return finalizeVersionIdentity(result)
 	}
 	if build.GoVersion != "" {
 		result.GoVersion = build.GoVersion
@@ -64,6 +69,19 @@ func versionInfoFromSettings(result versionResult, settings []debug.BuildSetting
 				result.SourceState = "clean"
 			}
 		}
+	}
+	return finalizeVersionIdentity(result)
+}
+
+func finalizeVersionIdentity(result versionResult) versionResult {
+	result.SourceStamped = result.Revision != ""
+	switch {
+	case result.ReleaseTag != "" && result.ReleaseTag == "v"+result.Version:
+		result.Channel = "release"
+	case result.ReleaseTag == "" && strings.HasSuffix(result.Version, "-dev"):
+		result.Channel = "development"
+	default:
+		result.Channel = "unverified"
 	}
 	return result
 }

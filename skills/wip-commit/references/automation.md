@@ -5,8 +5,16 @@ status as the only proof of capture.
 
 ## Preflight and setup
 
-Run `wip --json doctor` before setup. Stop if it reports an unsafe state record,
-an incomplete recovery, or another coordination domain.
+Run `wip --json contract`, then `wip --json doctor` before setup. Stop if the
+contract is incompatible or doctor reports an unsafe state record, an
+incomplete recovery, or another coordination domain. For healthy initialized
+state, run `wip --json status --observe`. `LANE_NOT_ACTIVE` selects a new
+standalone `wip init` lane. It does not authorize a legacy fallback.
+
+Validate the complete contract document and portable payload digest. If a
+binary or skill upgrade is required, review the target-specific `wip --json
+upgrade` preview and apply only its exact digest. Do not upgrade more than one
+target in one command.
 
 Inspect the staged path set with
 `git diff --cached --no-renames --name-only -z`. Parse NUL-delimited paths so

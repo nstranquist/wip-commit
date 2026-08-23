@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0.0",
+  "protocol": "wip.command/2.0.0",
+  "capabilities": [
+    "capture.v2.private-index-cas",
+    "doctor.v1",
+    "handoff.v1.capture-only",
+    "install.digest-upgrade.v1",
+    "plan.v2.no-overwrite",
+    "state.archive-history.v1",
+    "state.capture-intent.v2",
+    "state.init-intent.v2",
+    "state.profile.v2",
+    "state.reader-floor.v1",
+    "status.v2.observe",
+    "version.v2.provenance"
+  ],
+  "portable_skill_contract": "wip.portable-skill/1.0.0",
+  "portable_bundle_sha256": "sha256:dc0f7b8b6080bde2aa4572e4ce93831cd6ffe29d53b70ce420ac0ec094aebf49"
+}

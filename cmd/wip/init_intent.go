@@ -106,7 +106,7 @@ func beginInitIntent(laneStore store.Store, candidate initIntent) (initIntent, s
 }
 
 func markInitStep(path string, intent initIntent, step string) (initIntent, error) {
-	lock, err := filelock.Acquire(initIntentLockPath(path), 0)
+	lock, err := filelock.Acquire(initIntentLockPath(path), filelock.DefaultWait)
 	if err != nil {
 		return initIntent{}, fail.Wrap("INIT_INTENT_FAILED", err)
 	}
@@ -115,7 +115,7 @@ func markInitStep(path string, intent initIntent, step string) (initIntent, erro
 }
 
 func runInitTransaction(path string, intent initIntent, run func(*initTransaction) error) (initIntent, error) {
-	lock, err := filelock.Acquire(initIntentLockPath(path), 0)
+	lock, err := filelock.Acquire(initIntentLockPath(path), filelock.DefaultWait)
 	if err != nil {
 		return initIntent{}, fail.Wrap("INIT_INTENT_FAILED", err)
 	}

@@ -67,6 +67,13 @@
 | `INSTALL_FAILED` | The binary could not be published or verified | Preserve any complete target and retry the exact initialization command |
 | `SKILL_INSTALL_CONFLICT` | The target skill directory contains different content | Select another `--skill-dir`, or remove the target only after a separate review |
 | `SKILL_INSTALL_FAILED` | The embedded skill could not be published or verified | Preserve the matching partial bundle and retry the exact initialization command |
+| `STATE_NOT_INITIALIZED` | A state upgrade has no owned domain marker | Run `wip init`; do not use upgrade as first initialization |
+| `UPGRADE_BLOCKED` | State has an active lane, pending recovery, or unhealthy record | Stop all `wip` processes, release lanes, and make `wip doctor` healthy before a new preview |
+| `UPGRADE_PLAN_DIGEST_MISMATCH` | Apply does not match the current byte-bound preview | Review a new preview; do not reuse the old digest |
+| `UPGRADE_PLAN_MOVED` | The target bytes changed after preview or while acquiring the lock | Preserve the target and review a new preview |
+| `UPGRADE_TARGET_MISSING` | Binary or skill upgrade target does not exist | Use the no-overwrite first-install path in `wip init` |
+| `UPGRADE_CONFLICT` | The upgrade target has an unsafe type, unexpected entry, or excessive size | Preserve and inspect the target; do not replace it automatically |
+| `UPGRADE_FAILED` | Atomic replacement or post-write verification failed | Preserve the target and rerun preview; a partial skill bundle fails digest validation and is repairable by a new reviewed upgrade |
 
 ## Inspection and archival errors
 

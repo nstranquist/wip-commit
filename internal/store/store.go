@@ -10,12 +10,14 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/nstranquist/wip-commit/internal/atomicfile"
+	"github.com/nstranquist/wip-commit/internal/contract"
 	"github.com/nstranquist/wip-commit/internal/fail"
 	"github.com/nstranquist/wip-commit/internal/filelock"
 	"github.com/nstranquist/wip-commit/internal/gitx"
@@ -26,13 +28,14 @@ import (
 )
 
 const (
-	SchemaVersion       = 1
-	DefaultLeaseTTL     = 15 * time.Minute
-	maxRecordBytes      = 1 << 20
-	maxStateEntries     = 32
-	maxRecordEntries    = 10_000
-	domainSchemaVersion = 1
-	domainID            = "github.com/nstranquist/wip-commit"
+	SchemaVersion             = 1
+	DefaultLeaseTTL           = 15 * time.Minute
+	maxRecordBytes            = 1 << 20
+	maxStateEntries           = 32
+	maxRecordEntries          = 10_000
+	legacyDomainSchemaVersion = 1
+	domainSchemaVersion       = 2
+	domainID                  = "github.com/nstranquist/wip-commit"
 )
 
 var (
@@ -101,43 +104,49 @@ type Store struct {
 	Repo     gitx.Repo
 	Root     string
 	LeaseTTL time.Duration
+	Domain   DomainMetadata
+}
+
+type DomainMetadata struct {
+	SchemaVersion         int
+	Domain                string
+	StateVersion          int
+	MinimumReaderProtocol string
+	RequiredCapabilities  []string
+	MarkerExists          bool
+	UpgradeRequired       bool
 }
 
 func Open(repo gitx.Repo) (Store, error) {
-	coordinationLock, err := filelock.Acquire(filepath.Join(repo.CommonDir, "wip-coordination.lock"), 0)
+	coordinationLock, err := filelock.Acquire(filepath.Join(repo.CommonDir, "wip-coordination.lock"), filelock.DefaultWait)
 	if err != nil {
 		return Store{}, fail.Wrap("LOCK_TIMEOUT", err)
 	}
 	defer func() { _ = coordinationLock.Release() }()
-	root, err := prepareStateRoot(repo, true)
+	root, domain, _, err := prepareStateRoot(repo, true)
 	if err != nil {
 		return Store{}, err
 	}
-	return Store{Repo: repo, Root: root, LeaseTTL: DefaultLeaseTTL}, nil
+	return Store{Repo: repo, Root: root, LeaseTTL: DefaultLeaseTTL, Domain: domain}, nil
 }
 
 // Check validates the coordination domain and existing state without creating
 // files or directories. It is suitable for init preflight and dry-run.
 func Check(repo gitx.Repo) error {
-	_, err := prepareStateRoot(repo, false)
+	_, _, _, err := prepareStateRoot(repo, false)
 	return err
 }
 
 // Inspect opens existing state read-only. It never creates a marker, state
 // directory, lock, lane, or lease.
 func Inspect(repo gitx.Repo) (Store, bool, error) {
-	if err := Check(repo); err != nil {
+	root, domain, markerExists, err := prepareStateRoot(repo, false)
+	if err != nil {
 		return Store{}, false, err
 	}
-	root := filepath.Join(repo.CommonDir, "wip", fmt.Sprintf("v%d", SchemaVersion))
 	info, err := os.Lstat(root)
 	if errors.Is(err, os.ErrNotExist) {
-		if _, markerErr := os.Lstat(filepath.Join(repo.CommonDir, "wip", "domain.json")); errors.Is(markerErr, os.ErrNotExist) {
-			return Store{Repo: repo, Root: root, LeaseTTL: DefaultLeaseTTL}, false, nil
-		} else if markerErr != nil {
-			return Store{}, false, fail.Wrap("STORE_FAILED", markerErr)
-		}
-		return Store{Repo: repo, Root: root, LeaseTTL: DefaultLeaseTTL}, true, nil
+		return Store{Repo: repo, Root: root, LeaseTTL: DefaultLeaseTTL, Domain: domain}, markerExists, nil
 	}
 	if err != nil {
 		return Store{}, false, fail.Wrap("STORE_FAILED", err)
@@ -145,82 +154,127 @@ func Inspect(repo gitx.Repo) (Store, bool, error) {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return Store{}, false, fail.New("STORE_FAILED", "wip state version root is not a regular directory")
 	}
-	return Store{Repo: repo, Root: root, LeaseTTL: DefaultLeaseTTL}, true, nil
+	return Store{Repo: repo, Root: root, LeaseTTL: DefaultLeaseTTL, Domain: domain}, true, nil
 }
 
 type domainRecord struct {
-	SchemaVersion int    `json:"schema_version"`
-	Domain        string `json:"domain"`
-	StateVersion  int    `json:"state_version"`
+	SchemaVersion         int      `json:"schema_version"`
+	Domain                string   `json:"domain"`
+	StateVersion          int      `json:"state_version"`
+	MinimumReaderProtocol string   `json:"minimum_reader_protocol,omitempty"`
+	RequiredCapabilities  []string `json:"required_capabilities,omitempty"`
 }
 
-func prepareStateRoot(repo gitx.Repo, create bool) (string, error) {
+func currentDomainRecord() domainRecord {
+	return domainRecord{
+		SchemaVersion:         domainSchemaVersion,
+		Domain:                domainID,
+		StateVersion:          SchemaVersion,
+		MinimumReaderProtocol: contract.Protocol,
+		RequiredCapabilities:  contract.StateReaderCapabilities(),
+	}
+}
+
+func domainMetadata(marker domainRecord, exists bool) DomainMetadata {
+	return DomainMetadata{
+		SchemaVersion:         marker.SchemaVersion,
+		Domain:                marker.Domain,
+		StateVersion:          marker.StateVersion,
+		MinimumReaderProtocol: marker.MinimumReaderProtocol,
+		RequiredCapabilities:  slices.Clone(marker.RequiredCapabilities),
+		MarkerExists:          exists,
+		UpgradeRequired:       exists && marker.SchemaVersion == legacyDomainSchemaVersion,
+	}
+}
+
+func prepareStateRoot(repo gitx.Repo, create bool) (string, DomainMetadata, bool, error) {
 	common, err := os.OpenRoot(repo.CommonDir)
 	if err != nil {
-		return "", fail.Wrap("STORE_FAILED", err)
+		return "", DomainMetadata{}, false, fail.Wrap("STORE_FAILED", err)
 	}
 	defer func() { _ = common.Close() }()
 	if _, err := common.Lstat("ndev-wip"); err == nil {
-		return "", fail.New("COORDINATION_DOMAIN_CONFLICT", "legacy ndev-wip state exists; stop all lane processes and migrate or archive that domain before using standalone wip")
+		return "", DomainMetadata{}, false, fail.New("COORDINATION_DOMAIN_CONFLICT", "legacy ndev-wip state exists; stop all lane processes and migrate or archive that domain before using standalone wip")
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", fail.Wrap("STORE_FAILED", err)
+		return "", DomainMetadata{}, false, fail.Wrap("STORE_FAILED", err)
 	}
 	stateExists, err := ensureDirectory(common, "wip", create)
 	if err != nil {
-		return "", err
+		return "", DomainMetadata{}, false, err
 	}
 	stateRoot := filepath.Join(repo.CommonDir, "wip")
 	root := filepath.Join(stateRoot, fmt.Sprintf("v%d", SchemaVersion))
 	if !stateExists {
-		return root, nil
+		return root, domainMetadata(currentDomainRecord(), false), false, nil
 	}
 	if err := validateStateDirectories(common, "wip"); err != nil {
-		return "", err
+		return "", DomainMetadata{}, false, err
 	}
 	versionPath := fmt.Sprintf("wip/v%d", SchemaVersion)
 	versionExists, err := ensureDirectory(common, versionPath, false)
 	if err != nil {
-		return "", err
+		return "", DomainMetadata{}, false, err
 	}
 	if versionExists {
 		if err := validateVersionLayout(common, versionPath); err != nil {
-			return "", err
+			return "", DomainMetadata{}, false, err
 		}
 	}
 	markerPath := filepath.Join(stateRoot, "domain.json")
 	markerBody, markerErr := safeio.ReadRegular(markerPath, 64<<10)
+	markerExists := markerErr == nil
 	if errors.Is(markerErr, os.ErrNotExist) {
 		if !create {
-			return root, nil
+			return root, domainMetadata(currentDomainRecord(), false), false, nil
 		}
-		marker := domainRecord{SchemaVersion: domainSchemaVersion, Domain: domainID, StateVersion: SchemaVersion}
+		marker := currentDomainRecord()
 		body, marshalErr := json.MarshalIndent(marker, "", "  ")
 		if marshalErr != nil {
-			return "", fail.Wrap("STORE_FAILED", marshalErr)
+			return "", DomainMetadata{}, false, fail.Wrap("STORE_FAILED", marshalErr)
 		}
 		if createErr := atomicfile.Create(markerPath, append(body, '\n'), 0o600); createErr != nil && !errors.Is(createErr, atomicfile.ErrExists) {
-			return "", fail.Wrap("STORE_FAILED", createErr)
+			return "", DomainMetadata{}, false, fail.Wrap("STORE_FAILED", createErr)
 		}
 		markerBody, markerErr = safeio.ReadRegular(markerPath, 64<<10)
+		markerExists = markerErr == nil
 	}
 	if markerErr != nil {
-		return "", fail.Wrap("STORE_FAILED", markerErr)
+		return "", DomainMetadata{}, false, fail.Wrap("STORE_FAILED", markerErr)
+	}
+	var header struct {
+		SchemaVersion int `json:"schema_version"`
+	}
+	if err := json.Unmarshal(markerBody, &header); err != nil {
+		return "", DomainMetadata{}, false, fail.Wrap("STORE_FAILED", err)
+	}
+	if header.SchemaVersion != legacyDomainSchemaVersion && header.SchemaVersion != domainSchemaVersion {
+		return "", DomainMetadata{}, false, fail.Errorf("MIGRATION_REQUIRED", "domain marker schema version %d is unsupported; this wip release supports versions %d and %d", header.SchemaVersion, legacyDomainSchemaVersion, domainSchemaVersion)
 	}
 	var marker domainRecord
 	if err := strictjson.Decode(markerBody, &marker); err != nil {
-		return "", fail.Wrap("STORE_FAILED", err)
+		return "", DomainMetadata{}, false, fail.Wrap("STORE_FAILED", err)
 	}
 	if marker.Domain != domainID {
-		return "", fail.New("COORDINATION_DOMAIN_CONFLICT", "wip state is owned by an unsupported coordination domain")
-	}
-	if marker.SchemaVersion != domainSchemaVersion {
-		return "", fail.Errorf("MIGRATION_REQUIRED", "domain marker schema version %d is unsupported; this wip release supports version %d", marker.SchemaVersion, domainSchemaVersion)
+		return "", DomainMetadata{}, false, fail.New("COORDINATION_DOMAIN_CONFLICT", "wip state is owned by an unsupported coordination domain")
 	}
 	if marker.StateVersion != SchemaVersion {
-		return "", fail.Errorf("MIGRATION_REQUIRED", "state domain owns v%d; this wip release supports v%d", marker.StateVersion, SchemaVersion)
+		return "", DomainMetadata{}, false, fail.Errorf("MIGRATION_REQUIRED", "state domain owns v%d; this wip release supports v%d", marker.StateVersion, SchemaVersion)
+	}
+	if marker.SchemaVersion == domainSchemaVersion {
+		if marker.MinimumReaderProtocol == "" || len(marker.RequiredCapabilities) == 0 || !slices.IsSorted(marker.RequiredCapabilities) || len(marker.RequiredCapabilities) != len(slices.Compact(slices.Clone(marker.RequiredCapabilities))) {
+			return "", DomainMetadata{}, false, fail.New("STORE_FAILED", "domain reader-floor contract is empty, unsorted, or duplicated")
+		}
+		if err := contract.MeetsProtocolFloor(contract.Protocol, marker.MinimumReaderProtocol); err != nil {
+			return "", DomainMetadata{}, false, fail.Wrap("MIGRATION_REQUIRED", err)
+		}
+		if err := contract.Supports(marker.RequiredCapabilities); err != nil {
+			return "", DomainMetadata{}, false, fail.Wrap("MIGRATION_REQUIRED", err)
+		}
+	} else if create {
+		return "", DomainMetadata{}, false, fail.New("MIGRATION_REQUIRED", "legacy coordination marker is read-only; review and apply wip upgrade --state before mutation")
 	}
 	if !create {
-		return root, nil
+		return root, domainMetadata(marker, markerExists), markerExists, nil
 	}
 	paths := []string{fmt.Sprintf("wip/v%d", SchemaVersion)}
 	for _, directory := range []string{"lanes", "leases", "locks", "intents", "profiles", "init-intents", "archive"} {
@@ -228,10 +282,10 @@ func prepareStateRoot(repo gitx.Repo, create bool) (string, error) {
 	}
 	for _, path := range paths {
 		if _, err := ensureDirectory(common, path, true); err != nil {
-			return "", err
+			return "", DomainMetadata{}, false, err
 		}
 	}
-	return root, nil
+	return root, domainMetadata(marker, markerExists), markerExists, nil
 }
 
 func ensureDirectory(root *os.Root, path string, create bool) (bool, error) {
@@ -393,12 +447,12 @@ func (store Store) Create(ctx context.Context, options CreateOptions) (Lane, err
 	if _, err := store.Repo.Text(ctx, nil, "check-ref-format", ref); err != nil {
 		return Lane{}, fail.Wrap("INVALID_REF", err)
 	}
-	lock, err := store.LaneLock(options.ID, 0)
+	lock, err := store.LaneLock(options.ID, filelock.DefaultWait)
 	if err != nil {
 		return Lane{}, err
 	}
 	defer func() { _ = lock.Release() }()
-	registry, registryErr := store.registryLock(0)
+	registry, registryErr := store.registryLock(filelock.DefaultWait)
 	if registryErr != nil {
 		return Lane{}, registryErr
 	}
@@ -455,7 +509,7 @@ func (store Store) Claim(id, agent, session string, paths []string) (Lease, erro
 	if err := validateID(session, "session"); err != nil {
 		return Lease{}, err
 	}
-	lock, err := store.LaneLock(id, 0)
+	lock, err := store.LaneLock(id, filelock.DefaultWait)
 	if err != nil {
 		return Lease{}, err
 	}
@@ -474,7 +528,7 @@ func (store Store) Claim(id, agent, session string, paths []string) (Lease, erro
 	if len(normalized) == 0 {
 		return Lease{}, fail.New("INVALID_ARGS", "at least one path is required")
 	}
-	registry, err := store.registryLock(0)
+	registry, err := store.registryLock(filelock.DefaultWait)
 	if err != nil {
 		return Lease{}, err
 	}
@@ -549,7 +603,7 @@ func (store Store) Claim(id, agent, session string, paths []string) (Lease, erro
 }
 
 func (store Store) Renew(id, agent, session string) ([]Lease, error) {
-	lock, err := store.LaneLock(id, 0)
+	lock, err := store.LaneLock(id, filelock.DefaultWait)
 	if err != nil {
 		return nil, err
 	}
@@ -584,7 +638,7 @@ func (store Store) RenewWithLockHeld(expected Lane) ([]Lease, error) {
 }
 
 func (store Store) renewLocked(lane Lane) ([]Lease, error) {
-	registry, err := store.registryLock(0)
+	registry, err := store.registryLock(filelock.DefaultWait)
 	if err != nil {
 		return nil, err
 	}
@@ -619,7 +673,7 @@ func (store Store) renewLocked(lane Lane) ([]Lease, error) {
 }
 
 func (store Store) Current(agent, session, id string) (Status, error) {
-	registry, err := store.registryLock(0)
+	registry, err := store.registryLock(filelock.DefaultWait)
 	if err != nil {
 		return Status{}, err
 	}
@@ -665,7 +719,7 @@ func (store Store) currentLocked(agent, session, id string) (Status, error) {
 }
 
 func (store Store) Status(id string) (Status, error) {
-	registry, err := store.registryLock(0)
+	registry, err := store.registryLock(filelock.DefaultWait)
 	if err != nil {
 		return Status{}, err
 	}
@@ -683,7 +737,7 @@ func (store Store) statusLocked(id string) (Status, error) {
 }
 
 func (store Store) Load(id string) (Lane, error) {
-	registry, err := store.registryLock(0)
+	registry, err := store.registryLock(filelock.DefaultWait)
 	if err != nil {
 		return Lane{}, err
 	}
@@ -713,7 +767,7 @@ func (store Store) loadLane(id string) (Lane, error) {
 }
 
 func (store Store) LoadLease(id string) (Lease, error) {
-	registry, err := store.registryLock(0)
+	registry, err := store.registryLock(filelock.DefaultWait)
 	if err != nil {
 		return Lease{}, err
 	}
@@ -743,7 +797,7 @@ func (store Store) loadLease(id string) (Lease, error) {
 }
 
 func (store Store) ActivePaths(id string) ([]string, error) {
-	registry, err := store.registryLock(0)
+	registry, err := store.registryLock(filelock.DefaultWait)
 	if err != nil {
 		return nil, err
 	}
@@ -765,7 +819,7 @@ func (store Store) activePathsLocked(id string) ([]string, error) {
 }
 
 func (store Store) ValidateCapture(ctx context.Context, expected Lane, expectedPaths []string) error {
-	registry, err := store.registryLock(0)
+	registry, err := store.registryLock(filelock.DefaultWait)
 	if err != nil {
 		return err
 	}
@@ -801,7 +855,7 @@ func (store Store) ValidateCapture(ctx context.Context, expected Lane, expectedP
 // active lease while the caller holds the lane lock. The registry lock prevents
 // another lane from claiming an expired path between validation and renewal.
 func (store Store) RefreshCaptureLease(ctx context.Context, expected Lane, expectedPaths []string) error {
-	registry, err := store.registryLock(0)
+	registry, err := store.registryLock(filelock.DefaultWait)
 	if err != nil {
 		return err
 	}
@@ -1024,7 +1078,7 @@ func (store Store) validateCaptureIdentity(ctx context.Context, current, expecte
 }
 
 func (store Store) RecordCommit(ctx context.Context, id, commit string) error {
-	registry, err := store.registryLock(0)
+	registry, err := store.registryLock(filelock.DefaultWait)
 	if err != nil {
 		return err
 	}
@@ -1059,7 +1113,7 @@ func (store Store) RecordCommit(ctx context.Context, id, commit string) error {
 }
 
 func (store Store) Release(id, agent, session string, abort bool) error {
-	lock, err := store.LaneLock(id, 0)
+	lock, err := store.LaneLock(id, filelock.DefaultWait)
 	if err != nil {
 		return err
 	}
@@ -1091,7 +1145,7 @@ func (store Store) ReleaseWithLockHeld(expected Lane, abort bool) error {
 }
 
 func (store Store) releaseLocked(lane Lane, abort bool) error {
-	registry, err := store.registryLock(0)
+	registry, err := store.registryLock(filelock.DefaultWait)
 	if err != nil {
 		return err
 	}
