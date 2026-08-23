@@ -68,7 +68,7 @@ func (application app) runDoctor(ctx context.Context, repo gitx.Repo, args []str
 	if initialized {
 		report.State = "initialized"
 		if report.UpgradeRequired {
-			report.Findings = append(report.Findings, doctorFinding{Severity: "warning", Code: "STATE_UPGRADE_REQUIRED", Path: "domain.json", Message: "the legacy marker remains readable, but mutations require a reviewed wip upgrade --state plan"})
+			report.Findings = append(report.Findings, doctorFinding{Severity: "recovery", Code: "STATE_UPGRADE_REQUIRED", Path: "domain.json", Message: "the legacy marker remains readable, but mutations require a reviewed wip upgrade --state plan"})
 		}
 		auditDoctor(ctx, laneStore, &report)
 	}

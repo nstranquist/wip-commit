@@ -103,6 +103,12 @@ func TestStateUpgradeIsQuiescentAndDigestBound(t *testing.T) {
 	if err := os.WriteFile(marker, legacy, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	doctor := runCLI(t, []string{"--json", "--repo-dir", directory, "doctor"}, "")
+	var report doctorReport
+	decodeData(t, doctor.envelope.Data, &report)
+	if doctor.code != 1 || !doctor.envelope.OK || report.Healthy || !report.UpgradeRequired || len(report.Findings) != 1 || report.Findings[0].Code != "STATE_UPGRADE_REQUIRED" || report.Findings[0].Severity != "recovery" {
+		t.Fatalf("legacy marker doctor = %#v report=%#v", doctor.envelope, report)
+	}
 	preview := runCLI(t, []string{"--json", "--repo-dir", directory, "upgrade", "--state"}, "")
 	if preview.code != 0 || !preview.envelope.OK {
 		t.Fatalf("state preview = %#v stderr=%s", preview.envelope, preview.stderr)
