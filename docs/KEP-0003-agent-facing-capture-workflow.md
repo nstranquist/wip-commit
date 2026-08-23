@@ -1,4 +1,4 @@
-# KEP-0002: Agent-facing capture workflow
+# KEP-0003: Agent-facing capture workflow
 
 Status: Accepted and implemented
 

@@ -309,7 +309,7 @@ The output contains no agent ID, session ID, absolute path, remote URL, or file
 content. It explicitly states that capture does not authorize landing.
 
 See [HANDOFF.schema.json](HANDOFF.schema.json) and
-[KEP-0002](KEP-0002-agent-facing-capture-workflow.md).
+[KEP-0003](KEP-0003-agent-facing-capture-workflow.md).
 
 ## Schema contract validation
 

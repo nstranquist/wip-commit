@@ -48,7 +48,7 @@ protection, and Dependabot security updates are enabled.
 The repository has no Git tag and no GitHub release. Public source and passing
 hosted checks do not prove a release, launch, adoption, or stable support.
 
-The agent-facing workflow in KEP-0002 is local candidate work. It has not run on
+The agent-facing workflow in KEP-0003 is local candidate work. It has not run on
 hosted workers or landed on public `main`. Its exact final commit must pass the
 required pull-request checks before a beta tag can use it.
 

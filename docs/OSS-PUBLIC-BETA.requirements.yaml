@@ -114,9 +114,9 @@
       "id": "OSS-008",
       "gate": "public-beta",
       "title": "Run hosted operating-system tests",
-      "status": "verified",
+      "status": "external-evidence",
       "owner": "repository-owner",
-      "human_gate": false,
+      "human_gate": true,
       "acceptance": "The exact candidate passes Linux, macOS, Windows, race, vet, lint, module, and dependency-review jobs.",
       "evidence": [
         {"kind": "workflow", "value": ".github/workflows/ci.yml", "observed_on": "2026-08-14"},
@@ -468,7 +468,7 @@
       "human_gate": false,
       "acceptance": "Status classifies leased, captured, pending, and foreign staged entries. Ordinary authenticated use renews the complete active lease set. Message naming is a bound lane policy outside the capture kernel. Guided capture returns a privacy-bounded, non-authorizing handoff and can release only after handoff validation. Interactive initialization recommends one worktree per task.",
       "evidence": [
-        {"kind": "artifact", "value": "docs/KEP-0002-agent-facing-capture-workflow.md, docs/PLAN.schema.json, docs/HANDOFF.schema.json, and docs/SECURITY-REVIEW-2026-08-18.md", "observed_on": "2026-08-18"},
+        {"kind": "artifact", "value": "docs/KEP-0003-agent-facing-capture-workflow.md, docs/PLAN.schema.json, docs/HANDOFF.schema.json, and docs/SECURITY-REVIEW-2026-08-18.md", "observed_on": "2026-08-18"},
         {"kind": "test", "value": "TestStatusClassifiesCaptureStateAndForeignIndexEntries, TestMessagePolicyIsBoundOutsideCaptureKernel, TestReviewedPlanCaptureProducesBoundPrivateHandoff, TestCaptureRejectsDraftAndStaleReviewedPlans, and TestGuidedCaptureFinalReleasesAfterHandoffValidation", "observed_on": "2026-08-18"}
       ]
     }

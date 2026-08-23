@@ -2,7 +2,7 @@
 
 Review date: 2026-08-18
 
-Scope: KEP-0002, capture plan v2, policy binding, lease renewal, status, and
+Scope: KEP-0003, capture plan v2, policy binding, lease renewal, status, and
 handoff output.
 
 ## Sources
