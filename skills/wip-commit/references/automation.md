@@ -7,8 +7,10 @@ status as the only proof of capture.
 
 Run `wip --json contract`, then `wip --json doctor` before setup. Stop if the
 contract is incompatible or doctor reports an unsafe state record, an
-incomplete recovery, or another coordination domain. For healthy initialized
-state, run `wip --json status --observe`. `LANE_NOT_ACTIVE` selects a new
+incomplete recovery, or another coordination domain. If
+`data.upgrade_required` is true, complete a reviewed state-upgrade preview and
+apply before lane setup. For healthy initialized state with no required
+upgrade, run `wip --json status --observe`. `LANE_NOT_ACTIVE` selects a new
 standalone `wip init` lane. It does not authorize a legacy fallback.
 
 Validate the complete contract document and portable payload digest. If a

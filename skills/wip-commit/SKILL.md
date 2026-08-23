@@ -27,11 +27,13 @@ unchanged.
    absent or has no revision, build or install a source-stamped binary by using
    this repository's documented method.
 6. Run `wip --json doctor`. If it reports another coordination domain, stop.
-   Preserve both state roots and select one domain before setup. If doctor
-   reports healthy initialized state, run `wip --json status --observe`.
-   `LANE_NOT_ACTIVE` means this standalone domain remains authoritative and a
-   new standalone lane is required. Run `wip init`; never fall through to a
-   legacy coordination implementation.
+   Preserve both state roots and select one domain before setup. If
+   `data.upgrade_required` is true, stop lane setup. Follow the reviewed
+   `wip --json upgrade --state` preview/apply procedure first. If doctor reports
+   healthy initialized state with no required upgrade, run `wip --json status
+   --observe`. `LANE_NOT_ACTIVE` means this standalone domain remains
+   authoritative and a new standalone lane is required. Run `wip init`; never
+   fall through to a legacy coordination implementation.
 
 Never stash, reset, restore, clean, merge, push, or force-update a ref. Do not
 delete another lane, worktree, lock, profile, intent, or receipt.
