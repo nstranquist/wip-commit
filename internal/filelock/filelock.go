@@ -29,9 +29,6 @@ func acquire(path string, wait time.Duration, writeOwner bool) (*Lock, error) {
 	if wait > MaxWait {
 		return nil, fmt.Errorf("lock wait exceeds %s", MaxWait)
 	}
-	if wait == 0 {
-		wait = 2 * time.Minute
-	}
 	if writeOwner {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			return nil, err
@@ -75,11 +72,14 @@ func acquire(path string, wait time.Duration, writeOwner bool) (*Lock, error) {
 			}
 			return &Lock{file: file}, nil
 		}
-		if time.Now().After(deadline) {
+		if wait == 0 || !time.Now().Before(deadline) {
 			_ = file.Close()
 			return nil, fmt.Errorf("lock remained held after %s: %s", wait, path)
 		}
-		time.Sleep(50 * time.Millisecond)
+		pause := min(50*time.Millisecond, time.Until(deadline))
+		if pause > 0 {
+			time.Sleep(pause)
+		}
 	}
 }
 

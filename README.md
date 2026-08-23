@@ -529,8 +529,8 @@ recovery. Common actions are:
   its lease.
 - `SOURCE_INDEX_MOVED`: inspect the selected staged paths and rerun the complete
   plan.
-- `LOCK_TIMEOUT`: inspect active lanes, wait for the current operation, and
-  retry.
+- `LOCK_TIMEOUT`: the default zero wait fails fast. Inspect active lanes and
+  retry later, or set a bounded `--lock-wait` outside an agent turn.
 - `ref_updated: true`: preserve `plan_id` and `plan_digest`, then run the exact
   `wip reconcile` command.
 

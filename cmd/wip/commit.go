@@ -54,7 +54,7 @@ func (application app) runCaptureTransaction(ctx context.Context, laneStore stor
 	set.BoolVar(&options.final, "final", false, "release the lane after a validated capture handoff")
 	set.DurationVar(&options.hookTimeout, "hook-timeout", engine.DefaultHookTimeout, "pre/post-commit hook timeout")
 	set.DurationVar(&options.verifyTimeout, "verify-timeout", engine.DefaultVerifyTimeout, "default verify command timeout")
-	set.DurationVar(&options.lockWait, "lock-wait", 0, "time to wait for the lane lock")
+	set.DurationVar(&options.lockWait, "lock-wait", 0, "time to wait for the lane lock; zero fails fast")
 	if err := set.Parse(args); err != nil {
 		return application.failure(action, fail.Wrap("INVALID_ARGS", err), nil, 2)
 	}
@@ -431,7 +431,7 @@ func (application app) runReconcile(ctx context.Context, laneStore store.Store, 
 	identity.bind(set)
 	planID := set.String("plan-id", "", "immutable plan id from the failed commit result")
 	planDigest := set.String("plan-digest", "", "immutable sha256 plan digest")
-	lockWait := set.Duration("lock-wait", 0, "time to wait for the lane lock")
+	lockWait := set.Duration("lock-wait", 0, "time to wait for the lane lock; zero fails fast")
 	if err := set.Parse(args); err != nil {
 		return application.failure("reconcile", fail.Wrap("INVALID_ARGS", err), nil, 2)
 	}

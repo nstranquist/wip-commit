@@ -246,7 +246,7 @@ Capture one all-or-nothing staged split plan. Important options:
   --allow-wip                  authorize the wip: prefix
   --hook-timeout DURATION      hook limit
   --verify-timeout DURATION    default verify limit
-  --lock-wait DURATION         lane-lock wait`,
+  --lock-wait DURATION         lane-lock wait; zero fails fast`,
 		"capture": `Usage: wip capture --plan FILE [options]
 
 Capture one reviewed v2 plan and emit a validated capture-only handoff.
@@ -255,7 +255,7 @@ Capture one reviewed v2 plan and emit a validated capture-only handoff.
   --allow-wip                  authorize the wip: prefix
   --hook-timeout DURATION      hook limit
   --verify-timeout DURATION    default verify limit
-  --lock-wait DURATION         lane-lock wait`,
+  --lock-wait DURATION         lane-lock wait; zero fails fast`,
 		"handoff": "Usage: wip handoff [identity options] [--plan-id ID --plan-digest SHA256]\n\nRead-only validation and output of a capture-only, non-authorizing handoff.",
 		"status":  "Usage: wip status [--lane ID] [--agent ID] [--session ID] [--observe]\n\nStatus renews active leases by default. Use --observe for a pure read.",
 		"doctor":  "Usage: wip doctor\n\nRead-only audit of bounded state records, refs, and recovery intents.",

@@ -16,7 +16,7 @@
 | `RELEASED_LANE_ACTIVE_LEASE` | A released or aborted lane still has an active stored lease | Stop. Preserve the records and inspect with `wip doctor` |
 | `WORKTREE_CONFLICT` | An exclusive worktree binding conflicts | Use another linked worktree or release the active lane |
 | `WORKTREE_MISMATCH` | The selected lane belongs to another checkout | Change to the lane's recorded checkout; do not export or use its identity elsewhere |
-| `LOCK_TIMEOUT` | Another process held a required lock | Wait, inspect `wip status`, and retry |
+| `LOCK_TIMEOUT` | Another process held a required lock | The default fails fast. Inspect `wip status` and retry later; use an explicit bounded `--lock-wait` only when blocking is intended |
 | `COORDINATION_DOMAIN_CONFLICT` | Public and legacy coordination state cannot share one repository | Stop all lane processes. Preserve both state roots, then select one domain |
 
 ## Capture errors

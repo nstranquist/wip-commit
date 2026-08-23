@@ -37,6 +37,31 @@ func TestExclusiveLockWaitAndRelease(t *testing.T) {
 	}
 }
 
+func TestZeroWaitIsFailFast(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "locks", "lane.lock")
+	first, err := Acquire(path, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = first.Release() }()
+
+	started := time.Now()
+	if _, err := Acquire(path, 0); err == nil {
+		t.Fatal("zero-wait acquisition bypassed the current owner")
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("zero-wait acquisition blocked for %s", elapsed)
+	}
+
+	started = time.Now()
+	if _, err := AcquireExisting(path, 0); err == nil {
+		t.Fatal("zero-wait existing acquisition bypassed the current owner")
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("zero-wait existing acquisition blocked for %s", elapsed)
+	}
+}
+
 func TestAcquireExistingPreservesLockFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "locks", "lane.lock")
 	created, err := Acquire(path, time.Second)
