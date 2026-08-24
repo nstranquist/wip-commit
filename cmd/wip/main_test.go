@@ -152,6 +152,48 @@ func TestObserveFlagVariantsDoNotRenewLeases(t *testing.T) {
 	}
 }
 
+func TestPlanObserveIsRepositoryByteForByteReadOnly(t *testing.T) {
+	directory := cliTestRepo(t)
+	writeCLI(t, directory, "core.txt", "planned without renewal\n")
+	cliGit(t, directory, "add", "core.txt")
+	initializeCLI(t, directory, "plan-observe", "core.txt")
+	common := cliGit(t, directory, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	before := commandTreeDigest(t, common)
+
+	result := runCLI(t, []string{
+		"--json", "--repo-dir", directory, "plan", "--lane", "plan-observe",
+		"--source", "staged_index", "--untracked", "not_applicable", "--observe",
+	}, "")
+	if result.code != 0 || !result.envelope.OK {
+		t.Fatalf("observe plan = %#v stderr=%s", result.envelope, result.stderr)
+	}
+	var proposal planProposal
+	decodeData(t, result.envelope.Data, &proposal)
+	if proposal.SchemaVersion != reviewPlanSchemaVersion || !samePlanStrings(proposal.SourcePaths, []string{"core.txt"}) {
+		t.Fatalf("observe proposal = %#v", proposal)
+	}
+	if after := commandTreeDigest(t, common); after != before {
+		t.Fatalf("plan --observe changed repository state: before=%s after=%s", before, after)
+	}
+}
+
+func TestStatusObserveIsRepositoryByteForByteReadOnly(t *testing.T) {
+	directory := cliTestRepo(t)
+	initializeCLI(t, directory, "status-observe-bytes", "core.txt")
+	common := cliGit(t, directory, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	before := commandTreeDigest(t, common)
+
+	result := runCLI(t, []string{
+		"--json", "--repo-dir", directory, "status", "--lane", "status-observe-bytes", "--observe",
+	}, "")
+	if result.code != 0 || !result.envelope.OK || result.envelope.Context == nil || result.envelope.Context.LeaseRenewed {
+		t.Fatalf("observe status = %#v stderr=%s", result.envelope, result.stderr)
+	}
+	if after := commandTreeDigest(t, common); after != before {
+		t.Fatalf("status --observe changed repository state: before=%s after=%s", before, after)
+	}
+}
+
 func TestEnvRejectsAnotherWorktreeWithoutRenewing(t *testing.T) {
 	anchor := cliTestRepo(t)
 	linked := filepath.Join(t.TempDir(), "bound-worktree")
@@ -339,7 +381,7 @@ func TestPlanPreviewUsesComponentBoundariesWithoutMutation(t *testing.T) {
 	}
 }
 
-func TestPlanForRootDotfileHasGuidanceAndPassesReviewedDryRun(t *testing.T) {
+func TestPlanForRootDotfileHasGuidanceAndValidatesReviewedDryRun(t *testing.T) {
 	directory := cliTestRepo(t)
 	writeCLI(t, directory, ".staticcheck-version", "v0.8.0-rc.1\n")
 	cliGit(t, directory, "add", ".staticcheck-version")
@@ -370,6 +412,11 @@ func TestPlanForRootDotfileHasGuidanceAndPassesReviewedDryRun(t *testing.T) {
 	dryRun := runCLI(t, []string{"--json", "--repo-dir", directory, "commit", "--lane", "root-config-plan", "--dry-run", "--plan", planPath}, "")
 	if dryRun.code != 0 || !dryRun.envelope.OK {
 		t.Fatalf("reviewed root config dry-run: %#v stderr=%s", dryRun.envelope, dryRun.stderr)
+	}
+	var result engine.Result
+	decodeData(t, dryRun.envelope.Data, &result)
+	if result.GateOutcome != "skipped" || result.Execution == nil || result.Execution.Policy != "no-exec" {
+		t.Fatalf("reviewed root config dry-run contract = %#v", result)
 	}
 	if got := cliGit(t, directory, "rev-parse", "HEAD"); got != head {
 		t.Fatalf("dry-run moved HEAD: %s -> %s", head, got)
@@ -406,7 +453,7 @@ func TestPlanPreviewExcludesAlreadyCapturedStagedPaths(t *testing.T) {
 	}
 	var proposal planProposal
 	decodeData(t, preview.envelope.Data, &proposal)
-	if len(proposal.StagedPaths) != 1 || proposal.StagedPaths[0] != "docs.txt" || len(proposal.Groups) != 1 {
+	if len(proposal.SourcePaths) != 1 || proposal.SourcePaths[0] != "docs.txt" || len(proposal.Groups) != 1 {
 		t.Fatalf("incremental proposal = %#v", proposal)
 	}
 }

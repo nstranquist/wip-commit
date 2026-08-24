@@ -1,12 +1,21 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
+	"os"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"strings"
+
+	skillbundle "github.com/nstranquist/wip-commit/skills/wip-commit"
 )
 
 const versionResultSchema = "2.0.0"
+
+const maxVersionExecutableBytes = 512 << 20
 
 var (
 	buildRevision    string
@@ -16,15 +25,17 @@ var (
 )
 
 type versionResult struct {
-	SchemaVersion string `json:"schema_version"`
-	Version       string `json:"version"`
-	Channel       string `json:"channel"`
-	ReleaseTag    string `json:"release_tag,omitempty"`
-	SourceStamped bool   `json:"source_stamped"`
-	Revision      string `json:"revision,omitempty"`
-	SourceState   string `json:"source_state,omitempty"`
-	VCSTime       string `json:"vcs_time,omitempty"`
-	GoVersion     string `json:"go_version"`
+	SchemaVersion        string `json:"schema_version"`
+	Version              string `json:"version"`
+	Channel              string `json:"channel"`
+	ReleaseTag           string `json:"release_tag,omitempty"`
+	SourceStamped        bool   `json:"source_stamped"`
+	Revision             string `json:"revision,omitempty"`
+	SourceState          string `json:"source_state,omitempty"`
+	VCSTime              string `json:"vcs_time,omitempty"`
+	GoVersion            string `json:"go_version"`
+	ExecutableSHA256     string `json:"executable_sha256,omitempty"`
+	PortableBundleSHA256 string `json:"portable_bundle_sha256,omitempty"`
 }
 
 func currentVersionInfo() versionResult {
@@ -37,6 +48,8 @@ func currentVersionInfo() versionResult {
 		VCSTime:       strings.TrimSpace(buildVCSTime),
 		GoVersion:     runtime.Version(),
 	}
+	result.ExecutableSHA256 = currentExecutableDigest()
+	result.PortableBundleSHA256, _ = skillbundle.PayloadDigest()
 	build, ok := debug.ReadBuildInfo()
 	if !ok {
 		return finalizeVersionIdentity(result)
@@ -47,7 +60,43 @@ func currentVersionInfo() versionResult {
 	return versionInfoFromSettings(result, build.Settings)
 }
 
+func currentExecutableDigest() string {
+	path, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	path, err = filepath.EvalSymlinks(path)
+	if err != nil {
+		return ""
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() < 1 || info.Size() > maxVersionExecutableBytes {
+		return ""
+	}
+	hash := sha256.New()
+	written, err := io.Copy(hash, io.LimitReader(file, maxVersionExecutableBytes+1))
+	if err != nil || written != info.Size() {
+		return ""
+	}
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil))
+}
+
 func versionInfoFromSettings(result versionResult, settings []debug.BuildSetting) versionResult {
+	trustedReleaseInjection := result.ReleaseTag != "" && result.ReleaseTag == "v"+result.Version && !strings.HasSuffix(result.Version, "-dev")
+	if !trustedReleaseInjection {
+		// Development builds must use Go's VCS settings. Do not let arbitrary
+		// linker flags turn a dirty or unrelated source build into a clean one
+		// or claim that a development version is a release.
+		result.ReleaseTag = ""
+		result.Revision = ""
+		result.SourceState = ""
+		result.VCSTime = ""
+	}
 	for _, setting := range settings {
 		switch setting.Key {
 		case "vcs.revision":

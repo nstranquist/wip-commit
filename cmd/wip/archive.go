@@ -54,10 +54,11 @@ func (application app) runArchive(ctx context.Context, repo gitx.Repo, args []st
 		if !*apply || !*yes {
 			return application.failure("archive", fail.New("CONFIRMATION_REQUIRED", "archive restore requires --apply --yes"), nil, 2)
 		}
-		laneStore, err := inspectArchiveStore(repo)
+		laneStore, writerFence, err := openArchiveStoreForWrite(repo)
 		if err != nil {
 			return application.failure("archive", err, nil, 1)
 		}
+		defer func() { _ = writerFence.Release() }()
 		receipt, err := laneStore.RestoreArchive(ctx, *restore)
 		result := archiveResult{DryRun: false, LaneFilters: []string{}, Candidates: []store.ArchiveCandidate{}, Receipt: &receipt}
 		if err != nil {
@@ -72,10 +73,11 @@ func (application app) runArchive(ctx context.Context, repo gitx.Repo, args []st
 		if !*apply || !*yes {
 			return application.failure("archive", fail.New("CONFIRMATION_REQUIRED", "archive resume requires --apply --yes"), nil, 2)
 		}
-		laneStore, err := inspectArchiveStore(repo)
+		laneStore, writerFence, err := openArchiveStoreForWrite(repo)
 		if err != nil {
 			return application.failure("archive", err, nil, 1)
 		}
+		defer func() { _ = writerFence.Release() }()
 		receipt, err := laneStore.ResumeArchive(ctx, *resume)
 		result := archiveResult{DryRun: false, Cutoff: receipt.Before, LaneFilters: []string{}, Candidates: receipt.Candidates, Receipt: &receipt}
 		if err != nil {
@@ -153,7 +155,12 @@ func (application app) runArchive(ctx context.Context, repo gitx.Repo, args []st
 	if len(candidates) == 0 {
 		return application.failure("archive", fail.New("ARCHIVE_EMPTY", "no eligible lanes match the reviewed archive plan"), result, 1)
 	}
-	laneStore, err = store.Open(repo)
+	writerFence, err := store.AcquireWriterFence(repo, store.DefaultWriterFenceWait)
+	if err != nil {
+		return application.failure("archive", err, result, 1)
+	}
+	defer func() { _ = writerFence.Release() }()
+	laneStore, err = store.OpenWithWriterFence(repo, writerFence)
 	if err != nil {
 		return application.failure("archive", err, result, 1)
 	}
@@ -175,6 +182,32 @@ func inspectArchiveStore(repo gitx.Repo) (store.Store, error) {
 		return store.Store{}, fail.New("ARCHIVE_NOT_FOUND", "archive receipt does not exist because wip state is not initialized")
 	}
 	return laneStore, nil
+}
+
+func openArchiveStoreForWrite(repo gitx.Repo) (store.Store, *store.WriterFence, error) {
+	_, initialized, err := store.Inspect(repo)
+	if err != nil {
+		return store.Store{}, nil, err
+	}
+	if !initialized {
+		return store.Store{}, nil, fail.New("ARCHIVE_NOT_FOUND", "archive receipt does not exist because wip state is not initialized")
+	}
+	fence, err := store.AcquireWriterFence(repo, store.DefaultWriterFenceWait)
+	if err != nil {
+		return store.Store{}, nil, err
+	}
+	laneStore, initialized, err := store.Inspect(repo)
+	if err == nil && !initialized {
+		err = fail.New("ARCHIVE_NOT_FOUND", "archive receipt does not exist because wip state is not initialized")
+	}
+	if err == nil {
+		laneStore, err = store.OpenWithWriterFence(repo, fence)
+	}
+	if err != nil {
+		_ = fence.Release()
+		return store.Store{}, nil, err
+	}
+	return laneStore, fence, nil
 }
 
 func formatArchivePreview(result archiveResult) string {

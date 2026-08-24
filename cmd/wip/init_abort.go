@@ -59,7 +59,12 @@ func (application app) runInitAbort(ctx context.Context, repo gitx.Repo, args []
 		return application.failure("init-abort", fail.New("LANE_NOT_ACTIVE", "wip state is not initialized"), nil, 1)
 	}
 	if *apply {
-		laneStore, err = store.Open(repo)
+		writerFence, fenceErr := store.AcquireWriterFence(repo, store.DefaultWriterFenceWait)
+		if fenceErr != nil {
+			return application.failure("init-abort", fenceErr, nil, 1)
+		}
+		defer func() { _ = writerFence.Release() }()
+		laneStore, err = store.OpenWithWriterFence(repo, writerFence)
 		if err != nil {
 			return application.failure("init-abort", err, nil, 1)
 		}

@@ -12,30 +12,45 @@ import (
 
 	"github.com/nstranquist/wip-commit/internal/engine"
 	"github.com/nstranquist/wip-commit/internal/fail"
+	"github.com/nstranquist/wip-commit/internal/pathid"
 	"github.com/nstranquist/wip-commit/internal/policy"
 	"github.com/nstranquist/wip-commit/internal/store"
 	"github.com/nstranquist/wip-commit/internal/strictjson"
 )
 
-const reviewPlanSchemaVersion = "2.0.0"
+const reviewPlanSchemaVersion = "3.0.0"
 
 type resolvedCommitPlan struct {
-	Groups              []engine.Group
-	ReviewDigest        string
-	ExpectedIndexDigest string
-	Policy              policy.Receipt
-	Reviewed            bool
-	Plan                *planProposal
+	Groups               []engine.Group
+	ReviewDigest         string
+	ExpectedSourceDigest string
+	SourceMode           engine.SourceMode
+	UntrackedPolicy      engine.UntrackedPolicy
+	Policy               policy.Receipt
+	Reviewed             bool
+	Plan                 *planProposal
 }
 
 func decodeCommitPlan(reader io.Reader) (resolvedCommitPlan, error) {
+	body, err := readCommitPlanBody(reader)
+	if err != nil {
+		return resolvedCommitPlan{}, err
+	}
+	return decodeCommitPlanBody(body)
+}
+
+func readCommitPlanBody(reader io.Reader) ([]byte, error) {
 	body, err := io.ReadAll(io.LimitReader(reader, maxPlanBytes+1))
 	if err != nil {
-		return resolvedCommitPlan{}, fail.Wrap("INVALID_PLAN", err)
+		return nil, fail.Wrap("INVALID_PLAN", err)
 	}
 	if len(body) > maxPlanBytes {
-		return resolvedCommitPlan{}, fail.Errorf("INVALID_PLAN", "plan exceeds %d bytes", maxPlanBytes)
+		return nil, fail.Errorf("INVALID_PLAN", "plan exceeds %d bytes", maxPlanBytes)
 	}
+	return body, nil
+}
+
+func decodeCommitPlanBody(body []byte) (resolvedCommitPlan, error) {
 	trimmed := strings.TrimSpace(string(body))
 	if strings.HasPrefix(trimmed, "[") {
 		groups, err := decodeLegacyPlan(body)
@@ -74,7 +89,7 @@ func validateReviewedPlan(ctx context.Context, laneStore store.Store, lane store
 	if plan.State != "reviewed" {
 		return resolvedCommitPlan{}, fail.New("PLAN_NOT_REVIEWED", "set plan state to reviewed only after replacing every empty message and reviewing each path group")
 	}
-	if plan.Lane != lane.ID || plan.TargetRef != lane.Ref || plan.LaneTip != lane.CurrentSHA {
+	if plan.Lane != lane.ID || plan.Agent != lane.Agent || plan.Session != lane.Session || plan.TargetRef != lane.Ref || plan.LaneTip != lane.CurrentSHA {
 		return resolvedCommitPlan{}, fail.New("STALE_PLAN", "plan lane identity or tip no longer matches the active lane")
 	}
 	if plan.SourceHead != lane.BaseSHA {
@@ -104,19 +119,25 @@ func validateReviewedPlan(ctx context.Context, laneStore store.Store, lane store
 	if plan.LeaseDigest != leaseScopeDigest(status.Leases, time.Now().UTC()) {
 		return resolvedCommitPlan{}, fail.New("STALE_PLAN", "active lease scope changed after the plan was drafted")
 	}
-	current, err := selectedStaged(ctx, laneStore, lane.CurrentSHA, allowed, nil)
+	mode, untracked, err := engine.NormalizeSource(plan.SourceMode, plan.UntrackedPolicy)
+	if err != nil || mode != plan.SourceMode || untracked != plan.UntrackedPolicy {
+		return resolvedCommitPlan{}, fail.New("INVALID_PLAN", "reviewed plan source mode or untracked policy is invalid")
+	}
+	scopes, err := laneStore.Repo.NormalizePaths(plan.SourceScopes)
+	if err != nil || len(scopes) == 0 || !samePlanStrings(scopes, plan.SourceScopes) {
+		return resolvedCommitPlan{}, fail.New("INVALID_PLAN", "reviewed plan source scopes are empty or not canonical")
+	}
+	for _, scope := range scopes {
+		if !pathid.Covered(scope, allowed) {
+			return resolvedCommitPlan{}, fail.New("STALE_PLAN", "reviewed plan source scope is outside the active lease set")
+		}
+	}
+	current, err := engine.InspectSource(ctx, laneStore.Repo, lane.CurrentSHA, scopes, mode, untracked)
 	if err != nil {
 		return resolvedCommitPlan{}, err
 	}
-	if !samePlanStrings(current, plan.StagedPaths) {
-		return resolvedCommitPlan{}, fail.New("STALE_PLAN", "capture-candidate path set changed after the plan was drafted")
-	}
-	entries, err := laneStore.Repo.IndexEntries(ctx, nil)
-	if err != nil {
-		return resolvedCommitPlan{}, fail.Wrap("GIT_FAILED", err)
-	}
-	if digest := engine.SelectedIndexDigest(entries, plan.StagedPaths); digest != plan.SourceIndexDigest {
-		return resolvedCommitPlan{}, fail.New("STALE_PLAN", "selected staged index entries changed after the plan was drafted")
+	if !samePlanStrings(current.Paths, plan.SourcePaths) || current.Digest != plan.SourceDigest {
+		return resolvedCommitPlan{}, fail.New("STALE_PLAN", "the reviewed source path set or content changed after the plan was drafted")
 	}
 	groups := planGroups(*plan)
 	if len(groups) == 0 {
@@ -134,7 +155,7 @@ func validateReviewedPlan(ctx context.Context, laneStore store.Store, lane store
 		plannedPaths = append(plannedPaths, normalized...)
 	}
 	sort.Strings(plannedPaths)
-	if !samePlanStrings(plannedPaths, plan.StagedPaths) {
+	if !samePlanStrings(plannedPaths, plan.SourcePaths) {
 		return resolvedCommitPlan{}, fail.New("INVALID_PLAN", "reviewed groups must cover every planned path exactly once")
 	}
 	messages := make([]string, 0, len(groups))
@@ -149,11 +170,13 @@ func validateReviewedPlan(ctx context.Context, laneStore store.Store, lane store
 		return resolvedCommitPlan{}, err
 	}
 	return resolvedCommitPlan{
-		Groups:              groups,
-		ReviewDigest:        digest,
-		ExpectedIndexDigest: plan.SourceIndexDigest,
-		Policy:              plan.MessagePolicy,
-		Reviewed:            true,
+		Groups:               groups,
+		ReviewDigest:         digest,
+		ExpectedSourceDigest: plan.SourceDigest,
+		SourceMode:           plan.SourceMode,
+		UntrackedPolicy:      plan.UntrackedPolicy,
+		Policy:               plan.MessagePolicy,
+		Reviewed:             true,
 	}, nil
 }
 

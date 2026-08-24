@@ -23,6 +23,7 @@ type app struct {
 	leaseHeartbeat         func(context.Context, store.Store, store.Lane, []string) (context.Context, func() error, error)
 	beforeFinalRelease     func()
 	afterHandoffValidation func()
+	migrationProducer      migrationProducerFunc
 }
 
 type errorPayload struct {
@@ -75,6 +76,11 @@ func (application *app) run(ctx context.Context, args []string) int {
 	if command == "upgrade" {
 		return application.runUpgrade(ctx, rest)
 	}
+	if command == "capture" {
+		if err := application.preflightCapturePlan(rest); err != nil {
+			return application.failure(command, err, nil, 2)
+		}
+	}
 	repo, err := gitx.Discover(ctx, application.repoDir)
 	if err != nil {
 		return application.failure(command, err, nil, 1)
@@ -88,6 +94,9 @@ func (application *app) run(ctx context.Context, args []string) int {
 	if command == "archive" {
 		return application.runArchive(ctx, repo, rest)
 	}
+	if command == "migrate" {
+		return application.runMigrate(ctx, repo, rest)
+	}
 	if command == "init-abort" {
 		return application.runInitAbort(ctx, repo, rest)
 	}
@@ -96,11 +105,16 @@ func (application *app) run(ctx context.Context, args []string) int {
 	case "env":
 		readOnly = envObserveRequested(rest)
 	case "handoff":
-		readOnly = true
+		// Handoff renews an active lane after it validates the capture receipt.
+		// Keep the repository writer fence for that complete transaction.
+		readOnly = false
 	case "status":
 		readOnly = statusObserveRequested(rest)
 	case "plan":
-	case "claim", "renew", "commit", "capture", "reconcile", "release", "abort":
+		readOnly = planObserveRequested(rest)
+	case "commit":
+		readOnly = booleanFlagRequested(rest, "dry-run")
+	case "claim", "renew", "capture", "reconcile", "release", "abort":
 	default:
 		return application.failure(command, fail.Errorf("INVALID_ARGS", "unknown command %q", command), nil, 2)
 	}
@@ -112,7 +126,12 @@ func (application *app) run(ctx context.Context, args []string) int {
 		return application.failure(command, err, nil, 1)
 	}
 	if !readOnly {
-		laneStore, err = store.Open(repo)
+		writerFence, fenceErr := store.AcquireWriterFence(repo, store.DefaultWriterFenceWait)
+		if fenceErr != nil {
+			return application.failure(command, fenceErr, nil, 1)
+		}
+		defer func() { _ = writerFence.Release() }()
+		laneStore, err = store.OpenWithWriterFence(repo, writerFence)
 	}
 	if err != nil {
 		return application.failure(command, err, nil, 1)
@@ -196,7 +215,7 @@ func (application app) flagSet(command string) *flag.FlagSet {
 
 func (application app) printHelp() {
 	output := application.stdout
-	_, _ = fmt.Fprintln(output, `wip safely captures exact staged subsets on agent-owned refs.
+	_, _ = fmt.Fprintln(output, `wip safely captures exact private sources on agent-owned refs.
 
 Usage:
   wip [--json] [--repo-dir DIR] <command> [options]
@@ -207,11 +226,12 @@ Commands:
   doctor      audit bounded state, refs, and recovery requirements
   archive     preview or apply recoverable state-record archival
   upgrade     preview or apply one digest-bound state, binary, or skill upgrade
+  migrate     preview or apply one digest-bound coordination migration
   status      classify staged state and show lane, lease, ref, and intent health
   env         print shell environment for a lane
   claim       claim additional paths
   renew       renew active path leases
-  plan        create one bound draft for staged leased paths
+  plan        create one bound draft for selected leased source paths
   commit      capture one atomic split plan
   capture     capture one reviewed bound plan and emit a typed handoff
   handoff     validate and print a capture-only handoff
@@ -249,25 +269,26 @@ Preview is the default. Apply requires the digest from that preview.
   --apply --yes                remove a safe intent before lane creation`,
 		"commit": `Usage: wip commit [options]
 
-Capture one all-or-nothing staged split plan. Important options:
+Capture one all-or-nothing private-source split plan. Important options:
   --plan FILE                  strict JSON plan, or - for stdin
   --single --message MESSAGE   explicit one-commit compatibility path
   --path PATH                  staged scope for --single; repeatable
-  --dry-run                    run gates without commits or a ref update
+  --dry-run                    validate structure without hooks, verify commands, commits, or a ref update
   --allow-wip                  authorize the wip: prefix
   --hook-timeout DURATION      hook limit
   --verify-timeout DURATION    default verify limit
   --lock-wait DURATION         lane-lock wait; zero fails fast`,
 		"capture": `Usage: wip capture --plan FILE [options]
 
-Capture one reviewed v2 plan and emit a validated capture-only handoff.
+Capture one reviewed v3 plan and emit a validated cumulative capture-only handoff.
   --plan FILE                  reviewed bound plan from wip plan
+  --review-plan-digest SHA256 exact canonical digest supplied by the reviewer
   --final                      release the lane after the handoff validates
   --allow-wip                  authorize the wip: prefix
   --hook-timeout DURATION      hook limit
   --verify-timeout DURATION    default verify limit
   --lock-wait DURATION         lane-lock wait; zero fails fast`,
-		"handoff": "Usage: wip handoff [identity options] [--plan-id ID --plan-digest SHA256]\n\nRead-only validation and output of a capture-only, non-authorizing handoff.",
+		"handoff": "Usage: wip handoff [identity options] [--plan-id ID --plan-digest SHA256]\n\nValidate and output one cumulative, capture-only, non-authorizing handoff. Active-lane use renews leases.",
 		"status":  "Usage: wip status [--lane ID] [--agent ID] [--session ID] [--observe]\n\nStatus renews active leases by default. Use --observe for a pure read.",
 		"doctor":  "Usage: wip doctor\n\nRead-only audit of bounded state records, refs, and recovery intents.",
 		"archive": `Usage: wip archive [options]
@@ -281,10 +302,17 @@ Preview is the default. Important options:
   --apply --yes               apply the exact reviewed archive plan
   --resume ARCHIVE_ID         resume a prepared receipt; requires --apply --yes
   --restore ARCHIVE_ID        restore records; also requires --apply --yes`,
-		"env":       "Usage: wip env --lane ID [--observe]",
-		"claim":     "Usage: wip claim [identity options] --path PATH [--path PATH...]",
-		"renew":     "Usage: wip renew [--lane ID] [--agent ID] [--session ID]",
-		"plan":      "Usage: wip plan [identity options] [--path PATH...] [--out FILE]\n\nCreate one bound draft. Add messages and set its state to reviewed before capture.",
+		"env":   "Usage: wip env --lane ID [--observe]",
+		"claim": "Usage: wip claim [identity options] --path PATH [--path PATH...]",
+		"renew": "Usage: wip renew [--lane ID] [--agent ID] [--session ID]",
+		"plan": `Usage: wip plan [identity options] [--path PATH...] [--out FILE]
+
+Create one bound private-source draft. Add messages and set its state to reviewed before capture.
+  --source staged_index|worktree_snapshot
+                              select the exact source model
+  --untracked not_applicable|forbid|include
+                              select explicit untracked behavior
+  --observe                   do not renew leases or write an output file`,
 		"reconcile": "Usage: wip reconcile [identity options] --plan-id ID --plan-digest SHA256",
 		"release":   "Usage: wip release [--lane ID] [--agent ID] [--session ID]",
 		"abort":     "Usage: wip abort [--lane ID] [--agent ID] [--session ID]",
@@ -297,6 +325,15 @@ Preview is the default. Apply one exact reviewed target at a time.
   --apply --yes                apply only that byte-bound plan
   --install-dir DIR            binary install directory (default ~/.local/bin)
   --skill-dir DIR              agent skill directory (default ~/.agents/skills)`,
+		"migrate": `Usage: wip migrate (--preview | --status | --apply | --resume | --rollback) [options]
+
+Experimental coordination-domain migration. Preview and status are read-only.
+  --preview                    emit the complete immutable migration plan
+  --status [--migration-id ID] inspect journal, receipt, and archive state
+  --apply|--resume|--rollback  select one exact mutation mode
+  --plan FILE                  strict reviewed plan; use - for stdin
+  --plan-digest SHA256 --yes   bind and confirm the exact reviewed plan
+  --lock-wait DURATION         common writer-lock wait; zero fails fast`,
 	}
 	if text, ok := usage[command]; ok {
 		_, _ = fmt.Fprintln(application.stdout, text)

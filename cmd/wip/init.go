@@ -435,7 +435,12 @@ func executeInit(ctx context.Context, source gitx.Repo, options initOptions, pro
 		plannedWorktree = options.createWorktree
 	}
 	result.Worktree = plannedWorktree
-	coordinationStore, err := store.Open(source)
+	writerFence, err := store.AcquireWriterFence(source, store.DefaultWriterFenceWait)
+	if err != nil {
+		return result, err
+	}
+	defer func() { _ = writerFence.Release() }()
+	coordinationStore, err := store.OpenWithWriterFence(source, writerFence)
 	if err != nil {
 		return result, err
 	}
@@ -476,7 +481,7 @@ func executeInit(ctx context.Context, source gitx.Repo, options initOptions, pro
 		if err := markStep("worktree-ready"); err != nil {
 			return err
 		}
-		laneStore, err := store.Open(target)
+		laneStore, err := store.OpenWithWriterFence(target, writerFence)
 		if err != nil {
 			return err
 		}

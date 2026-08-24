@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/nstranquist/wip-commit/internal/engine"
 	"github.com/nstranquist/wip-commit/internal/fail"
 	"github.com/nstranquist/wip-commit/internal/gitx"
 	"github.com/nstranquist/wip-commit/internal/store"
@@ -65,21 +67,29 @@ func TestReviewedPlanCaptureProducesBoundPrivateHandoff(t *testing.T) {
 	if err := os.WriteFile(planPath, append(body, '\n'), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	reviewDigest, err := reviewPlanDigest(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	captured := runCLI(t, []string{"--json", "--repo-dir", directory, "capture", "--lane", "guided-capture", "--plan", planPath}, "")
+	captured := runCLI(t, []string{"--json", "--repo-dir", directory, "capture", "--lane", "guided-capture", "--plan", planPath, "--review-plan-digest", reviewDigest}, "")
 	if captured.code != 0 || !captured.envelope.OK {
 		t.Fatalf("capture: %#v stderr=%s", captured.envelope, captured.stderr)
 	}
 	var result guidedCaptureResult
 	decodeData(t, captured.envelope.Data, &result)
-	if !result.Handoff.CaptureOnly || result.Handoff.LandingAuthorized || !result.Handoff.MessagePolicyBound || result.Handoff.ReviewedPlanDigest == "" || result.Handoff.IntentState != "complete" {
+	if len(result.Handoff.Segments) != 1 {
+		t.Fatalf("handoff segments = %#v", result.Handoff.Segments)
+	}
+	segment := result.Handoff.Segments[0]
+	if !result.Handoff.CaptureOnly || result.Handoff.LandingAuthorized || !result.Handoff.ReviewEligible || result.Handoff.HandoffDigest == "" || !segment.MessagePolicyBound || segment.ReviewedPlanDigest != reviewDigest || segment.IntentState != "complete" {
 		t.Fatalf("handoff = %#v", result.Handoff)
 	}
-	if result.Handoff.LaneTip != result.Capture.FinalCommit || result.Handoff.FinalTree != result.Capture.FinalTree || len(result.Handoff.Commits) != 2 {
+	if result.Handoff.LaneTip != result.Capture.FinalCommit || result.Handoff.FinalTree != result.Capture.FinalTree || len(segment.Commits) != 2 {
 		t.Fatalf("capture/handoff mismatch = %#v", result)
 	}
-	if result.Capture.SourceIndexDigest != plan.SourceIndexDigest {
-		t.Fatalf("kernel source digest = %q, reviewed digest = %q", result.Capture.SourceIndexDigest, plan.SourceIndexDigest)
+	if result.Capture.SourceDigest != plan.SourceDigest {
+		t.Fatalf("kernel source digest = %q, reviewed digest = %q", result.Capture.SourceDigest, plan.SourceDigest)
 	}
 	encoded, _ := json.Marshal(result.Handoff)
 	for _, forbidden := range []string{"\"agent\"", "\"session\"", "\"worktree\"", "remote", "new core"} {
@@ -103,8 +113,369 @@ func TestReviewedPlanCaptureProducesBoundPrivateHandoff(t *testing.T) {
 	}
 	var receipt captureHandoff
 	decodeData(t, printed.envelope.Data, &receipt)
-	if receipt.CaptureIntentDigest != result.Handoff.CaptureIntentDigest || receipt.LaneTip != result.Handoff.LaneTip {
+	if receipt.HandoffDigest != result.Handoff.HandoffDigest || receipt.TipCaptureIntentDigest != result.Handoff.TipCaptureIntentDigest || receipt.LaneTip != result.Handoff.LaneTip {
 		t.Fatalf("handoff changed = %#v", receipt)
+	}
+}
+
+func TestCaptureReviewDigestRejectsSameCountPlanSubstitutionBeforeMutation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture uses a POSIX Git hook; Windows runtime coverage is a hosted gate")
+	}
+	directory := cliTestRepo(t)
+	writeCLI(t, directory, "core.txt", "new core\n")
+	cliGit(t, directory, "add", "core.txt")
+	initializeCLI(t, directory, "review-digest", "core.txt")
+
+	planPath := filepath.Join(t.TempDir(), "reviewed-plan.json")
+	drafted := runCLI(t, []string{"--json", "--repo-dir", directory, "plan", "--lane", "review-digest", "--out", planPath}, "")
+	if drafted.code != 0 {
+		t.Fatalf("draft plan = %#v stderr=%s", drafted.envelope, drafted.stderr)
+	}
+	var plan planProposal
+	decodeData(t, drafted.envelope.Data, &plan)
+	plan.State = "reviewed"
+	plan.Groups[0].Message = "fix(core): bind the exact reviewed plan"
+	plan.Groups[0].Verify = []engine.VerifyCommand{{Argv: []string{"git", "--version"}}}
+	reviewDigest, err := reviewPlanDigest(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	verifyMarker := filepath.Join(t.TempDir(), "verify-ran")
+	hookMarker := filepath.Join(t.TempDir(), "hook-ran")
+	t.Setenv("WIP_CAPTURE_VERIFY_MARKER", verifyMarker)
+	plan.Groups[0].Verify = []engine.VerifyCommand{{Argv: []string{os.Args[0], "-test.run=^TestCapturePlanDigestVerifyMarkerHelper$", "-test.count=1"}}}
+	body, err := json.MarshalIndent(plan, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planPath, append(body, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	hook := cliGit(t, directory, "rev-parse", "--git-path", "hooks/pre-commit")
+	if !filepath.IsAbs(hook) {
+		hook = filepath.Join(directory, hook)
+	}
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\n: > "+quoteCommandArg(hookMarker)+"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := gitx.Discover(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laneStore := inspectCLIStore(t, directory)
+	statusBefore, err := laneStore.Status("review-digest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	statePaths := []string{
+		filepath.Join(repo.CommonDir, "wip-coordination.lock"),
+		filepath.Join(laneStore.Root, "locks", "lane-review-digest.lock"),
+		filepath.Join(laneStore.Root, "locks", "leases.lock"),
+		filepath.Join(laneStore.Root, "lanes", "review-digest.json"),
+	}
+	for _, lease := range statusBefore.Leases {
+		statePaths = append(statePaths, filepath.Join(laneStore.Root, "leases", lease.ID+".json"))
+	}
+	stateBefore := make(map[string][]byte, len(statePaths))
+	for _, path := range statePaths {
+		stateBefore[path], err = os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read preflight state %s: %v", path, err)
+		}
+	}
+	refBefore := cliGit(t, directory, "rev-parse", "refs/heads/wip/agent/review-digest")
+	indexBefore := cliGitRaw(t, directory, "ls-files", "-s", "-z")
+
+	rejected := runCLI(t, []string{
+		"--json", "--repo-dir", directory, "capture", "--lane", "review-digest", "--plan", planPath,
+		"--review-plan-digest", reviewDigest,
+	}, "")
+	if rejected.code == 0 || rejected.envelope.Error == nil || rejected.envelope.Error.Code != "REVIEW_PLAN_DIGEST_MISMATCH" {
+		t.Fatalf("substituted plan result = %#v stderr=%s", rejected.envelope, rejected.stderr)
+	}
+	statusAfter, err := laneStore.Status("review-digest")
+	if err != nil || !reflect.DeepEqual(statusBefore, statusAfter) {
+		t.Fatalf("digest refusal changed lane or lease timestamps:\nbefore=%#v\nafter=%#v\nerr=%v", statusBefore, statusAfter, err)
+	}
+	for path, before := range stateBefore {
+		after, readErr := os.ReadFile(path)
+		if readErr != nil || !bytes.Equal(before, after) {
+			t.Fatalf("digest refusal changed %s: before=%q after=%q err=%v", path, before, after, readErr)
+		}
+	}
+	for _, marker := range []string{hookMarker, verifyMarker} {
+		if _, err := os.Lstat(marker); !os.IsNotExist(err) {
+			t.Fatalf("digest refusal executed marker %s: %v", marker, err)
+		}
+	}
+	if got := cliGit(t, directory, "rev-parse", "refs/heads/wip/agent/review-digest"); got != refBefore {
+		t.Fatalf("digest refusal moved lane ref: before=%s after=%s", refBefore, got)
+	}
+	if got := cliGitRaw(t, directory, "ls-files", "-s", "-z"); got != indexBefore {
+		t.Fatal("digest refusal changed the caller index")
+	}
+}
+
+func TestCommitDryRunIsNoExecAndBytePure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture uses POSIX hooks; hosted Windows tests cover the no-exec verify path")
+	}
+	directory := cliTestRepo(t)
+	writeCLI(t, directory, "core.txt", "new core\n")
+	cliGit(t, directory, "add", "core.txt")
+	initializeCLI(t, directory, "dry-run-no-exec", "core.txt")
+
+	planPath := filepath.Join(t.TempDir(), "dry-run-plan.json")
+	drafted := runCLI(t, []string{"--json", "--repo-dir", directory, "plan", "--lane", "dry-run-no-exec", "--out", planPath}, "")
+	if drafted.code != 0 || !drafted.envelope.OK {
+		t.Fatalf("draft plan = %#v stderr=%s", drafted.envelope, drafted.stderr)
+	}
+	var plan planProposal
+	decodeData(t, drafted.envelope.Data, &plan)
+	plan.State = "reviewed"
+	plan.Groups[0].Message = "fix(core): prove byte-pure no-exec preview"
+	verifyMarker := filepath.Join(t.TempDir(), "verify-ran")
+	preHookMarker := filepath.Join(t.TempDir(), "pre-commit-ran")
+	postHookMarker := filepath.Join(t.TempDir(), "post-commit-ran")
+	t.Setenv("WIP_CAPTURE_VERIFY_MARKER", verifyMarker)
+	t.Setenv("WIP_DRY_RUN_PRE_HOOK_MARKER", preHookMarker)
+	t.Setenv("WIP_DRY_RUN_POST_HOOK_MARKER", postHookMarker)
+	plan.Groups[0].Verify = []engine.VerifyCommand{{Argv: []string{os.Args[0], "-test.run=^TestCapturePlanDigestVerifyMarkerHelper$", "-test.count=1"}}}
+	body, err := json.MarshalIndent(plan, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planPath, append(body, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reviewDigest, err := reviewPlanDigest(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repo, err := gitx.Discover(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hookBodies := map[string][]byte{
+		"pre-commit":  []byte("#!/bin/sh\n: > \"$WIP_DRY_RUN_PRE_HOOK_MARKER\"\n"),
+		"post-commit": []byte("#!/bin/sh\n: > \"$WIP_DRY_RUN_POST_HOOK_MARKER\"\n"),
+	}
+	for name, hookBody := range hookBodies {
+		hook := cliGit(t, directory, "rev-parse", "--git-path", "hooks/"+name)
+		if !filepath.IsAbs(hook) {
+			hook = filepath.Join(directory, hook)
+		}
+		if err := os.WriteFile(hook, hookBody, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	laneStore := inspectCLIStore(t, directory)
+	statusBefore, err := laneStore.Status("dry-run-no-exec")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repositoryBefore := commandTreeDigest(t, directory)
+	commonBefore := commandTreeDigest(t, repo.CommonDir)
+	headBefore := cliGit(t, directory, "rev-parse", "HEAD")
+	refBefore := cliGit(t, directory, "rev-parse", "refs/heads/wip/agent/dry-run-no-exec")
+	indexBefore := cliGitRaw(t, directory, "ls-files", "-s", "-z")
+	configPath := filepath.Join(repo.CommonDir, "config")
+	configBefore, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	args := []string{"--repo-dir", directory, "commit", "--lane", "dry-run-no-exec", "--dry-run", "--plan", planPath}
+	preview := runCLI(t, append([]string{"--json"}, args...), "")
+	if preview.code != 0 || !preview.envelope.OK {
+		t.Fatalf("dry-run = %#v stderr=%s", preview.envelope, preview.stderr)
+	}
+	var result engine.Result
+	decodeData(t, preview.envelope.Data, &result)
+	wantCount := engine.ExecutionCount{Planned: 1, Executed: 0, Skipped: 1}
+	if result.SchemaVersion != engine.ResultSchemaVersion || !result.DryRun || result.GateOutcome != "skipped" || result.RefUpdated || result.FinalCommit != "" || result.IntentState != "" {
+		t.Fatalf("dry-run result = %#v", result)
+	}
+	if result.Execution == nil || result.Execution.Policy != "no-exec" || result.Execution.PreCommitHooks != wantCount || result.Execution.PostCommitHooks != wantCount || result.Execution.VerifyCommands != wantCount {
+		t.Fatalf("dry-run execution report = %#v", result.Execution)
+	}
+	if preview.envelope.Context == nil || preview.envelope.Context.LeaseRenewed {
+		t.Fatalf("dry-run claimed lease renewal = %#v", preview.envelope.Context)
+	}
+	human := runCLI(t, args, "")
+	if human.code != 0 || strings.Contains(human.stdout, "passed") || !strings.Contains(human.stdout, "skipped 2 repository hook invocation(s) and 1 verify command(s)") {
+		t.Fatalf("dry-run human output = %q stderr=%q", human.stdout, human.stderr)
+	}
+
+	rejected := runCLI(t, []string{
+		"--json", "--repo-dir", directory, "capture", "--lane", "dry-run-no-exec", "--dry-run", "--plan", planPath,
+		"--review-plan-digest", reviewDigest,
+	}, "")
+	if rejected.code == 0 || rejected.envelope.Error == nil || rejected.envelope.Error.Code != "REVIEWED_PLAN_REQUIRED" || rejected.envelope.Context != nil || rejected.envelope.Data != nil {
+		t.Fatalf("guided dry-run refusal = %#v stderr=%s", rejected.envelope, rejected.stderr)
+	}
+
+	statusAfter, err := laneStore.Status("dry-run-no-exec")
+	if err != nil || !reflect.DeepEqual(statusBefore, statusAfter) {
+		t.Fatalf("dry-run changed lane or lease timestamps:\nbefore=%#v\nafter=%#v\nerr=%v", statusBefore, statusAfter, err)
+	}
+	for _, marker := range []string{preHookMarker, postHookMarker, verifyMarker} {
+		if _, statErr := os.Lstat(marker); !os.IsNotExist(statErr) {
+			t.Fatalf("dry-run executed marker %s: %v", marker, statErr)
+		}
+	}
+	if got := commandTreeDigest(t, directory); got != repositoryBefore {
+		t.Fatalf("dry-run changed repository bytes: before=%s after=%s", repositoryBefore, got)
+	}
+	if got := commandTreeDigest(t, repo.CommonDir); got != commonBefore {
+		t.Fatalf("dry-run changed common-directory bytes: before=%s after=%s", commonBefore, got)
+	}
+	if got := cliGit(t, directory, "rev-parse", "HEAD"); got != headBefore {
+		t.Fatalf("dry-run moved HEAD: before=%s after=%s", headBefore, got)
+	}
+	if got := cliGit(t, directory, "rev-parse", "refs/heads/wip/agent/dry-run-no-exec"); got != refBefore {
+		t.Fatalf("dry-run moved lane ref: before=%s after=%s", refBefore, got)
+	}
+	if got := cliGitRaw(t, directory, "ls-files", "-s", "-z"); got != indexBefore {
+		t.Fatal("dry-run changed the caller index")
+	}
+	if got, readErr := os.ReadFile(configPath); readErr != nil || !bytes.Equal(got, configBefore) {
+		t.Fatalf("dry-run changed repository config: before=%q after=%q err=%v", configBefore, got, readErr)
+	}
+	for name, want := range hookBodies {
+		hook := cliGit(t, directory, "rev-parse", "--git-path", "hooks/"+name)
+		if !filepath.IsAbs(hook) {
+			hook = filepath.Join(directory, hook)
+		}
+		if got, readErr := os.ReadFile(hook); readErr != nil || !bytes.Equal(got, want) {
+			t.Fatalf("dry-run changed %s hook bytes: before=%q after=%q err=%v", name, want, got, readErr)
+		}
+	}
+}
+
+func TestCapturePlanDigestVerifyMarkerHelper(t *testing.T) {
+	marker := os.Getenv("WIP_CAPTURE_VERIFY_MARKER")
+	if marker == "" {
+		return
+	}
+	if err := os.WriteFile(marker, []byte("verify ran\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReviewedWorktreeSourceCapturesOwnedUnstagedAndUntrackedPathsWithoutCallerIndexMutation(t *testing.T) {
+	directory := cliTestRepo(t)
+	writeCLI(t, directory, "work/core.txt", "base work\n")
+	cliGit(t, directory, "add", "work/core.txt")
+	cliGit(t, directory, "commit", "-m", "test: add work fixture")
+
+	writeCLI(t, directory, "work/core.txt", "owned tracked\n")
+	writeCLI(t, directory, "work/new.txt", "owned untracked\n")
+	writeCLI(t, directory, "foreign.txt", "foreign staged\n")
+	cliGit(t, directory, "add", "foreign.txt")
+	head := cliGit(t, directory, "rev-parse", "HEAD")
+	indexBefore := cliGitRaw(t, directory, "ls-files", "-s", "-z")
+	initializeCLI(t, directory, "worktree-source", "work")
+
+	planPath := filepath.Join(t.TempDir(), "worktree-plan.json")
+	drafted := runCLI(t, []string{
+		"--json", "--repo-dir", directory, "plan", "--lane", "worktree-source",
+		"--source", "worktree_snapshot", "--untracked", "include", "--path", "work", "--out", planPath,
+	}, "")
+	if drafted.code != 0 || !drafted.envelope.OK {
+		t.Fatalf("draft worktree plan: %#v stderr=%s", drafted.envelope, drafted.stderr)
+	}
+	var plan planProposal
+	decodeData(t, drafted.envelope.Data, &plan)
+	if plan.SourceMode != "worktree_snapshot" || plan.UntrackedPolicy != "include" || !samePlanStrings(plan.SourcePaths, []string{"work/core.txt", "work/new.txt"}) {
+		t.Fatalf("worktree plan = %#v", plan)
+	}
+	plan.State = "reviewed"
+	plan.Groups[0].Message = "fix(work): capture private worktree source"
+	body, err := json.MarshalIndent(plan, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planPath, append(body, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	captured := runCLI(t, []string{"--json", "--repo-dir", directory, "capture", "--lane", "worktree-source", "--plan", planPath}, "")
+	if captured.code != 0 || !captured.envelope.OK {
+		t.Fatalf("worktree capture: %#v stderr=%s", captured.envelope, captured.stderr)
+	}
+	var result guidedCaptureResult
+	decodeData(t, captured.envelope.Data, &result)
+	if result.Capture.SourceMode != "worktree_snapshot" || result.Capture.UntrackedPolicy != "include" || result.Capture.SourceDigest != plan.SourceDigest || !result.Handoff.ReviewEligible {
+		t.Fatalf("worktree capture result = %#v", result)
+	}
+	if got := cliGitRaw(t, directory, "ls-files", "-s", "-z"); got != indexBefore {
+		t.Fatalf("caller index changed\nbefore=%q\nafter=%q", indexBefore, got)
+	}
+	if got := cliGit(t, directory, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("source HEAD moved: %s", got)
+	}
+	assertCLIFileAtCommit(t, directory, result.Handoff.LaneTip, "work/core.txt", "owned tracked")
+	assertCLIFileAtCommit(t, directory, result.Handoff.LaneTip, "work/new.txt", "owned untracked")
+	assertCLIFileAtCommit(t, directory, result.Handoff.LaneTip, "foreign.txt", "base foreign")
+}
+
+func TestCumulativeHandoffCoversEveryReviewedCaptureFromLaneBaseToTip(t *testing.T) {
+	directory := cliTestRepo(t)
+	writeCLI(t, directory, "core.txt", "first capture\n")
+	cliGit(t, directory, "add", "core.txt")
+	base := cliGit(t, directory, "rev-parse", "HEAD")
+	initializeCLI(t, directory, "cumulative-handoff", "core.txt", "docs.txt")
+
+	firstPlan := reviewedPlanFile(t, directory, "cumulative-handoff", "fix(core): capture first segment")
+	firstCapture := runCLI(t, []string{"--json", "--repo-dir", directory, "capture", "--lane", "cumulative-handoff", "--plan", firstPlan}, "")
+	if firstCapture.code != 0 {
+		t.Fatalf("first capture = %#v stderr=%s", firstCapture.envelope, firstCapture.stderr)
+	}
+	var first guidedCaptureResult
+	decodeData(t, firstCapture.envelope.Data, &first)
+
+	writeCLI(t, directory, "docs.txt", "second capture\n")
+	cliGit(t, directory, "add", "docs.txt")
+	secondPlan := reviewedPlanFile(t, directory, "cumulative-handoff", "docs(guide): capture second segment")
+	secondCapture := runCLI(t, []string{"--json", "--repo-dir", directory, "capture", "--lane", "cumulative-handoff", "--plan", secondPlan}, "")
+	if secondCapture.code != 0 {
+		t.Fatalf("second capture = %#v stderr=%s", secondCapture.envelope, secondCapture.stderr)
+	}
+	var second guidedCaptureResult
+	decodeData(t, secondCapture.envelope.Data, &second)
+	if !second.Handoff.ReviewEligible || second.Handoff.LaneBaseCommit != base || len(second.Handoff.Segments) != 2 {
+		t.Fatalf("cumulative handoff = %#v", second.Handoff)
+	}
+	firstSegment, secondSegment := second.Handoff.Segments[0], second.Handoff.Segments[1]
+	if firstSegment.ParentCommit != base || firstSegment.FinalCommit != secondSegment.ParentCommit || secondSegment.FinalCommit != second.Handoff.LaneTip || second.Handoff.TipPlanID != secondSegment.PlanID || second.Handoff.TipCaptureIntentDigest != secondSegment.CaptureIntentDigest {
+		t.Fatalf("segment chain is not contiguous: %#v", second.Handoff)
+	}
+	if first.Handoff.TipPlanID != firstSegment.PlanID || first.Handoff.TipCaptureIntentDigest != firstSegment.CaptureIntentDigest {
+		t.Fatalf("first handoff was not retained in cumulative chain")
+	}
+
+	printed := runCLI(t, []string{"--json", "--repo-dir", directory, "handoff", "--lane", "cumulative-handoff"}, "")
+	if printed.code != 0 {
+		t.Fatalf("print cumulative handoff = %#v stderr=%s", printed.envelope, printed.stderr)
+	}
+	var receipt captureHandoff
+	decodeData(t, printed.envelope.Data, &receipt)
+	if receipt.HandoffDigest != second.Handoff.HandoffDigest {
+		t.Fatalf("handoff digest changed: capture=%s printed=%s", second.Handoff.HandoffDigest, receipt.HandoffDigest)
+	}
+
+	staleTip := runCLI(t, []string{
+		"--json", "--repo-dir", directory, "handoff", "--lane", "cumulative-handoff",
+		"--plan-id", firstSegment.PlanID, "--plan-digest", firstSegment.CaptureIntentDigest,
+	}, "")
+	if staleTip.code == 0 || staleTip.envelope.Error == nil || staleTip.envelope.Error.Code != "HANDOFF_TIP_MISMATCH" {
+		t.Fatalf("older segment was accepted as lane tip: %#v", staleTip.envelope)
 	}
 }
 
@@ -204,7 +575,7 @@ func TestGuidedCaptureFinalReleasesAfterHandoffValidation(t *testing.T) {
 	}
 	var result guidedCaptureResult
 	decodeData(t, captured.envelope.Data, &result)
-	if !result.LaneReleased || result.Handoff.IntentState != "complete" {
+	if !result.LaneReleased || len(result.Handoff.Segments) != 1 || result.Handoff.Segments[0].IntentState != "complete" {
 		t.Fatalf("final result = %#v", result)
 	}
 	laneStore := inspectCLIStore(t, directory)
