@@ -1,12 +1,12 @@
 ---
 name: wip-commit
-description: Safely capture one agent's exact staged paths into an isolated local Git ref. Use for concurrent agents in one repository or checkout. Use for split Conventional Commits and linked worktrees.
+description: Safely capture one agent's exact staged-index or worktree source into an isolated local Git ref. Use for concurrent agents, split Conventional Commits, and linked worktrees.
 ---
 
 # WIP Commit
 
 Capture only the paths that belong to the current task. Keep the checked-out
-branch, source `HEAD`, complete source index, and other agents' staged entries
+branch, source `HEAD`, caller index, and other agents' staged entries
 unchanged.
 
 ## Inspect before changing state
@@ -21,18 +21,20 @@ unchanged.
    directory. When another agent can change a child path, use a narrower claim.
 5. Run `wip --json contract`. Require every identity and capability in
    [contract.json](contract.json), including the portable payload digest. Then
-   run `wip --json version`. Require schema `2.0.0`; record its channel, exact
+   run `wip --json version`. Require schema `2.0.0`. Record its channel, exact
    revision, and source state. Do not
    use an unstamped binary with existing coordination state. If the command is
    absent or has no revision, build or install a source-stamped binary by using
    this repository's documented method.
 6. Run `wip --json doctor`. If it reports another coordination domain, stop.
-   Preserve both state roots and select one domain before setup. If
+   Preserve both state roots. Use `wip --json migrate --preview` to create an
+   immutable migration plan. Do not apply it before a writer freeze and an
+   exact review. If
    `data.upgrade_required` is true, stop lane setup. Follow the reviewed
-   `wip --json upgrade --state` preview/apply procedure first. If doctor reports
-   healthy initialized state with no required upgrade, run `wip --json status
-   --observe`. `LANE_NOT_ACTIVE` means this standalone domain remains
-   authoritative and a new standalone lane is required. Run `wip init`; never
+   `wip --json upgrade --state` preview/apply procedure first. Run `wip --json
+   status --observe` only when doctor reports healthy initialized state with no
+   required upgrade. `LANE_NOT_ACTIVE` means this standalone domain remains
+   authoritative and a new standalone lane is required. Run `wip init`. Never
    fall through to a legacy coordination implementation.
 
 Never stash, reset, restore, clean, merge, push, or force-update a ref. Do not
@@ -60,7 +62,7 @@ skill installation is resumable.
 
 Use the recommended `worktree` mode for one agent per task. Use `shared` mode
 only when lanes must use the same checkout and index. Both modes use the same
-private-index capture transaction.
+private-source and private-index capture transaction.
 
 For automation, make the identity and paths explicit:
 
@@ -97,23 +99,46 @@ lease.
 When shell environment changes are not suitable, pass `--lane`, `--agent`, and
 `--session` explicitly.
 
-## Stage and capture exact paths
+## Select and capture an exact source
 
-Stage each owned path explicitly:
-
-```text
-git add -- <owned-path>
-```
-
-Inspect the staged names and diff before capture. Foreign staged entries can
-remain in the source index.
-
-Run the operational status before each plan:
+Use `worktree_snapshot` in a dedicated worktree. This mode does not require
+staging. It is the preferred agent source:
 
 ```text
 wip --json status
-wip --json plan --out <plan.json>
+wip --json plan \
+  --source worktree_snapshot \
+  --untracked forbid \
+  --path <owned-path> \
+  --observe
+wip --json plan --out <plan.json> \
+  --source worktree_snapshot \
+  --untracked forbid \
+  --path <owned-path>
 ```
+
+The observed plan is a byte-for-byte read. It does not renew leases or write a
+plan file. Review its source selection. Then create the no-overwrite plan file
+from current state.
+
+Use `--untracked include` only after you review every untracked path in the
+selected scope. The default `forbid` policy stops when an untracked path is
+present.
+
+Use `staged_index` for the controlled shared-checkout exception. Stage each
+owned path explicitly, and then inspect the staged names and diff:
+
+```text
+git add -- <owned-path>
+wip --json plan \
+  --source staged_index \
+  --untracked not_applicable \
+  --path <owned-path> \
+  --out <plan.json>
+```
+
+Foreign staged entries can remain in the caller index. The capture transaction
+does not stage, unstage, or rewrite that index.
 
 Review each group for intent and dependency closure. Add a message to every
 group. Then set the top-level `state` to `reviewed`.
@@ -132,10 +157,17 @@ compatibility capture. Do not use it in the guided automation path.
 Read [references/automation.md](references/automation.md) before an automated
 capture.
 
-Authenticated `status`, `env`, `claim`, `plan`, `commit`, `capture`, and
+Use `wip commit --dry-run` only for a no-exec structure preview. It snapshots
+hook bytes but does not execute hooks or verification commands. Require result
+schema `3.0.0`, `gate_outcome: "skipped"`, `execution.policy: "no-exec"`, and
+zero executed counts. Do not treat this result as gate or capture evidence.
+
+Authenticated `status`, `env`, `claim`, `plan`, non-dry `commit`, `capture`, and
 `handoff` renew the complete active lease set. A released-lane handoff remains
-a pure read. Use `--observe` for a status or environment read that must not
-renew. Use `wip claim --path <path>` before staging a newly owned path.
+a pure read. `wip commit --dry-run` does not renew. Use `--observe` for a status
+or environment read that must not renew. Use `plan --observe` for a source
+preview that must not renew or write a file. Use `wip claim --path <path>`
+before you select a newly owned path.
 
 ## Check the result
 
@@ -147,10 +179,16 @@ For a complete guided capture, require all of these facts in the JSON result:
 - `data.capture.intent_state` is `complete`.
 - `data.handoff.capture_only` is `true`.
 - `data.handoff.landing_authorized` is `false`.
-- `data.handoff.reviewed_plan_digest` is non-empty.
+- `data.handoff.handoff_digest` is a SHA-256 digest.
+- `data.handoff.review_eligible` is `true`.
+- Every item in `data.handoff.segments` has `intent_state: "complete"`, an
+  exact capture-intent digest, an exact reviewed-plan digest, a bound message
+  policy, and a private-source binding.
 
-Check that the handoff ref, tip, tree, messages, and paths match the reviewed
-plan. A successful capture leaves captured entries staged by design.
+Check that the segments form one continuous chain from `lane_base_commit` to
+`lane_tip`. Check the final tree, messages, and paths against every reviewed
+plan. A staged-index capture leaves captured entries staged by design. A
+worktree-source capture leaves the caller index unchanged.
 
 If a failed result reports `ref_updated: true`, preserve its exact `plan_id`
 and `plan_digest`. Run `wip reconcile` with both values. Do not edit an intent
@@ -180,7 +218,8 @@ The runner writes mutable reports outside the repository.
 
 ## Finish without landing
 
-Run `wip --json handoff` to validate the complete capture receipt. Then run:
+Run `wip --json handoff` to validate the cumulative base-to-tip capture
+receipt. Then run:
 
 ```text
 wip release

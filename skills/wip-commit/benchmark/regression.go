@@ -167,9 +167,21 @@ type directCapture struct {
 	PlanDigest  string `json:"plan_digest"`
 	IntentState string `json:"intent_state"`
 	GateOutcome string `json:"gate_outcome"`
-	Commits     []struct {
+	Execution   *struct {
+		Policy          string         `json:"policy"`
+		PreCommitHooks  executionCount `json:"pre_commit_hooks"`
+		PostCommitHooks executionCount `json:"post_commit_hooks"`
+		VerifyCommands  executionCount `json:"verify_commands"`
+	} `json:"execution"`
+	Commits []struct {
 		Commit string `json:"commit"`
 	} `json:"commits"`
+}
+
+type executionCount struct {
+	Planned  int `json:"planned"`
+	Executed int `json:"executed"`
+	Skipped  int `json:"skipped"`
 }
 
 type guidedCapture struct {
@@ -464,11 +476,11 @@ func caseDryRunNoPublication(h harness) caseResult {
 	refAfterActual, actualRefErr := runGit(fix, "rev-parse", refName)
 	var actualData directCapture
 	actualDecodeErr := decodeEnvelopeData(actual.Envelope, &actualData)
-	positivePassed := initialized.succeeded() && beforeErr == nil && dry.succeeded() && dryDecodeErr == nil && dryData.DryRun && !dryData.RefUpdated && dryRefErr == nil && refBefore == refAfterDry
+	positivePassed := initialized.succeeded() && beforeErr == nil && dry.succeeded() && dryDecodeErr == nil && dryData.DryRun && dryData.GateOutcome == "skipped" && dryData.Execution != nil && dryData.Execution.Policy == "no-exec" && dryData.Execution.PreCommitHooks.Executed == 0 && dryData.Execution.PostCommitHooks.Executed == 0 && dryData.Execution.VerifyCommands.Executed == 0 && !dryData.RefUpdated && dryRefErr == nil && refBefore == refAfterDry
 	negativePassed := actual.succeeded() && actualDecodeErr == nil && actualData.RefUpdated && actualRefErr == nil && refAfterActual != refBefore
 	return resultCase(
 		"dry-run-no-publication", started,
-		positivePassed, "dry-run passed gates without moving the lane ref", "dry-run moved the ref or did not report non-publication",
+		positivePassed, "dry-run validated the candidate without executing gates or moving the lane ref", "dry-run executed a gate, moved the ref, or did not report the no-exec preview",
 		negativePassed, "the same plan without --dry-run moved the ref, proving detector sensitivity", "the non-dry sensitivity control did not move the ref",
 	)
 }

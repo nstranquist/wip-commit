@@ -8,8 +8,9 @@ macOS, and Windows:
 - concurrent disjoint lanes and an overlapping-lease refusal.
 - reviewed split-plan defaults and draft-plan refusal.
 - the explicit `--single` opt-out.
-- complete source-index and foreign-stage preservation.
-- dry-run non-publication and a non-dry sensitivity control.
+- complete caller-index and foreign-stage preservation.
+- dry-run no-exec reporting and non-publication, plus a non-dry sensitivity
+  control.
 - failed verification non-publication and a passing-gate sensitivity control.
 - reconciliation of a reproduced applied-intent crash boundary.
 

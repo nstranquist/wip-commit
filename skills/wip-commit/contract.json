@@ -1,20 +1,28 @@
 {
   "schema_version": "1.0.0",
-  "protocol": "wip.command/2.0.0",
+  "protocol": "wip.command/3.0.0",
   "capabilities": [
-    "capture.v2.private-index-cas",
+    "capture.v3.private-source-cas",
+    "capture.v3.review-digest",
+    "commit.dry-run.no-exec.v1",
+    "coordination.migration.v1",
     "doctor.v1",
-    "handoff.v1.capture-only",
+    "handoff.v2.cumulative-capture-only",
     "install.digest-upgrade.v1",
-    "plan.v2.no-overwrite",
+    "lane.init.v1",
+    "lease.claim.v1",
+    "plan.v3.observe",
+    "plan.v3.private-source-no-overwrite",
+    "source.worktree-snapshot.v1",
     "state.archive-history.v1",
     "state.capture-intent.v2",
+    "state.capture-intent.v3",
     "state.init-intent.v2",
     "state.profile.v2",
     "state.reader-floor.v1",
     "status.v2.observe",
     "version.v2.provenance"
   ],
-  "portable_skill_contract": "wip.portable-skill/1.0.0",
-  "portable_bundle_sha256": "sha256:a55a38e03da31dff8c91850a062c6b8790894aa4fca333ccd90e571fb4ea1569"
+  "portable_skill_contract": "wip.portable-skill/2.0.0",
+  "portable_bundle_sha256": "sha256:39444297d05fe6d53e73cc317ca91ad3f445fb58ecf8f2303a1dc7beba0ab5cf"
 }
