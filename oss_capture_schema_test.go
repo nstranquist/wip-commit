@@ -15,7 +15,7 @@ func TestCaptureSchemasAreStrictJSONContracts(t *testing.T) {
 		{
 			path:     "docs/PLAN.schema.json",
 			typeName: "object",
-			required: []string{"schema_version", "state", "lane", "target_ref", "lane_tip", "source_head", "source_index_digest", "lease_digest", "message_policy", "staged_paths", "groups"},
+			required: []string{"schema_version", "state", "lane", "target_ref", "lane_tip", "source_head", "source_mode", "untracked_policy", "source_digest", "source_scopes", "lease_digest", "message_policy", "source_paths", "groups"},
 		},
 		{
 			path:     "docs/PLAN.legacy-v1.schema.json",
@@ -29,7 +29,7 @@ func TestCaptureSchemasAreStrictJSONContracts(t *testing.T) {
 		{
 			path:     "docs/HANDOFF.schema.json",
 			typeName: "object",
-			required: []string{"schema_version", "capture_only", "landing_authorized", "lane_ref", "lane_tip", "lane_base_commit", "parent_commit", "final_tree", "plan_id", "capture_intent_digest", "message_policy_bound", "commits", "intent_state"},
+			required: []string{"schema_version", "handoff_digest", "capture_only", "landing_authorized", "review_eligible", "lane_ref", "lane_tip", "lane_base_commit", "final_tree", "tip_plan_id", "tip_capture_intent_digest", "segments"},
 		},
 	}
 	for _, test := range tests {
