@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	ResultSchemaVersion  = "1.0.0"
+	ResultSchemaVersion  = "3.0.0"
 	DefaultVerifyTimeout = 2 * time.Minute
 	MaxVerifyTimeout     = 24 * time.Hour
 	maxVerifyOutput      = 64 * 1024
@@ -56,12 +56,27 @@ type PlannedCommit struct {
 	Repairs      int      `json:"repairs_applied"`
 }
 
+type ExecutionCount struct {
+	Planned  int `json:"planned"`
+	Executed int `json:"executed"`
+	Skipped  int `json:"skipped"`
+}
+
+type ExecutionReport struct {
+	Policy          string         `json:"policy"`
+	PreCommitHooks  ExecutionCount `json:"pre_commit_hooks"`
+	PostCommitHooks ExecutionCount `json:"post_commit_hooks"`
+	VerifyCommands  ExecutionCount `json:"verify_commands"`
+}
+
 type Options struct {
 	Repo                 gitx.Repo
 	TargetRef            string
 	ExpectedRef          string
 	ExpectedSourceHead   string
-	ExpectedIndexDigest  string
+	ExpectedSourceDigest string
+	SourceMode           SourceMode
+	UntrackedPolicy      UntrackedPolicy
 	ReviewPlanDigest     string
 	MessagePolicy        policy.Receipt
 	AllowedPaths         []string
@@ -76,35 +91,44 @@ type Options struct {
 }
 
 type Result struct {
-	SchemaVersion     string          `json:"schema_version"`
-	TargetRef         string          `json:"target_ref"`
-	ExpectedRef       string          `json:"expected_ref"`
-	FinalCommit       string          `json:"final_commit,omitempty"`
-	FinalTree         string          `json:"final_tree"`
-	SourceHead        string          `json:"source_head"`
-	SourceWorktree    string          `json:"source_worktree"`
-	SourceIndexDigest string          `json:"source_index_digest"`
-	HookDigest        string          `json:"hook_digest"`
-	RequestedPaths    []string        `json:"requested_paths"`
-	Commits           []PlannedCommit `json:"commits"`
-	GateOutcome       string          `json:"gate_outcome"`
-	DryRun            bool            `json:"dry_run"`
-	RefUpdated        bool            `json:"ref_updated"`
-	PublicationScope  string          `json:"publication_scope,omitempty"`
-	PlanID            string          `json:"plan_id,omitempty"`
-	PlanDigest        string          `json:"plan_digest,omitempty"`
-	ReviewPlanDigest  string          `json:"review_plan_digest,omitempty"`
-	MessagePolicy     *policy.Receipt `json:"message_policy,omitempty"`
-	IntentPath        string          `json:"intent_path,omitempty"`
-	IntentState       string          `json:"intent_state,omitempty"`
+	SchemaVersion    string           `json:"schema_version"`
+	TargetRef        string           `json:"target_ref"`
+	ExpectedRef      string           `json:"expected_ref"`
+	FinalCommit      string           `json:"final_commit,omitempty"`
+	FinalTree        string           `json:"final_tree"`
+	SourceHead       string           `json:"source_head"`
+	SourceWorktree   string           `json:"source_worktree"`
+	SourceMode       SourceMode       `json:"source_mode"`
+	UntrackedPolicy  UntrackedPolicy  `json:"untracked_policy"`
+	SourceDigest     string           `json:"source_digest"`
+	SourcePaths      []string         `json:"source_paths"`
+	HookDigest       string           `json:"hook_digest"`
+	RequestedPaths   []string         `json:"requested_paths"`
+	Commits          []PlannedCommit  `json:"commits"`
+	GateOutcome      string           `json:"gate_outcome"`
+	Execution        *ExecutionReport `json:"execution,omitempty"`
+	DryRun           bool             `json:"dry_run"`
+	RefUpdated       bool             `json:"ref_updated"`
+	PublicationScope string           `json:"publication_scope,omitempty"`
+	PlanID           string           `json:"plan_id,omitempty"`
+	PlanDigest       string           `json:"plan_digest,omitempty"`
+	ReviewPlanDigest string           `json:"review_plan_digest,omitempty"`
+	MessagePolicy    *policy.Receipt  `json:"message_policy,omitempty"`
+	IntentPath       string           `json:"intent_path,omitempty"`
+	IntentState      string           `json:"intent_state,omitempty"`
 }
 
 func Run(ctx context.Context, options Options) (result Result, err error) {
 	result.SchemaVersion, result.DryRun, result.GateOutcome = ResultSchemaVersion, options.DryRun, "failed"
 	result.ReviewPlanDigest = options.ReviewPlanDigest
-	boundPlan := strings.TrimSpace(options.ReviewPlanDigest) != "" || options.MessagePolicy != (policy.Receipt{}) || strings.TrimSpace(options.ExpectedIndexDigest) != ""
-	if boundPlan && (strings.TrimSpace(options.ReviewPlanDigest) == "" || options.MessagePolicy == (policy.Receipt{}) || strings.TrimSpace(options.ExpectedIndexDigest) == "") {
-		return result, fail.New("INVALID_PLAN_BINDING", "reviewed plan digest, message policy, and expected index digest must be supplied together")
+	options.SourceMode, options.UntrackedPolicy, err = NormalizeSource(options.SourceMode, options.UntrackedPolicy)
+	if err != nil {
+		return result, err
+	}
+	result.SourceMode, result.UntrackedPolicy = options.SourceMode, options.UntrackedPolicy
+	boundPlan := strings.TrimSpace(options.ReviewPlanDigest) != "" || options.MessagePolicy != (policy.Receipt{}) || strings.TrimSpace(options.ExpectedSourceDigest) != ""
+	if boundPlan && (strings.TrimSpace(options.ReviewPlanDigest) == "" || options.MessagePolicy == (policy.Receipt{}) || strings.TrimSpace(options.ExpectedSourceDigest) == "") {
+		return result, fail.New("INVALID_PLAN_BINDING", "reviewed plan digest, message policy, and expected source digest must be supplied together")
 	}
 	if boundPlan {
 		receipt := options.MessagePolicy
@@ -112,8 +136,8 @@ func Run(ctx context.Context, options Options) (result Result, err error) {
 		if !intentDigestPattern.MatchString(options.ReviewPlanDigest) {
 			return result, fail.New("INVALID_PLAN_BINDING", "reviewed plan digest must be a sha256 receipt")
 		}
-		if !intentDigestPattern.MatchString(options.ExpectedIndexDigest) {
-			return result, fail.New("INVALID_PLAN_BINDING", "expected index digest must be a sha256 receipt")
+		if !intentDigestPattern.MatchString(options.ExpectedSourceDigest) {
+			return result, fail.New("INVALID_PLAN_BINDING", "expected source digest must be a sha256 receipt")
 		}
 		if err := policy.ValidateReceipt(options.MessagePolicy); err != nil {
 			return result, err
@@ -185,9 +209,23 @@ func Run(ctx context.Context, options Options) (result Result, err error) {
 	}
 	result.SourceHead, result.SourceWorktree = head, options.Repo.Root
 
-	indexRoot, err := preparePrivateIndexRoot(options.Repo.GitDir)
-	if err != nil {
-		return result, err
+	indexRoot := ""
+	var objectEnvironment []string
+	if options.DryRun {
+		indexRoot, err = os.MkdirTemp("", "wip-dry-run-*")
+		if err != nil {
+			return result, fail.Wrap("TEMP_INDEX_FAILED", err)
+		}
+		defer func() { _ = os.RemoveAll(indexRoot) }()
+		objectEnvironment, err = isolatedObjectEnvironment(options.Repo, indexRoot)
+		if err != nil {
+			return result, err
+		}
+	} else {
+		indexRoot, err = preparePrivateIndexRoot(options.Repo.GitDir)
+		if err != nil {
+			return result, err
+		}
 	}
 	preHook, err := prepareHook(ctx, options.Repo, indexRoot, "pre-commit")
 	if err != nil {
@@ -200,16 +238,37 @@ func Run(ctx context.Context, options Options) (result Result, err error) {
 	}
 	defer postHook.cleanup()
 	result.HookDigest = hooksDigest(preHook, postHook)
+	if options.DryRun {
+		preCommitHooks, postCommitHooks, verifyCommands := 0, 0, 0
+		if preHook.Private != "" {
+			preCommitHooks = len(groups)
+		}
+		if postHook.Private != "" {
+			postCommitHooks = len(groups)
+		}
+		for _, group := range groups {
+			verifyCommands += len(group.Verify)
+		}
+		result.Execution = &ExecutionReport{
+			Policy:          "no-exec",
+			PreCommitHooks:  skippedExecutionCount(preCommitHooks),
+			PostCommitHooks: skippedExecutionCount(postCommitHooks),
+			VerifyCommands:  skippedExecutionCount(verifyCommands),
+		}
+	}
 
-	source, err := options.Repo.IndexEntries(ctx, nil)
+	sourceSnapshot, cleanupSource, err := captureSource(ctx, options.Repo, expected, allPaths, options.SourceMode, options.UntrackedPolicy, indexRoot, options.DryRun)
 	if err != nil {
-		return result, fail.Wrap("GIT_FAILED", err)
+		return result, err
 	}
-	result.SourceIndexDigest = selectedDigest(source, allPaths)
-	if boundPlan && result.SourceIndexDigest != options.ExpectedIndexDigest {
-		return result, fail.New("SOURCE_INDEX_MOVED", "selected staged entries no longer match the reviewed plan")
+	defer cleanupSource()
+	source := sourceSnapshot.Entries
+	result.SourcePaths = append([]string(nil), sourceSnapshot.Paths...)
+	result.SourceDigest = sourceSnapshot.Digest
+	if boundPlan && result.SourceDigest != options.ExpectedSourceDigest {
+		return result, fail.New("SOURCE_MOVED", "the selected source no longer matches the reviewed plan")
 	}
-	index, environment, cleanup, err := privateIndex(ctx, options.Repo, indexRoot, expected)
+	_, environment, cleanup, err := privateIndex(ctx, options.Repo, indexRoot, expected, objectEnvironment)
 	if err != nil {
 		return result, err
 	}
@@ -234,14 +293,17 @@ func Run(ctx context.Context, options Options) (result Result, err error) {
 		if preHookTree == parentTree {
 			return result, fail.Errorf("EMPTY_COMMIT_GROUP", "group %d has no captured staged change", groupIndex+1)
 		}
-		if err := preHook.run(ctx, options.Repo, hookEnvironment(index, target, ""), options.HookTimeout, options.Output, options.ErrorOutput); err != nil {
-			return result, err
+		tree := preHookTree
+		if !options.DryRun {
+			if err := preHook.run(ctx, options.Repo, hookEnvironment(environment, target, ""), options.HookTimeout, options.Output, options.ErrorOutput); err != nil {
+				return result, err
+			}
+			tree, treeErr = options.Repo.Text(ctx, environment, "write-tree")
+			if treeErr != nil {
+				return result, fail.Wrap("PRIVATE_INDEX_FAILED", treeErr)
+			}
 		}
-		tree, treeErr := options.Repo.Text(ctx, environment, "write-tree")
-		if treeErr != nil {
-			return result, fail.Wrap("PRIVATE_INDEX_FAILED", treeErr)
-		}
-		changed, changedErr := options.Repo.NULPaths(ctx, nil, "diff", "--no-renames", "--name-only", "-z", parentTree, tree)
+		changed, changedErr := options.Repo.NULPaths(ctx, environment, "diff", "--no-renames", "--name-only", "-z", parentTree, tree)
 		if changedErr != nil {
 			return result, fail.Wrap("PRIVATE_INDEX_FAILED", changedErr)
 		}
@@ -256,13 +318,13 @@ func Run(ctx context.Context, options Options) (result Result, err error) {
 				return result, fail.Errorf("LEASE_REQUIRED", "group %d changed unleased path %q", groupIndex+1, path)
 			}
 		}
-		if _, err := options.Repo.Text(ctx, nil, "diff", "--check", parentTree, tree); err != nil {
+		if _, err := options.Repo.Text(ctx, environment, "diff", "--check", parentTree, tree); err != nil {
 			return result, fail.Wrap("DIFF_CHECK_FAILED", err)
 		}
-		if err := verifyTree(ctx, options.Repo, environment, tree, group.Verify, options.DefaultVerifyTimeout); err != nil {
+		if err := verifyTree(ctx, options.Repo, environment, tree, group.Verify, options.DefaultVerifyTimeout, !options.DryRun); err != nil {
 			return result, err
 		}
-		repairs, repairsErr := options.Repo.NULPaths(ctx, nil, "diff", "--no-renames", "--name-only", "-z", preHookTree, tree)
+		repairs, repairsErr := options.Repo.NULPaths(ctx, environment, "diff", "--no-renames", "--name-only", "-z", preHookTree, tree)
 		if repairsErr != nil {
 			return result, fail.Wrap("PRIVATE_INDEX_FAILED", repairsErr)
 		}
@@ -282,7 +344,7 @@ func Run(ctx context.Context, options Options) (result Result, err error) {
 		result.Commits = append(result.Commits, planned)
 	}
 	result.FinalTree = parentTree
-	if options.BeforePublish != nil {
+	if !options.DryRun && options.BeforePublish != nil {
 		if err := options.BeforePublish(); err != nil {
 			return result, err
 		}
@@ -291,12 +353,13 @@ func Run(ctx context.Context, options Options) (result Result, err error) {
 	if err != nil || currentHead != head {
 		return result, fail.New("SOURCE_HEAD_MOVED", "source HEAD changed while capture was prepared")
 	}
-	currentIndex, err := options.Repo.IndexEntries(ctx, nil)
+	currentSource, cleanupCurrentSource, err := captureSource(ctx, options.Repo, expected, allPaths, options.SourceMode, options.UntrackedPolicy, indexRoot, options.DryRun)
 	if err != nil {
-		return result, fail.Wrap("GIT_FAILED", err)
+		return result, err
 	}
-	if selectedDigest(currentIndex, allPaths) != result.SourceIndexDigest {
-		return result, fail.New("SOURCE_INDEX_MOVED", "selected staged entries changed while capture was prepared")
+	defer cleanupCurrentSource()
+	if currentSource.Digest != result.SourceDigest || !sameSourcePaths(currentSource.Paths, result.SourcePaths) {
+		return result, fail.New("SOURCE_MOVED", "the selected source changed while capture was prepared")
 	}
 	if err := preHook.validate(); err != nil {
 		return result, err
@@ -305,7 +368,7 @@ func Run(ctx context.Context, options Options) (result Result, err error) {
 		return result, err
 	}
 	if options.DryRun {
-		result.GateOutcome = "passed"
+		result.GateOutcome = "skipped"
 		return result, nil
 	}
 	result.FinalCommit = parentCommit
@@ -332,7 +395,7 @@ func Run(ctx context.Context, options Options) (result Result, err error) {
 			_, _ = fmt.Fprintf(options.ErrorOutput, "wip: prepare post-commit index for %s: %v\n", commit.Commit, err)
 			continue
 		}
-		if err := postHook.run(ctx, options.Repo, hookEnvironment(index, target, commit.Commit), options.HookTimeout, options.Output, options.ErrorOutput); err != nil {
+		if err := postHook.run(ctx, options.Repo, hookEnvironment(environment, target, commit.Commit), options.HookTimeout, options.Output, options.ErrorOutput); err != nil {
 			_, _ = fmt.Fprintf(options.ErrorOutput, "wip: post-commit hook failed for %s: %v\n", commit.Commit, err)
 		}
 	}
@@ -400,7 +463,7 @@ func normalizeGroups(repo gitx.Repo, input []Group, _ bool) ([]Group, []string, 
 	return groups, all, nil
 }
 
-func privateIndex(ctx context.Context, repo gitx.Repo, root, base string) (string, []string, func(), error) {
+func privateIndex(ctx context.Context, repo gitx.Repo, root, base string, baseEnvironment []string) (string, []string, func(), error) {
 	file, err := os.CreateTemp(root, "*.index")
 	if err != nil {
 		return "", nil, func() {}, fail.Wrap("TEMP_INDEX_FAILED", err)
@@ -413,11 +476,24 @@ func privateIndex(ctx context.Context, repo gitx.Repo, root, base string) (strin
 	if err := os.Remove(path); err != nil {
 		return "", nil, func() {}, fail.Wrap("TEMP_INDEX_FAILED", err)
 	}
-	environment := []string{"GIT_INDEX_FILE=" + path}
+	environment := append([]string(nil), baseEnvironment...)
+	environment = append(environment, "GIT_INDEX_FILE="+path)
 	if _, err := repo.Text(ctx, environment, "read-tree", base); err != nil {
 		return "", nil, func() {}, fail.Wrap("PRIVATE_INDEX_FAILED", err)
 	}
 	return path, environment, func() { _ = os.Remove(path) }, nil
+}
+
+func sameSourcePaths(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func stageEntries(ctx context.Context, repo gitx.Repo, environment []string, paths []string, staged, base map[string]string) error {
@@ -480,17 +556,25 @@ func SelectedIndexDigest(entries map[string]string, paths []string) string {
 	return selectedDigest(entries, paths)
 }
 
-func verifyTree(ctx context.Context, repo gitx.Repo, environment []string, tree string, commands []VerifyCommand, defaultTimeout time.Duration) error {
+func skippedExecutionCount(planned int) ExecutionCount {
+	return ExecutionCount{Planned: planned, Executed: 0, Skipped: planned}
+}
+
+func verifyTree(ctx context.Context, repo gitx.Repo, environment []string, tree string, commands []VerifyCommand, defaultTimeout time.Duration, execute bool) error {
 	if len(commands) == 0 {
 		return nil
 	}
-	scratch, err := os.MkdirTemp("", "wip-verify-*")
-	if err != nil {
-		return fail.Wrap("VERIFY_FAILED", err)
-	}
-	defer func() { _ = os.RemoveAll(scratch) }()
-	if _, err := repo.Text(ctx, environment, "checkout-index", "--all", "--force", "--prefix="+scratch+string(filepath.Separator)); err != nil {
-		return fail.Wrap("VERIFY_FAILED", err)
+	scratch := ""
+	if execute {
+		var err error
+		scratch, err = os.MkdirTemp("", "wip-verify-*")
+		if err != nil {
+			return fail.Wrap("VERIFY_FAILED", err)
+		}
+		defer func() { _ = os.RemoveAll(scratch) }()
+		if _, err := repo.Text(ctx, environment, "checkout-index", "--all", "--force", "--prefix="+scratch+string(filepath.Separator)); err != nil {
+			return fail.Wrap("VERIFY_FAILED", err)
+		}
 	}
 	for index, command := range commands {
 		if len(command.Argv) == 0 || strings.TrimSpace(command.Argv[0]) == "" {
@@ -513,18 +597,30 @@ func verifyTree(ctx context.Context, repo gitx.Repo, environment []string, tree 
 			if filepath.IsAbs(candidate) || candidate == ".." || strings.HasPrefix(candidate, ".."+string(filepath.Separator)) {
 				return fail.Errorf("INVALID_VERIFY_COMMAND", "verify command %d directory escapes the candidate tree", index+1)
 			}
-			resolved, resolveErr := filepath.EvalSymlinks(filepath.Join(scratch, candidate))
-			if resolveErr != nil {
-				return fail.Errorf("INVALID_VERIFY_COMMAND", "verify command %d directory is unavailable", index+1)
+			if !execute {
+				if candidate != "." {
+					kind, kindErr := repo.Text(ctx, environment, "cat-file", "-t", tree+":"+filepath.ToSlash(candidate))
+					if kindErr != nil || kind != "tree" {
+						return fail.Errorf("INVALID_VERIFY_COMMAND", "verify command %d directory is unavailable in the candidate tree", index+1)
+					}
+				}
+			} else {
+				resolved, resolveErr := filepath.EvalSymlinks(filepath.Join(scratch, candidate))
+				if resolveErr != nil {
+					return fail.Errorf("INVALID_VERIFY_COMMAND", "verify command %d directory is unavailable", index+1)
+				}
+				relative, relativeErr := filepath.Rel(scratch, resolved)
+				if relativeErr != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+					return fail.Errorf("INVALID_VERIFY_COMMAND", "verify command %d directory follows a symlink outside the candidate tree", index+1)
+				}
+				directory = resolved
 			}
-			relative, relativeErr := filepath.Rel(scratch, resolved)
-			if relativeErr != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-				return fail.Errorf("INVALID_VERIFY_COMMAND", "verify command %d directory follows a symlink outside the candidate tree", index+1)
-			}
-			directory = resolved
 		}
 		if command.TimeoutMS < 0 || command.TimeoutMS > MaxVerifyTimeout.Milliseconds() {
 			return fail.Errorf("INVALID_VERIFY_COMMAND", "verify command %d timeout is outside the safety range", index+1)
+		}
+		if !execute {
+			continue
 		}
 		timeout := defaultTimeout
 		if command.TimeoutMS > 0 {

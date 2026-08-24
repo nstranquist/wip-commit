@@ -159,10 +159,11 @@ func hooksDigest(hooks ...boundHook) string {
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil))
 }
 
-func hookEnvironment(index, target, object string) []string {
-	environment := gitx.Environment([]string{"GIT_INDEX_FILE=" + index, "WIP_TARGET_REF=" + target})
+func hookEnvironment(privateEnvironment []string, target, object string) []string {
+	environment := append([]string(nil), privateEnvironment...)
+	environment = append(environment, "WIP_TARGET_REF="+target)
 	if strings.TrimSpace(object) != "" {
 		environment = append(environment, "WIP_COMMIT_OBJECT="+object)
 	}
-	return environment
+	return gitx.Environment(environment)
 }

@@ -82,11 +82,11 @@ func TestRunEnforcesSafetyButDoesNotOwnRepositoryNamingPolicy(t *testing.T) {
 	}
 	result, err := Run(context.Background(), Options{
 		Repo: repo, TargetRef: target, ExpectedRef: head, ExpectedSourceHead: head,
-		AllowedPaths:        []string{"core.txt"},
-		Groups:              []Group{{Message: "plain repository checkpoint", Files: []string{"core.txt"}}},
-		ReviewPlanDigest:    "sha256:" + strings.Repeat("a", 64),
-		ExpectedIndexDigest: SelectedIndexDigest(entries, []string{"core.txt"}),
-		MessagePolicy:       receipt,
+		AllowedPaths:         []string{"core.txt"},
+		Groups:               []Group{{Message: "plain repository checkpoint", Files: []string{"core.txt"}}},
+		ReviewPlanDigest:     "sha256:" + strings.Repeat("a", 64),
+		ExpectedSourceDigest: SelectedIndexDigest(entries, []string{"core.txt"}),
+		MessagePolicy:        receipt,
 	})
 	if err != nil {
 		t.Fatalf("capture kernel applied repository naming policy: %v", err)
@@ -113,13 +113,13 @@ func TestRunRejectsReviewedIndexMismatchBeforeHooks(t *testing.T) {
 	}
 	result, err := Run(context.Background(), Options{
 		Repo: repo, TargetRef: target, ExpectedRef: head, ExpectedSourceHead: head,
-		AllowedPaths:        []string{"core.txt"},
-		Groups:              []Group{{Message: "plain repository checkpoint", Files: []string{"core.txt"}}},
-		ReviewPlanDigest:    "sha256:" + strings.Repeat("a", 64),
-		ExpectedIndexDigest: "sha256:" + strings.Repeat("b", 64),
-		MessagePolicy:       policy.Default(),
+		AllowedPaths:         []string{"core.txt"},
+		Groups:               []Group{{Message: "plain repository checkpoint", Files: []string{"core.txt"}}},
+		ReviewPlanDigest:     "sha256:" + strings.Repeat("a", 64),
+		ExpectedSourceDigest: "sha256:" + strings.Repeat("b", 64),
+		MessagePolicy:        policy.Default(),
 	})
-	if fail.Code(err) != "SOURCE_INDEX_MOVED" {
+	if fail.Code(err) != "SOURCE_MOVED" {
 		t.Fatalf("index mismatch error = %v (%s)", err, fail.Code(err))
 	}
 	if result.RefUpdated {
@@ -158,11 +158,109 @@ func TestDryRunDoesNotInventSplitParentCommits(t *testing.T) {
 	if result.Commits[0].Commit != "" || result.Commits[1].Commit != "" || result.RefUpdated {
 		t.Fatalf("dry-run published commit evidence: %#v", result)
 	}
+	if result.SchemaVersion != ResultSchemaVersion || result.GateOutcome != "skipped" || result.Execution == nil || result.Execution.Policy != "no-exec" {
+		t.Fatalf("dry-run contract = %#v", result)
+	}
 	if got := engineGit(t, repo.Root, "rev-parse", target); got != head {
 		t.Fatalf("dry-run moved ref: %s -> %s", head, got)
 	}
 	if got := engineGitRaw(t, repo.Root, "ls-files", "-s", "-z"); got != index {
 		t.Fatal("dry-run changed source index")
+	}
+}
+
+func TestDryRunSkipsVerifyCommandsAndBeforePublish(t *testing.T) {
+	repo := engineTestRepo(t)
+	write(t, repo.Root, "core.txt", "new core\n")
+	engineGit(t, repo.Root, "add", "core.txt")
+	head := engineGit(t, repo.Root, "rev-parse", "HEAD")
+	target := "refs/heads/wip/agent/dry-run-no-exec"
+	engineGit(t, repo.Root, "update-ref", target, head, "")
+	verifyMarker := filepath.Join(t.TempDir(), "verify-ran")
+	publishMarker := filepath.Join(t.TempDir(), "before-publish-ran")
+	t.Setenv("WIP_DRY_RUN_VERIFY_MARKER", verifyMarker)
+
+	result, err := Run(context.Background(), Options{
+		Repo: repo, TargetRef: target, ExpectedRef: head, ExpectedSourceHead: head,
+		AllowedPaths: []string{"core.txt"},
+		Groups: []Group{{
+			Message: "fix(core): prove no-exec preview", Files: []string{"core.txt"},
+			Verify: []VerifyCommand{{Argv: []string{os.Args[0], "-test.run=^TestEngineDryRunVerifyMarkerHelper$", "-test.count=1"}}},
+		}},
+		DryRun: true,
+		BeforePublish: func() error {
+			return os.WriteFile(publishMarker, []byte("callback ran\n"), 0o600)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.GateOutcome != "skipped" || result.Execution == nil || result.Execution.Policy != "no-exec" {
+		t.Fatalf("dry-run result = %#v", result)
+	}
+	wantVerify := ExecutionCount{Planned: 1, Executed: 0, Skipped: 1}
+	if result.Execution.VerifyCommands != wantVerify {
+		t.Fatalf("verify execution report = %#v, want %#v", result.Execution.VerifyCommands, wantVerify)
+	}
+	for _, marker := range []string{verifyMarker, publishMarker} {
+		if _, statErr := os.Lstat(marker); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("dry-run executed marker %s: %v", marker, statErr)
+		}
+	}
+}
+
+func TestEngineDryRunVerifyMarkerHelper(t *testing.T) {
+	marker := os.Getenv("WIP_DRY_RUN_VERIFY_MARKER")
+	if marker == "" {
+		return
+	}
+	if err := os.WriteFile(marker, []byte("verify ran\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDryRunSkipsExecutableRepositoryHooks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture uses POSIX hooks; hosted Windows tests cover the no-exec verify path")
+	}
+	repo := engineTestRepo(t)
+	preMarker := filepath.Join(t.TempDir(), "pre-commit-ran")
+	postMarker := filepath.Join(t.TempDir(), "post-commit-ran")
+	t.Setenv("WIP_DRY_RUN_PRE_HOOK_MARKER", preMarker)
+	t.Setenv("WIP_DRY_RUN_POST_HOOK_MARKER", postMarker)
+	for name, body := range map[string]string{
+		"pre-commit":  "#!/bin/sh\n: > \"$WIP_DRY_RUN_PRE_HOOK_MARKER\"\n",
+		"post-commit": "#!/bin/sh\n: > \"$WIP_DRY_RUN_POST_HOOK_MARKER\"\n",
+	} {
+		hook := engineGit(t, repo.Root, "rev-parse", "--git-path", "hooks/"+name)
+		if !filepath.IsAbs(hook) {
+			hook = filepath.Join(repo.Root, hook)
+		}
+		if err := os.WriteFile(hook, []byte(body), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(t, repo.Root, "core.txt", "new core\n")
+	engineGit(t, repo.Root, "add", "core.txt")
+	head := engineGit(t, repo.Root, "rev-parse", "HEAD")
+	target := "refs/heads/wip/agent/dry-run-hooks"
+	engineGit(t, repo.Root, "update-ref", target, head, "")
+
+	result, err := Run(context.Background(), Options{
+		Repo: repo, TargetRef: target, ExpectedRef: head, ExpectedSourceHead: head,
+		AllowedPaths: []string{"core.txt"}, Groups: []Group{{Message: "fix(hooks): prove no-exec preview", Files: []string{"core.txt"}}}, DryRun: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantHook := ExecutionCount{Planned: 1, Executed: 0, Skipped: 1}
+	if result.Execution == nil || result.Execution.PreCommitHooks != wantHook || result.Execution.PostCommitHooks != wantHook {
+		t.Fatalf("hook execution report = %#v", result.Execution)
+	}
+	for _, marker := range []string{preMarker, postMarker} {
+		if _, statErr := os.Lstat(marker); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("dry-run executed hook marker %s: %v", marker, statErr)
+		}
 	}
 }
 
@@ -204,14 +302,14 @@ func TestOversizedIntentFailsBeforeRefPublication(t *testing.T) {
 		paths[index] = fmt.Sprintf("generated/%04d/%080d.txt", index, index)
 	}
 	result := Result{
-		TargetRef:         target,
-		ExpectedRef:       head,
-		FinalCommit:       strings.Repeat("b", len(head)),
-		SourceHead:        head,
-		SourceIndexDigest: "sha256:" + strings.Repeat("c", 64),
-		FinalTree:         strings.Repeat("d", len(head)),
-		HookDigest:        "sha256:" + strings.Repeat("e", 64),
-		RequestedPaths:    paths,
+		TargetRef:      target,
+		ExpectedRef:    head,
+		FinalCommit:    strings.Repeat("b", len(head)),
+		SourceHead:     head,
+		SourceDigest:   "sha256:" + strings.Repeat("c", 64),
+		FinalTree:      strings.Repeat("d", len(head)),
+		HookDigest:     "sha256:" + strings.Repeat("e", 64),
+		RequestedPaths: paths,
 		Commits: []PlannedCommit{{
 			Index: 1, Message: "feat(records): exercise bounded intent", Parent: head,
 			Commit: strings.Repeat("b", len(head)), Tree: strings.Repeat("d", len(head)), ChangedPaths: paths,
@@ -302,7 +400,7 @@ func TestRunDetectsSelectedIndexMovementAfterFinalGate(t *testing.T) {
 			return nil
 		},
 	})
-	if fail.Code(err) != "SOURCE_INDEX_MOVED" {
+	if fail.Code(err) != "SOURCE_MOVED" {
 		t.Fatalf("error = %v (%s)", err, fail.Code(err))
 	}
 	if got := engineGit(t, repo.Root, "rev-parse", target); got != head {
