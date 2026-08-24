@@ -27,10 +27,11 @@ func TestProtocolFloorIsMajorBoundedSemver(t *testing.T) {
 		allowed        bool
 	}{
 		{Protocol, Protocol, true},
-		{"wip.command/2.1.0", Protocol, true},
-		{"wip.command/2.0.0", "wip.command/2.1.0", false},
-		{"wip.command/3.0.0", Protocol, false},
-		{"wip.command/02.0.0", Protocol, false},
+		{"wip.command/3.1.0", Protocol, true},
+		{"wip.command/3.0.0", "wip.command/3.1.0", false},
+		{"wip.command/2.9.0", Protocol, false},
+		{"wip.command/4.0.0", Protocol, false},
+		{"wip.command/03.0.0", Protocol, false},
 		{"other/2.0.0", Protocol, false},
 	} {
 		if allowed := MeetsProtocolFloor(test.current, test.floor) == nil; allowed != test.allowed {

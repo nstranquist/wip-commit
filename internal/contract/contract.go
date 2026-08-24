@@ -12,18 +12,26 @@ import (
 
 const (
 	SchemaVersion         = "1.0.0"
-	Protocol              = "wip.command/2.0.0"
-	PortableSkillContract = "wip.portable-skill/1.0.0"
+	Protocol              = "wip.command/3.0.0"
+	PortableSkillContract = "wip.portable-skill/2.0.0"
 )
 
 var capabilities = []string{
-	"capture.v2.private-index-cas",
+	"capture.v3.private-source-cas",
+	"capture.v3.review-digest",
+	"commit.dry-run.no-exec.v1",
+	"coordination.migration.v1",
 	"doctor.v1",
-	"handoff.v1.capture-only",
+	"handoff.v2.cumulative-capture-only",
 	"install.digest-upgrade.v1",
-	"plan.v2.no-overwrite",
+	"lane.init.v1",
+	"lease.claim.v1",
+	"plan.v3.observe",
+	"plan.v3.private-source-no-overwrite",
+	"source.worktree-snapshot.v1",
 	"state.archive-history.v1",
 	"state.capture-intent.v2",
+	"state.capture-intent.v3",
 	"state.init-intent.v2",
 	"state.profile.v2",
 	"state.reader-floor.v1",
@@ -34,6 +42,7 @@ var capabilities = []string{
 var stateReaderCapabilities = []string{
 	"state.archive-history.v1",
 	"state.capture-intent.v2",
+	"state.capture-intent.v3",
 	"state.init-intent.v2",
 	"state.profile.v2",
 	"state.reader-floor.v1",
