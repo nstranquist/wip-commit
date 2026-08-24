@@ -101,10 +101,11 @@ type CreateOptions struct {
 }
 
 type Store struct {
-	Repo     gitx.Repo
-	Root     string
-	LeaseTTL time.Duration
-	Domain   DomainMetadata
+	Repo        gitx.Repo
+	Root        string
+	LeaseTTL    time.Duration
+	Domain      DomainMetadata
+	writerFence *WriterFence
 }
 
 type DomainMetadata struct {
@@ -118,16 +119,33 @@ type DomainMetadata struct {
 }
 
 func Open(repo gitx.Repo) (Store, error) {
-	coordinationLock, err := filelock.Acquire(filepath.Join(repo.CommonDir, "wip-coordination.lock"), filelock.DefaultWait)
+	coordinationLock, err := AcquireWriterFence(repo, filelock.DefaultWait)
 	if err != nil {
-		return Store{}, fail.Wrap("LOCK_TIMEOUT", err)
+		return Store{}, err
 	}
 	defer func() { _ = coordinationLock.Release() }()
+	return openWithWriterFence(repo, nil)
+}
+
+// OpenWithWriterFence prepares the store under a command-scoped writer token.
+// The caller must retain and release the token only after the full command has
+// completed all mutation and post-write verification.
+func OpenWithWriterFence(repo gitx.Repo, fence *WriterFence) (Store, error) {
+	if !fence.validFor(repo) {
+		return Store{}, fail.New("WRITER_FENCE_REQUIRED", "store mutation requires the exact repository writer fence")
+	}
+	if err := refuseActiveMigrationFence(repo.CommonDir); err != nil {
+		return Store{}, err
+	}
+	return openWithWriterFence(repo, fence)
+}
+
+func openWithWriterFence(repo gitx.Repo, fence *WriterFence) (Store, error) {
 	root, domain, _, err := prepareStateRoot(repo, true)
 	if err != nil {
 		return Store{}, err
 	}
-	return Store{Repo: repo, Root: root, LeaseTTL: DefaultLeaseTTL, Domain: domain}, nil
+	return Store{Repo: repo, Root: root, LeaseTTL: DefaultLeaseTTL, Domain: domain, writerFence: fence}, nil
 }
 
 // Check validates the coordination domain and existing state without creating
@@ -409,7 +427,22 @@ func (store Store) registryLock(wait time.Duration) (*filelock.Lock, error) {
 	return lock, nil
 }
 
+// existingRegistryLock serializes a read without creating the lock or
+// rewriting its owner record. Lane creation publishes leases.lock before an
+// active lane becomes visible. A missing or replaced lock therefore means the
+// state is incomplete and the reader must fail closed.
+func (store Store) existingRegistryLock(wait time.Duration) (*filelock.Lock, error) {
+	lock, err := filelock.AcquireExisting(filepath.Join(store.Root, "locks", "leases.lock"), wait)
+	if err != nil {
+		return nil, fail.Wrap("LOCK_TIMEOUT", err)
+	}
+	return lock, nil
+}
+
 func (store Store) Create(ctx context.Context, options CreateOptions) (Lane, error) {
+	if !store.WriterFenced() {
+		return withWriterFence(store, func(fenced Store) (Lane, error) { return fenced.Create(ctx, options) })
+	}
 	for label, value := range map[string]string{"lane": options.ID, "agent": options.Agent, "session": options.Session} {
 		if err := validateID(value, label); err != nil {
 			return Lane{}, err
@@ -503,6 +536,9 @@ func (store Store) finishCreate(ctx context.Context, lane Lane) (Lane, error) {
 }
 
 func (store Store) Claim(id, agent, session string, paths []string) (Lease, error) {
+	if !store.WriterFenced() {
+		return withWriterFence(store, func(fenced Store) (Lease, error) { return fenced.Claim(id, agent, session, paths) })
+	}
 	if err := validateID(agent, "agent"); err != nil {
 		return Lease{}, err
 	}
@@ -603,6 +639,9 @@ func (store Store) Claim(id, agent, session string, paths []string) (Lease, erro
 }
 
 func (store Store) Renew(id, agent, session string) ([]Lease, error) {
+	if !store.WriterFenced() {
+		return withWriterFence(store, func(fenced Store) ([]Lease, error) { return fenced.Renew(id, agent, session) })
+	}
 	lock, err := store.LaneLock(id, filelock.DefaultWait)
 	if err != nil {
 		return nil, err
@@ -621,6 +660,9 @@ func (store Store) Renew(id, agent, session string) ([]Lease, error) {
 // RenewWithLockHeld extends every active lease for expected. The caller must
 // hold expected's lane lock for the complete call.
 func (store Store) RenewWithLockHeld(expected Lane) ([]Lease, error) {
+	if err := store.requireWriterFence(); err != nil {
+		return nil, err
+	}
 	lane, err := store.Load(expected.ID)
 	if err != nil {
 		return nil, err
@@ -673,7 +715,7 @@ func (store Store) renewLocked(lane Lane) ([]Lease, error) {
 }
 
 func (store Store) Current(agent, session, id string) (Status, error) {
-	registry, err := store.registryLock(filelock.DefaultWait)
+	registry, err := store.existingRegistryLock(filelock.DefaultWait)
 	if err != nil {
 		return Status{}, err
 	}
@@ -719,7 +761,7 @@ func (store Store) currentLocked(agent, session, id string) (Status, error) {
 }
 
 func (store Store) Status(id string) (Status, error) {
-	registry, err := store.registryLock(filelock.DefaultWait)
+	registry, err := store.existingRegistryLock(filelock.DefaultWait)
 	if err != nil {
 		return Status{}, err
 	}
@@ -737,7 +779,19 @@ func (store Store) statusLocked(id string) (Status, error) {
 }
 
 func (store Store) Load(id string) (Lane, error) {
-	registry, err := store.registryLock(filelock.DefaultWait)
+	if err := validateID(id, "lane"); err != nil {
+		return Lane{}, err
+	}
+	// A new store has no registry lock until its first lane transaction. Return
+	// the stable absence result without creating that lock. If the lane record
+	// exists, the published registry lock is mandatory and the read fails
+	// closed when it is missing.
+	if _, err := os.Lstat(store.lanePath(id)); errors.Is(err, os.ErrNotExist) {
+		return Lane{}, fail.New("LANE_NOT_FOUND", "lane not found: "+id)
+	} else if err != nil {
+		return Lane{}, fail.Wrap("STORE_FAILED", err)
+	}
+	registry, err := store.existingRegistryLock(filelock.DefaultWait)
 	if err != nil {
 		return Lane{}, err
 	}
@@ -767,7 +821,7 @@ func (store Store) loadLane(id string) (Lane, error) {
 }
 
 func (store Store) LoadLease(id string) (Lease, error) {
-	registry, err := store.registryLock(filelock.DefaultWait)
+	registry, err := store.existingRegistryLock(filelock.DefaultWait)
 	if err != nil {
 		return Lease{}, err
 	}
@@ -797,7 +851,7 @@ func (store Store) loadLease(id string) (Lease, error) {
 }
 
 func (store Store) ActivePaths(id string) ([]string, error) {
-	registry, err := store.registryLock(filelock.DefaultWait)
+	registry, err := store.existingRegistryLock(filelock.DefaultWait)
 	if err != nil {
 		return nil, err
 	}
@@ -819,7 +873,7 @@ func (store Store) activePathsLocked(id string) ([]string, error) {
 }
 
 func (store Store) ValidateCapture(ctx context.Context, expected Lane, expectedPaths []string) error {
-	registry, err := store.registryLock(filelock.DefaultWait)
+	registry, err := store.existingRegistryLock(filelock.DefaultWait)
 	if err != nil {
 		return err
 	}
@@ -855,6 +909,12 @@ func (store Store) ValidateCapture(ctx context.Context, expected Lane, expectedP
 // active lease while the caller holds the lane lock. The registry lock prevents
 // another lane from claiming an expired path between validation and renewal.
 func (store Store) RefreshCaptureLease(ctx context.Context, expected Lane, expectedPaths []string) error {
+	if !store.WriterFenced() {
+		_, err := withWriterFence(store, func(fenced Store) (struct{}, error) {
+			return struct{}{}, fenced.RefreshCaptureLease(ctx, expected, expectedPaths)
+		})
+		return err
+	}
 	registry, err := store.registryLock(filelock.DefaultWait)
 	if err != nil {
 		return err
@@ -1078,6 +1138,12 @@ func (store Store) validateCaptureIdentity(ctx context.Context, current, expecte
 }
 
 func (store Store) RecordCommit(ctx context.Context, id, commit string) error {
+	if !store.WriterFenced() {
+		_, err := withWriterFence(store, func(fenced Store) (struct{}, error) {
+			return struct{}{}, fenced.RecordCommit(ctx, id, commit)
+		})
+		return err
+	}
 	registry, err := store.registryLock(filelock.DefaultWait)
 	if err != nil {
 		return err
@@ -1113,6 +1179,12 @@ func (store Store) RecordCommit(ctx context.Context, id, commit string) error {
 }
 
 func (store Store) Release(id, agent, session string, abort bool) error {
+	if !store.WriterFenced() {
+		_, err := withWriterFence(store, func(fenced Store) (struct{}, error) {
+			return struct{}{}, fenced.Release(id, agent, session, abort)
+		})
+		return err
+	}
 	lock, err := store.LaneLock(id, filelock.DefaultWait)
 	if err != nil {
 		return err
@@ -1131,6 +1203,9 @@ func (store Store) Release(id, agent, session string, abort bool) error {
 // ReleaseWithLockHeld releases expected and its leases. The caller must hold
 // expected's lane lock for the complete call.
 func (store Store) ReleaseWithLockHeld(expected Lane, abort bool) error {
+	if err := store.requireWriterFence(); err != nil {
+		return err
+	}
 	lane, err := store.Load(expected.ID)
 	if err != nil {
 		return err
@@ -1378,6 +1453,13 @@ func (store Store) validateLane(lane Lane, id string) error {
 	return nil
 }
 
+// ValidateImportedLane applies the exact durable-reader contract without
+// creating state. Coordination migration uses it before it publishes a legacy
+// record into the canonical store.
+func ValidateImportedLane(repo gitx.Repo, lane Lane) error {
+	return (Store{Repo: repo}).validateLane(lane, lane.ID)
+}
+
 func (store Store) validateLease(lease Lease, id string) error {
 	if lease.SchemaVersion != SchemaVersion {
 		return fail.Errorf("MIGRATION_REQUIRED", "lease schema version %d is unsupported; this wip release supports version %d", lease.SchemaVersion, SchemaVersion)
@@ -1398,6 +1480,12 @@ func (store Store) validateLease(lease Lease, id string) error {
 		return fail.New("STORE_FAILED", "lease path set is invalid or not canonical")
 	}
 	return nil
+}
+
+// ValidateImportedLease applies the exact durable-reader contract without
+// creating state. It does not renew or otherwise rewrite the lease.
+func ValidateImportedLease(repo gitx.Repo, lease Lease) error {
+	return (Store{Repo: repo}).validateLease(lease, lease.ID)
 }
 
 func objectID(value string) bool {

@@ -51,7 +51,7 @@ func (store Store) ArchiveCandidates(before time.Time) ([]ArchiveCandidate, erro
 	if before.IsZero() {
 		return nil, fail.New("INVALID_ARGS", "archive cutoff cannot be zero")
 	}
-	registry, err := store.registryLock(filelock.DefaultWait)
+	registry, err := store.existingRegistryLock(filelock.DefaultWait)
 	if err != nil {
 		return nil, err
 	}
@@ -109,6 +109,9 @@ func (store Store) archiveCandidateLocked(id string, before time.Time) (ArchiveC
 // records are compared again while every selected lane and the lease registry
 // are locked.
 func (store Store) Archive(ctx context.Context, before time.Time, expected []ArchiveCandidate) (ArchiveReceipt, error) {
+	if !store.WriterFenced() {
+		return withWriterFence(store, func(fenced Store) (ArchiveReceipt, error) { return fenced.Archive(ctx, before, expected) })
+	}
 	if err := validateArchiveCandidates(expected, before); err != nil {
 		return ArchiveReceipt{}, err
 	}
@@ -122,6 +125,9 @@ func (store Store) Archive(ctx context.Context, before time.Time, expected []Arc
 
 // ResumeArchive continues only the immutable prepared receipt named by id.
 func (store Store) ResumeArchive(ctx context.Context, id string) (ArchiveReceipt, error) {
+	if !store.WriterFenced() {
+		return withWriterFence(store, func(fenced Store) (ArchiveReceipt, error) { return fenced.ResumeArchive(ctx, id) })
+	}
 	if err := validateID(id, "archive"); err != nil {
 		return ArchiveReceipt{}, err
 	}
@@ -241,6 +247,9 @@ func sameArchiveCandidate(left, right ArchiveCandidate) bool {
 }
 
 func (store Store) RestoreArchive(ctx context.Context, id string) (ArchiveReceipt, error) {
+	if !store.WriterFenced() {
+		return withWriterFence(store, func(fenced Store) (ArchiveReceipt, error) { return fenced.RestoreArchive(ctx, id) })
+	}
 	if err := validateID(id, "archive"); err != nil {
 		return ArchiveReceipt{}, err
 	}

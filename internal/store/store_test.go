@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/nstranquist/wip-commit/internal/atomicfile"
+	"github.com/nstranquist/wip-commit/internal/contract"
 	"github.com/nstranquist/wip-commit/internal/fail"
 	"github.com/nstranquist/wip-commit/internal/filelock"
 	"github.com/nstranquist/wip-commit/internal/gitx"
@@ -96,6 +97,53 @@ func TestOperationalRecordsUseTheRegistryFence(t *testing.T) {
 	assertWaitsForRegistry(t, laneStore, func() error {
 		return laneStore.RecordCommit(context.Background(), lane.ID, commit)
 	})
+}
+
+func TestOperationalReadsPreserveRegistryLockBytes(t *testing.T) {
+	repo := testRepo(t)
+	laneStore, err := Open(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lane, err := laneStore.Create(context.Background(), CreateOptions{ID: "registry-read-only", Agent: "agent", Session: "session", Mode: ModeShared})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := laneStore.Claim(lane.ID, lane.Agent, lane.Session, []string{"base.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(laneStore.Root, "locks", "leases.lock")
+	reads := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "load lane", run: func() error { _, err := laneStore.Load(lane.ID); return err }},
+		{name: "load lease", run: func() error { _, err := laneStore.LoadLease(lease.ID); return err }},
+		{name: "current", run: func() error { _, err := laneStore.Current(lane.Agent, lane.Session, lane.ID); return err }},
+		{name: "status", run: func() error { _, err := laneStore.Status(lane.ID); return err }},
+		{name: "active paths", run: func() error { _, err := laneStore.ActivePaths(lane.ID); return err }},
+		{name: "validate capture", run: func() error { return laneStore.ValidateCapture(context.Background(), lane, []string{"base.txt"}) }},
+		{name: "archive candidates", run: func() error { _, err := laneStore.ArchiveCandidates(time.Now().UTC().Add(time.Hour)); return err }},
+	}
+	for _, read := range reads {
+		t.Run(read.name, func(t *testing.T) {
+			before, err := os.ReadFile(lockPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := read.run(); err != nil {
+				t.Fatal(err)
+			}
+			after, err := os.ReadFile(lockPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(after) != string(before) {
+				t.Fatalf("read changed registry lock bytes: before=%q after=%q", before, after)
+			}
+		})
+	}
 }
 
 func assertWaitsForRegistry(t *testing.T, laneStore Store, run func() error) {
@@ -709,7 +757,7 @@ func TestCoordinationDomainMarkerAndForeignDomainFailClosed(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(body), domainID) || !strings.Contains(string(body), `"minimum_reader_protocol": "wip.command/2.0.0"`) || laneStore.Root != filepath.Join(repo.CommonDir, "wip", "v1") {
+		if !strings.Contains(string(body), domainID) || !strings.Contains(string(body), `"minimum_reader_protocol": "`+contract.Protocol+`"`) || laneStore.Root != filepath.Join(repo.CommonDir, "wip", "v1") {
 			t.Fatalf("domain marker/root mismatch: %s root=%s", body, laneStore.Root)
 		}
 		if laneStore.Domain.SchemaVersion != domainSchemaVersion || laneStore.Domain.UpgradeRequired {
