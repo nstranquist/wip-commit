@@ -89,7 +89,7 @@ func main() {
 func run(args []string) error {
 	flags := flag.NewFlagSet("release", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
-	version := flags.String("version", "", "release tag, for example v0.1.0-beta.1")
+	version := flags.String("version", "", "release tag, for example v0.2.0-beta.1")
 	out := flags.String("out", "", "new output directory")
 	var rawTargets targetList
 	flags.Var(&rawTargets, "target", "supported GOOS/GOARCH pair; repeatable")
