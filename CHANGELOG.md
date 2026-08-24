@@ -5,11 +5,11 @@ Semantic Versioning.
 
 ## [Unreleased]
 
-Planned first prerelease: `v0.1.0-beta.1`.
+Planned first prerelease: `v0.2.0-beta.1`.
 
 ### Added
 
-- A machine-readable `wip.command/2.0.0` capability contract and a digest-bound
+- A machine-readable `wip.command/3.0.0` capability contract and a digest-bound
   portable-skill contract.
 - Preview/apply upgrades for the state marker, installed binary, and portable
   skill. Each apply requires the exact reviewed byte digest.
@@ -20,7 +20,7 @@ Planned first prerelease: `v0.1.0-beta.1`.
   prerelease workflow.
 - Pinned golangci-lint job for hosted pull-request and branch checks.
 - State compatibility policy and explicit upgrade and downgrade procedures.
-- Fail-closed, read-only pre-first-push receipt that binds the reviewed
+- Fail-closed, read-only pre-first-push receipt. It binds the reviewed
   bootstrap, linear split-commit range, complete path delta, public author and
   committer identities, object integrity, owner approval, and secret scans.
 - Human-only publication handoff for the first hosted pull request, exact CI
@@ -28,7 +28,8 @@ Planned first prerelease: `v0.1.0-beta.1`.
 - Fail-closed hosted-correction receipts that bind exact verifier source, local
   history, remote refs, pull-request state, no-bypass rulesets, and checks.
 - Shared-checkout and detached linked-worktree lanes.
-- Exact staged-subset capture through private Git indexes.
+- Exact `staged_index` and `worktree_snapshot` capture through private source
+  snapshots and private Git indexes.
 - All-or-nothing split plans with one final ref compare-and-swap.
 - Conventional Commit validation, path leases, immutable hooks, bounded
   verification, durable intents, and exact reconciliation.
@@ -40,19 +41,34 @@ Planned first prerelease: `v0.1.0-beta.1`.
 - Operational status with capture-candidate, captured-staged, foreign-staged,
   empty-lease, expiry, ref-health, policy, and latest-intent fields, plus a
   strict public JSON Schema.
-- One version 2 draft/reviewed plan schema with source, index, lease, lane, and
-  message-policy bindings.
-- `wip capture` with typed capture-only handoff output and optional post-handoff
-  lane release.
+- One version 3 draft/reviewed plan schema with source mode, untracked policy,
+  source digest, path, lease, lane, and message-policy bindings.
+- `wip capture` with a digest-bound version 2 cumulative capture-only handoff
+  and optional post-handoff lane release.
+- A read-only `wip plan --observe` path that does not renew leases, change
+  repository state, or write an output file.
+- A digest-bound coordination migration with shadow comparison, one writer
+  cutover, forward recovery, rollback before source movement, and a sealed
+  legacy archive.
+- A manifest-bound registry lock that is published before migrated lane and
+  lease records become readable.
+- Immutable `review/v1/handoffs` and `review/v1/plans` storage roots for the
+  separate review and landing authority.
 - Named `conventional-v1` and `safety-only-v1` message policies.
 - Automatic complete-set lease renewal on ordinary authenticated lane use.
 - Runtime validation of real command data against the published capture JSON
   Schemas.
 - Version 1 profile and intent compatibility without immutable digest changes.
+- Capture-intent schema version 3 with read compatibility for versions 1 and 2.
 
 ### Changed
 
-- Source builds now report `0.1.0-dev`; release builds receive both SemVer and
+- `wip commit --dry-run` now uses a fail-closed no-exec contract. It snapshots
+  hooks and constructs the candidate structure without executing repository hooks,
+  verification commands, publication callbacks, lease renewal, or repository
+  Git writes.
+  Result schema 3 reports skipped gates and exact execution counts.
+- Source builds now report `0.2.0-dev`. Release builds receive both SemVer and
   exact tag identity from the deterministic release builder.
 - A zero lock wait now fails after one acquisition attempt. Internal
   serialization uses an explicit bounded wait.
@@ -65,6 +81,10 @@ Planned first prerelease: `v0.1.0-beta.1`.
   continue. `env` rejects another checkout before lease renewal.
 - Handoff validation, active renewal, and final guided release now keep one
   continuous lane lock. Completed receipts always revalidate Git objects.
+- Handoff output now validates the unique complete lane chain from base to tip.
+  A requested plan ID must name the tip segment.
+- Worktree-source planning now uses a temporary index and object directory. It
+  leaves the caller index and repository object database unchanged.
 - Released-lane handoff locks existing state without rewriting lock metadata
   or creating missing lock paths.
 - Commit-message naming checks now run as lane policy before hooks. The capture
