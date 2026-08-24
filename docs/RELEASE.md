@@ -16,7 +16,7 @@ injects both the artifact SemVer and the exact tag. A binary reports
 `channel: release` only when those injected values match.
 
 The hosted workflow runs only for a tag name that contains a prerelease
-suffix, such as `v0.1.0-beta.1`. It builds six archives:
+suffix, such as `v0.2.0-beta.1`. It builds six archives:
 
 - Linux on AMD64 and ARM64.
 - macOS on AMD64 and ARM64.
@@ -57,7 +57,7 @@ checkout.
 
 ```text
 GOTOOLCHAIN=go1.25.12 GOWORK=off go run ./scripts/release \
-  --version v0.1.0-beta.1 \
+  --version v0.2.0-beta.1 \
   --out dist
 ```
 
@@ -88,16 +88,16 @@ If hosted checks require a candidate change, use
 checkout before another `main` update.
 
 Before the tag, move the release notes from `Unreleased` to a
-`0.1.0-beta.1` section with the actual tag date. Add the release comparison
+`0.2.0-beta.1` section with the actual tag date. Add the release comparison
 links. Treat that edit as a source change: rerun every local and hosted gate on
 the new commit before tag approval.
 
 Create one signed tag at the approved commit:
 
 ```text
-git tag -s v0.1.0-beta.1 -m "wip-commit v0.1.0-beta.1"
-git tag -v v0.1.0-beta.1
-git push origin refs/tags/v0.1.0-beta.1
+git tag -s v0.2.0-beta.1 -m "wip-commit v0.2.0-beta.1"
+git tag -v v0.2.0-beta.1
+git push origin refs/tags/v0.2.0-beta.1
 ```
 
 The tag push starts `.github/workflows/release-beta.yml`. The workflow repeats
@@ -113,7 +113,7 @@ After the workflow succeeds, download the release files in a clean directory.
 Check `checksums.txt`, then check the attestations:
 
 ```text
-gh attestation verify wip-commit_0.1.0-beta.1_linux_amd64.tar.gz \
+gh attestation verify wip-commit_0.2.0-beta.1_linux_amd64.tar.gz \
   --repo nstranquist/wip-commit
 ```
 

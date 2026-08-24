@@ -84,6 +84,10 @@ file.
 Run the command source from a clean, reviewed verifier checkout. Set
 `--repo-dir` to a clean checkout of the exact candidate.
 
+The command below records the 2026-08-17 correction. Its
+`candidate/v0.1.0-beta.1` ref is historical evidence. The current release
+target is `v0.2.0-beta.1`.
+
 ```text
 go run ./scripts/publication-correction \
   --verifier-dir . \

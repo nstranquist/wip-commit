@@ -6,9 +6,9 @@ Implementation: Verified on 2026-08-17
 
 Decision owner: Repository owner
 
-Last updated: 2026-08-17
+Last updated: 2026-08-23
 
-Target release: Before `v0.1.0-beta.1`
+Target release: Before `v0.2.0-beta.1`
 
 ## Summary
 
@@ -206,3 +206,4 @@ Only the redacted result belongs in public evidence.
 | 2026-08-17 | The repository owner accepted KEP-0002. |
 | 2026-08-17 | Implement both phases and record the finalized correction receipt. |
 | 2026-08-17 | Supersede the provisional receipt with source-bound verifier and complete ruleset evidence. |
+| 2026-08-23 | Retarget prospective release gates to `v0.2.0-beta.1`. Preserve the 2026-08-17 receipt and ref evidence. |

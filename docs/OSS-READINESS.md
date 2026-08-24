@@ -32,12 +32,16 @@ The live public-source and hosted-control check is in
 - One coordination-domain interlock for standalone and legacy installations.
 - Explicit initialization ownership. Probes and other lane commands cannot
   claim an uninitialized repository.
-- Exact staged-subset and all-or-nothing split capture.
-- One bound draft/reviewed capture-plan schema with no-overwrite output.
-- Stale-plan checks for source, lane, index, paths, leases, and message policy.
+- Exact staged-index and worktree-source capture with all-or-nothing split
+  publication.
+- One bound version 3 draft/reviewed capture-plan schema with no-overwrite
+  output.
+- Stale-plan checks for source mode, source digest, lane, paths, leases, and
+  message policy.
 - Operational status with capture, captured-staged, foreign, and empty-lease
   classes and a strict public JSON Schema.
-- Ordinary-use lease renewal with pure `--observe` status and environment reads.
+- Ordinary-use lease renewal with pure `--observe` status, environment, and
+  plan reads.
 - Automatic lease heartbeat and an exact final publication fence.
 - Random no-clobber lease creation and fail-closed partial-release recovery.
 - Exact init-claim repair and complete-registry renewal and release checks.
@@ -46,8 +50,12 @@ The live public-source and hosted-control check is in
 - Exact-plan, receipt-based archive, resume, and restore operations that
   preserve refs and commits.
 - Strict JSON and named message policies outside the capture kernel.
-- A privacy-bounded capture-only handoff with explicit non-authorization.
-- A guided `wip capture` path that requires a reviewed version 2 plan.
+- A privacy-bounded version 2 cumulative handoff with an exact digest and
+  explicit non-authorization.
+- A guided `wip capture` path that requires a reviewed version 3 plan.
+- A digest-bound coordination migration with a single-writer cutover, a
+  manifest-bound registry lock, a sealed legacy archive, and immutable
+  review-plan and handoff directories.
 - Threat model, architecture, error guide, security policy, and contribution
   guide.
 - Honest single-maintainer governance, succession expectations, and beta
@@ -71,9 +79,10 @@ The live public-source and hosted-control check is in
 - Deterministic six-target archives, checksums, and release receipt.
 - Tag-only artifact-attestation workflow with immutable action references.
 - State compatibility, upgrade, and downgrade policy.
-- A proposed capture-to-landing KEP that keeps the beta capture-only and
-  defines fail-closed requirements for any future landing command.
-- An accepted agent-facing workflow KEP with version 1 receipt compatibility.
+- An amended capture-to-landing KEP that keeps the beta capture-only and
+  defines fail-closed requirements for a separate landing authority.
+- An accepted and amended agent-facing workflow KEP with plan version 3,
+  cumulative handoff version 2, and historical receipt compatibility.
 - A redacted independent beta exercise protocol and machine-checkable receipt
   schema.
 - A human-gated hosted-repository setup and evidence runbook.
@@ -107,7 +116,7 @@ The live public-source and hosted-control check is in
 4. Ask at least one independent user to follow
    [BETA-EXERCISE.md](BETA-EXERCISE.md) for shared and worktree flows. Retain a
    redacted receipt that passes [BETA-EXERCISE.schema.json](BETA-EXERCISE.schema.json).
-5. Obtain explicit owner approval for `v0.1.0-beta.1`.
+5. Obtain explicit owner approval for `v0.2.0-beta.1`.
 6. Create and push the signed tag only after every tracked public-beta gate
    passes. Check that the hosted release attestation succeeds.
 7. Verify the published archives and checksums. Install the final tag through

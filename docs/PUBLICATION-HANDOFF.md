@@ -11,6 +11,12 @@ Owner approval: `owner-session-2026-08-16`
 First corrected public `main` on 2026-08-17:
 `206fa8b6a1dde1d97081133e4d447c0881849922`
 
+Current release target: `v0.2.0-beta.1`
+
+The historical commands retain the `candidate/v0.1.0-beta.1` ref name. That
+ref name records the completed publication event. It is not the current
+release target.
+
 The source repository now exists and has an active ruleset. The procedure below
 is the retained first-publication record. It is not a current mutation runbook.
 See [HOSTED-STATUS-2026-08-18.md](HOSTED-STATUS-2026-08-18.md).
@@ -204,7 +210,7 @@ exists. All later changes must follow the active protected-branch policy.
 
 ## Gates that remain after the handoff
 
-Do not create `v0.1.0-beta.1` until the requirement tracker has evidence for:
+Do not create `v0.2.0-beta.1` until the requirement tracker has evidence for:
 
 - hosted Linux, macOS, and Windows execution on the final tag candidate.
 - repository rules and security settings.

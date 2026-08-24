@@ -34,7 +34,8 @@ redacted note. Validate the receipt against
 4. Create a new disposable Git repository.
 5. Configure a test-only Git name and email in that repository.
 6. Commit two small text files as the base commit.
-7. Record the source `HEAD` and index-file digest before each scenario.
+7. Record the source `HEAD`, index-file digest, and Git common-directory digest
+   before each scenario.
 
 Do not add a remote. Do not use global Git configuration.
 
@@ -43,14 +44,27 @@ Do not add a remote. Do not use global Git configuration.
 1. Run `wip init` in shared mode.
 2. Claim both test files.
 3. Change and stage both files.
-4. Run `wip plan --out <plan>`.
-5. Add two messages and set the plan state to `reviewed`.
-6. Run `wip commit --plan <plan> --dry-run`.
-7. Verify that the dry-run did not move the lane ref.
-8. Run `wip capture --plan <plan>`.
-9. Verify that the lane contains two linear commits.
-10. Verify that source `HEAD` and the complete index stayed unchanged.
-11. Verify that the handoff is capture-only and does not authorize landing.
+4. Run `wip plan --source staged_index --untracked not_applicable --observe`.
+5. Verify that the observed plan changed no repository bytes.
+6. Run `wip plan --source staged_index --untracked not_applicable --out
+   <plan>`.
+7. Add two messages and set the plan state to `reviewed`.
+8. Run `wip commit --plan <plan> --dry-run`.
+9. Require result schema `3.0.0` and `gate_outcome: "skipped"`.
+10. Require `execution.policy: "no-exec"` and zero executed counts.
+11. Verify that repository, store, ref, lease, configuration, and index bytes did
+    not change.
+12. Add hook and verification markers. Verify that the dry-run created neither
+    marker.
+13. Run `wip capture --plan <plan>`.
+14. Verify that the non-dry capture executed the configured gates.
+15. Verify that the lane contains two linear commits.
+16. Verify that source `HEAD` and the complete index stayed unchanged.
+17. Verify the cumulative handoff digest and complete base-to-tip chain.
+18. Verify that the handoff is capture-only and does not authorize landing.
+
+The dry-run validates structure only. It does not prove that repository hooks
+or verification commands pass.
 
 Record scenario ID `shared-split`.
 
@@ -68,7 +82,7 @@ Record scenario ID `overlap-refusal`.
 ## Scenario 3: verification failure
 
 1. Stage a later change on one leased file.
-2. Write a new draft plan.
+2. Write a new version 3 `staged_index` draft plan.
 3. Add `git rev-parse --is-inside-work-tree` as a verify command.
 4. Set the plan state to `reviewed` and run `wip capture`.
 5. Verify that the command returns `VERIFY_FAILED`.
@@ -85,7 +99,8 @@ Record scenario ID `verify-failure`.
 
 ## Scenario 4: duplicate refusal
 
-1. Run `wip plan --out <new-plan>` without another staged change.
+1. Run `wip plan --source staged_index --untracked not_applicable --out
+   <new-plan>` without another staged change.
 2. Verify that the command returns `EMPTY_SELECTION`.
 3. Verify that the lane ref stayed unchanged.
 
@@ -96,11 +111,14 @@ Record scenario ID `duplicate-refusal`.
 1. Release the shared lane.
 2. Run `wip init` with `--mode worktree` and `--create-worktree`.
 3. Claim two files in that linked worktree.
-4. Change and stage both files in the linked worktree.
-5. Create and capture a reviewed two-group v2 plan.
-6. Verify both checkout `HEAD` values.
-7. Verify both complete indexes.
-8. Verify that the new lane contains the complete split chain.
+4. Change both files in the linked worktree. Do not stage them.
+5. Create a reviewed two-group version 3 plan with `--source
+   worktree_snapshot --untracked forbid`.
+6. Capture the reviewed plan.
+7. Verify both checkout `HEAD` values.
+8. Verify both complete indexes.
+9. Verify that the new lane contains the complete split chain.
+10. Verify the cumulative handoff digest and `landing_authorized: false`.
 
 Record scenario ID `worktree-split`.
 

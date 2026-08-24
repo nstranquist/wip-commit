@@ -1,5 +1,10 @@
 # Agent-facing workflow security review
 
+This review is historical evidence for plan version 2. It does not review
+private-source plan version 3, cumulative handoff version 2, or coordination
+migration. Use the current threat model and a new dated review for those
+contracts.
+
 Review date: 2026-08-18
 
 Scope: KEP-0003, capture plan v2, policy binding, lease renewal, status, and

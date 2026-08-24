@@ -2,6 +2,8 @@
 
 Status: Public source candidate. No tag or GitHub release exists.
 
+Current release target: `v0.2.0-beta.1`
+
 Observed on: 2026-08-17
 
 Repository: [nstranquist/wip-commit](https://github.com/nstranquist/wip-commit)
@@ -134,7 +136,7 @@ the tagged-install gate.
 
 ## Remaining public-beta gates
 
-Do not create `v0.1.0-beta.1` until all these gates pass:
+Do not create `v0.2.0-beta.1` until all these gates pass:
 
 - Obtain a valid receipt from one independent beta tester.
 - Approve a Code of Conduct and a confidential conduct-reporting path.

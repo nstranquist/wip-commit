@@ -1,5 +1,10 @@
 # Dogfood evidence
 
+This file contains dated historical evidence. Some entries record plan version
+2 and staged-index behavior. Use [ARCHITECTURE.md](ARCHITECTURE.md),
+[PLAN.schema.json](PLAN.schema.json), and [HANDOFF.schema.json](HANDOFF.schema.json)
+for the current protocol.
+
 ## 2026-08-21 installed workflow and source-provenance exercise
 
 This exercise started with no `wip` executable on `PATH`. The complete portable
@@ -379,6 +384,10 @@ hosted CI, an independent user exercise, or an independent security review.
 - `wip doctor` reported a healthy store and no pending recovery work.
 
 ### Safe failure under host pressure
+
+Historical contract note: this evidence predates the no-exec dry-run contract.
+Current `wip commit --dry-run` does not execute hooks or verification commands.
+Only a non-dry capture can provide current gate evidence.
 
 The first capture dry-run ran the complete internal test set. Disposable Git
 tests reached the host storage limit and returned `no space left on device`.
