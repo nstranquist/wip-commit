@@ -42,6 +42,16 @@ var isolatedRepositoryEnvironment = map[string]bool{
 	"GIT_WORK_TREE":                    true,
 }
 
+// trustedRepositoryOverrides are the repository-local selectors that the
+// capture kernel may supply itself after inherited selectors have been
+// removed. Keep this list narrow. In particular, callers cannot replace the
+// repository selected by Repo.Root, GitDir, or CommonDir.
+var trustedRepositoryOverrides = map[string]bool{
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES": true,
+	"GIT_INDEX_FILE":                   true,
+	"GIT_OBJECT_DIRECTORY":             true,
+}
+
 func Discover(ctx context.Context, directory string) (Repo, error) {
 	if directory == "" {
 		var err error
@@ -272,13 +282,19 @@ func commandRaw(ctx context.Context, dir string, env []string, args ...string) (
 
 func mergedEnvironment(extra []string) []string {
 	environment := make([]string, 0, len(os.Environ())+len(extra))
+	extraNames := make(map[string]bool, len(extra))
+	for _, entry := range extra {
+		extraNames[environmentName(entry)] = true
+	}
 	for _, entry := range os.Environ() {
-		if !isolatesRepositoryEnvironment(environmentName(entry)) {
+		name := environmentName(entry)
+		if !isolatesRepositoryEnvironment(name) && !extraNames[name] {
 			environment = append(environment, entry)
 		}
 	}
 	for _, entry := range extra {
-		if !isolatesRepositoryEnvironment(environmentName(entry)) {
+		name := environmentName(entry)
+		if !isolatesRepositoryEnvironment(name) || trustedRepositoryOverrides[name] {
 			environment = append(environment, entry)
 		}
 	}

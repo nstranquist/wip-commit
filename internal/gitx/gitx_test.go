@@ -112,6 +112,64 @@ func TestDiscoverIgnoresInheritedRepositoryRoutingEnvironment(t *testing.T) {
 	}
 }
 
+func TestRepoCommandsUseTrustedPrivateIndexWithoutChangingCallerIndex(t *testing.T) {
+	repo, _ := initializedRepo(t)
+	ctx := context.Background()
+	callerBefore, err := repo.Raw(ctx, nil, "ls-files", "-s", "-z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateIndex := filepath.Join(t.TempDir(), "capture.index")
+	environment := []string{
+		"GIT_INDEX_FILE=" + privateIndex,
+		"GIT_DIR=/tmp/forbidden.git",
+		"WIP_TARGET_REF=refs/heads/wip/test/private-index",
+	}
+	if _, err := repo.Text(ctx, environment, "read-tree", "HEAD"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Text(ctx, environment, "update-index", "--force-remove", "--", "tracked.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(privateIndex); err != nil {
+		t.Fatalf("trusted private index was not created: %v", err)
+	}
+	callerAfter, err := repo.Raw(ctx, nil, "ls-files", "-s", "-z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if callerAfter != callerBefore {
+		t.Fatalf("caller index changed through private-index operation:\nwant %q\n got %q", callerBefore, callerAfter)
+	}
+	privateEntries, err := repo.Raw(ctx, []string{"GIT_INDEX_FILE=" + privateIndex}, "ls-files", "-s", "-z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(privateEntries, "tracked.txt") {
+		t.Fatalf("private index update did not take effect: %q", privateEntries)
+	}
+	commandEnvironment := mergedEnvironment(environment)
+	for _, entry := range commandEnvironment {
+		name := environmentName(entry)
+		if name == "GIT_DIR" {
+			t.Fatalf("untrusted repository override survived: %q", entry)
+		}
+	}
+	if !containsEnvironment(commandEnvironment, "GIT_INDEX_FILE", privateIndex) || !containsEnvironment(commandEnvironment, "WIP_TARGET_REF", "refs/heads/wip/test/private-index") {
+		t.Fatalf("trusted command environment was not preserved: %q", commandEnvironment)
+	}
+}
+
+func containsEnvironment(environment []string, name, value string) bool {
+	wanted := name + "=" + value
+	for _, entry := range environment {
+		if entry == wanted {
+			return true
+		}
+	}
+	return false
+}
+
 func TestCommandOutputHelpersPreserveExactGitResults(t *testing.T) {
 	repo, _ := initializedRepo(t)
 	ctx := context.Background()
