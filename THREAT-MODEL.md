@@ -4,36 +4,37 @@
 
 `wip` protects these local assets during capture:
 
-- the source checkout's `HEAD`;
-- all entries in the source Git index;
-- staged content outside the selected paths;
-- each lane ref and lane cursor;
-- path-lease ownership;
-- the order, tree, message, and scope of every planned commit;
-- the reviewed source, lane, lease, index, and message-policy bindings;
+- the source checkout's `HEAD`.
+- all entries in the caller Git index.
+- worktree and staged content outside the selected source paths.
+- each lane ref and lane cursor.
+- path-lease ownership.
+- the order, tree, message, and scope of every planned commit.
+- the reviewed source mode, digest, paths, lane, lease, and message-policy
+  bindings.
 - the recovery record for an applied ref update.
 
-The primary failure to prevent is a successful-looking capture that includes
-another agent's staged work, publishes only part of a split plan, or loses the
-commit after a process stops.
+The primary failure is a successful-looking capture that includes another
+agent's work. Other primary failures publish only part of a split plan or lose
+the commit after a process stops.
 
 ## Trust boundaries
 
 The following components are trusted:
 
-- Git and the local filesystem;
-- cooperating processes that obey path leases;
-- repository hooks;
-- commands listed in a plan's `verify` array;
+- Git and the local filesystem.
+- cooperating processes that obey path leases.
+- repository hooks.
+- commands listed in a plan's `verify` array.
 - the operating-system user who owns the repository.
 
 The following components are not treated as trusted inputs:
 
-- concurrent lane commands;
-- the current shared index outside the selected paths;
-- persisted lane, lease, profile, and intent files;
-- plan JSON;
-- hook paths that can change during capture;
+- concurrent lane commands.
+- the current caller index and worktree outside the selected paths.
+- persisted lane, lease, profile, and intent files.
+- plan JSON.
+- hook paths that can change during capture.
 - verify working directories that can contain symlinks.
 
 `wip` is not a security boundary against a malicious process with the same user
@@ -41,7 +42,7 @@ account, an administrator, compromised Git, or compromised kernel code.
 
 ## Controls
 
-### Concurrent staged work
+### Concurrent source work
 
 Path claims use portable Unicode case folding, NFC normalization, and component
 boundaries. A repository-wide lease lock serializes claim decisions. Active
@@ -56,18 +57,25 @@ it holds the lease-registry lock. Each refresh also audits all active lease
 records and stops if persisted state contains a cross-lane overlap.
 
 Authenticated status, environment, claim, and plan commands renew the complete
-active set after identity validation. Pure `--observe` reads do not renew it.
+active set after identity validation. Pure `--observe` status, environment,
+and plan reads do not renew it.
 
 Normal renewal and release also inspect the complete lease registry before a
 write. Release verifies lane ownership and both directions of every lease
 reference. It permits valid partial release so an interrupted release can
 finish.
 
-Capture reads exact stage-zero index entries for the planned paths into a
-private index. It does not use `git add` against the source worktree. A final
-digest check detects a selected staged entry that changed while the plan ran.
-Changes to unrelated staged paths do not stop a disjoint capture and cannot
-enter its private tree.
+For `staged_index`, capture reads exact stage-zero caller-index entries for the
+planned paths. It copies them into a private index. Unrelated staged paths
+cannot enter the private tree.
+
+For `worktree_snapshot`, capture builds a private source index from the lane
+tip. It adds only tracked changes and reviewed untracked paths in the selected
+scopes. It never runs `git add` against the caller index.
+
+A final source-digest check detects a selected source entry that changed while
+the plan ran. Changes outside the reviewed scopes do not stop a disjoint
+capture and cannot enter its private tree.
 
 ### Partial split publication
 
@@ -78,13 +86,14 @@ complete chain.
 
 ### Reviewed-plan substitution
 
-The version 2 plan binds the lane ref, lane tip, source `HEAD`, candidate path
-set, selected index digest, active lease digest, and message-policy receipt.
+The version 3 plan binds the lane ref, lane tip, and source `HEAD`. It also binds
+the source mode, untracked policy, source scopes, source paths, source digest,
+active lease digest, and message-policy receipt.
 
 `wip capture` recalculates every binding before it opens hooks. A changed input
 returns `STALE_PLAN` and does not enter the capture transaction. The kernel
-also compares its initial source-index snapshot with the reviewed digest. This
-closes the interval between command validation and kernel setup.
+also compares its initial private-source snapshot with the reviewed digest.
+This check closes the interval between command validation and kernel setup.
 
 The capture intent stores the canonical reviewed-plan digest. The intent digest
 covers that digest and the policy receipt.
@@ -100,9 +109,9 @@ before capture.
 ### Ref and metadata races
 
 Each lane has an operating-system file lock. The ref update also requires the
-expected old object ID. The source `HEAD`, selected index digest, hook snapshots,
-lane cursor, lane identity, worktree binding, and active lease set are checked
-again at the publication boundary.
+expected old object ID. The source `HEAD`, selected source digest, hook
+snapshots, lane cursor, lane identity, worktree binding, and active lease set
+are checked again at the publication boundary.
 
 Handoff validation and final release use the same lane lock. Another lane
 transaction cannot change the cursor, intent selection, or lease links between
@@ -133,28 +142,31 @@ success. This receipt permits exact reconciliation after the ref moved.
 
 ### Capture handoff
 
-The handoff command accepts only a complete intent whose ref and Git objects
-pass receipt validation. A completed intent still rechecks every parent, tree,
-message, path set, scope, and final tree against Git. Its ordered entries come
-from that durable intent.
+The handoff command accepts only one unique, complete intent chain from the lane
+base to its tip. Every intent and Git object must pass receipt validation. A
+gap, ambiguity, branch, cycle, moved ref, or invalid object fails closed.
 
-The command holds the lane lock while it selects the intent, validates the
-receipt, renews an active lease, and builds status. A failed renewal does not
-emit a successful handoff.
+The version 2 handoff binds the complete chain with `handoff_digest`. It is
+review-eligible only when every segment has an exact reviewed-plan,
+message-policy, and version 3 private-source binding.
+
+The command holds the lane lock while it validates the chain, renews an active
+lease, and builds status. A failed renewal does not emit a successful handoff.
 
 A released-lane handoff opens and locks the existing regular lock file without
 creating directories or rewriting owner metadata. A missing, replaced, or
 non-regular lock file fails closed.
 
 The handoff omits agent IDs, session IDs, absolute paths, remote URLs, and file
-contents. It states that the receipt does not authorize landing.
+contents. It states that the receipt does not authorize landing. A separate
+review authority must bind any landing decision to the full handoff digest.
 
 ### Hooks
 
-`wip` opens each pre-commit and post-commit hook, compares the open file with the
-path, requires a regular non-symlink file, limits it to 4 MiB, and copies it to a
-private mode-`0700` path. It validates the original path again before the ref
-update. The copied hook runs with the private index.
+`wip` opens each pre-commit and post-commit hook and compares the open file with
+the path. It requires a regular non-symlink file and limits it to 4 MiB. It then
+copies the hook to a private mode-`0700` path. It validates the original path
+again before the ref update. The copied hook runs with the private index.
 
 On Windows, Git 2.36 or newer runs the private hook so that Git for Windows can
 apply its normal interpreter rules.
@@ -176,10 +188,10 @@ State readers require bounded regular non-symlink files, reject path replacement
 during reads, reject unknown JSON fields, and validate stored identities and
 canonical paths. A first write creates and synchronizes a complete temporary
 file, then uses a same-filesystem hard link to publish it without overwrite.
-Atomic replacement is used for state transitions. Windows uses `MoveFileEx`
-with replace and write-through flags. Record writes stage temporary files in the
-store's `locks` directory, so an interrupted writer cannot add a foreign entry
-to a lane, lease, profile, intent, or archive batch directory.
+State transitions use atomic replacement. Windows uses `MoveFileEx` with replace
+and write-through flags. Record writes stage temporary files in the store's
+`locks` directory. Thus, an interrupted writer cannot add a foreign entry to a
+lane, lease, profile, intent, or archive batch directory.
 
 Each durable writer checks the final encoded size against its reader limit.
 The archive writer performs this check before it creates a new batch. Thus, a
@@ -189,7 +201,7 @@ prevents a valid initial record from blocking a later completion or release.
 
 New lease records use cryptographically random identifiers and no-overwrite
 publication. Normal lane and lease scans reject unexpected record-directory
-entries. A partially released lane cannot claim, renew, or capture paths; only
+entries. A partially released lane cannot claim, renew, or capture paths. Only
 the idempotent release operation can finish that state transition.
 
 State-directory creation uses a filesystem root handle. The handle confines
@@ -204,17 +216,22 @@ Profiles must match the authoritative lane manifest. Shell output uses explicit
 POSIX or PowerShell quoting. An invalid lane ID fails before path construction.
 
 Git commands remove inherited repository-local environment variables except
-the active source index. A caller cannot use routing, configuration, namespace,
-replacement, shallow-file, or object-storage variables to make `--repo-dir`
-inspect one checkout and write objects or refs through another. The caller's
-`GIT_INDEX_FILE` remains the active source index. Prepared hooks receive only
-the private candidate index for their Git operations.
+the caller index selector for `staged_index`. A caller cannot use routing,
+configuration, namespace, replacement, shallow-file, or object-storage
+variables to redirect `--repo-dir`. Prepared hooks receive only the private
+candidate index for their Git operations.
 
 The public and legacy implementations use one domain lock. Public state and
 legacy `ndev-wip` state cannot start beside each other. Read-only legacy checks
 do not create a legacy state directory. Invalid legacy actions and queue
 previews also use inspection only. Only explicit legacy lane creation can claim
 the legacy domain.
+
+Coordination migration requires an exact producer identity, plan digest,
+prestate, poststate, and ref set. Preview is byte-for-byte read-only. Apply uses
+one writer fence and one journal. It publishes canonical records before it
+moves and seals the complete legacy root. It never dual-writes both roots and
+never grants landing authority.
 
 The store rejects unsupported state-directory and record-schema versions. It
 checks the directory version before it creates local state. This rule prevents
@@ -250,11 +267,10 @@ its first move and can continue after an interruption.
 ## Residual risks
 
 - A Git command that does not use `wip` can ignore path leases. The final check
-  detects selected-index movement before publication, but no transaction can
-  atomically lock every external Git implementation. A write in the small gap
-  after the final read can make the receipt describe the earlier staged
-  snapshot. It cannot make `wip` rewrite the source index or include an
-  unselected path.
+  detects selected-source movement before publication. No transaction can lock
+  every external Git implementation. A later write can make the receipt
+  describe the earlier snapshot. It cannot make `wip` rewrite the caller index
+  or include an unselected path.
 - Hooks and verify commands are trusted code. They can change the worktree,
   start background work, access credentials, or use the network.
 - A post-commit hook runs after the ref update. Its failure is reported as a

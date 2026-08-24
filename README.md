@@ -1,11 +1,12 @@
 # wip-commit
 
-`wip` lets concurrent agents capture exact staged subsets without moving the
-source checkout's `HEAD` or rewriting its Git index. Each agent writes to a
-local ref under `refs/heads/wip/<agent>/<lane>`.
+`wip` lets concurrent agents capture exact paths from a staged index or a
+worktree snapshot. It does not move the source checkout's `HEAD` or rewrite the
+caller index. Each agent writes to a local ref under
+`refs/heads/wip/<agent>/<lane>`.
 
 The source repository is public. No tag or GitHub release exists. The planned
-first prerelease is `v0.1.0-beta.1`. The current candidate is suitable for
+first prerelease is `v0.2.0-beta.1`. The current candidate is suitable for
 local beta use, but it is not a stable release. Verify the public tag and
 release before you treat a checkout as released software.
 
@@ -13,14 +14,15 @@ release before you treat a checkout as released software.
 
 A normal `git commit` consumes the complete shared index and moves the checked
 out branch. When several agents use one checkout, that operation is unsafe.
-`wip` uses three controls:
+`wip` uses four controls:
 
 - Path leases prevent active lanes from claiming overlapping paths.
-- A private index contains only the planned staged entries.
+- A private source snapshot contains only the reviewed source paths.
+- A private index builds only the planned commits.
 - One compare-and-swap updates the agent ref after all commit groups pass.
 
-Two lanes can therefore capture disjoint staged paths in parallel. They do not
-commit directly to the same checked-out branch. Review and landing are separate
+Two lanes can therefore capture disjoint source paths in parallel. They do not
+commit directly to the checked-out branch. Review and landing are separate
 operations.
 
 One repository can have only one coordination domain. Standalone state uses
@@ -46,21 +48,27 @@ go build -trimpath -o ./bin/wip ./cmd/wip
 ./bin/wip --json contract
 ```
 
-Source builds identify themselves as `0.1.0-dev` with `channel: development`.
-The release builder injects both the selected SemVer and its exact tag; only
+Source builds identify themselves as `0.2.0-dev` with `channel: development`.
+The release builder injects both the selected SemVer and its exact tag. Only
 that pair reports `channel: release`. Release binaries also report the exact
 VCS revision and a clean source state. A local Go build reports VCS fields when
 the toolchain supplies them. If `source_stamped` is false, do not let the
 binary read or change existing coordination state.
 
+The version result also reports the executable SHA-256 and the embedded
+portable-skill payload SHA-256. An integration must hash the selected regular
+executable independently, compare both digests with the contract, and reject a
+file identity or digest change before or after each subprocess.
+
 `wip --json contract` reports the command protocol, explicit capabilities,
 portable-skill contract, and embedded portable payload digest. Integrations
 must validate those fields. Do not infer compatibility from a display version.
+The current development protocol is `wip.command/3.0.0`.
 
-For a published `v0.1.0-beta.1` tag, the install command is:
+For a published `v0.2.0-beta.1` tag, the install command is:
 
 ```text
-go install github.com/nstranquist/wip-commit/cmd/wip@v0.1.0-beta.1
+go install github.com/nstranquist/wip-commit/cmd/wip@v0.2.0-beta.1
 ```
 
 Before you run that command, verify that the tag exists at that public address.
@@ -75,22 +83,25 @@ go build -trimpath -o ./bin/wip ./cmd/wip
 ./bin/wip init
 ```
 
-The wizard prints the lane environment command. Load it in the agent shell,
-stage only owned paths, review the proposed groups, and capture them:
+The wizard prints the lane environment command. Load it in the agent shell.
+Then review an exact worktree-source plan and capture it:
 
 ```text
 eval "$(./bin/wip env --lane <lane-id>)"
-git add -- <owned-path>...
-./bin/wip plan
-./bin/wip commit
+./bin/wip plan \
+  --source worktree_snapshot \
+  --untracked forbid \
+  --path <owned-path> \
+  --out plan.json
+# Add one message to each group. Then set state to reviewed.
+./bin/wip capture --plan plan.json
 ./bin/wip release
 ```
 
-Use a linked worktree when one agent should own the complete checkout. Use
+Use a linked worktree when one agent owns the complete checkout. Use
 shared mode when cooperating agents need disjoint path leases in one checkout.
-Automation should pass an exact JSON plan. Start with
-[examples/shared-split-plan.json](examples/shared-split-plan.json) and replace
-every message, path, and verification command with reviewed project values.
+Automation must capture the exact generated plan. Do not construct a version 3
+plan from a partial example because its source and lease digests are immutable.
 
 ## Use the agent skill
 
@@ -187,7 +198,7 @@ The installers publish a complete file without overwriting an existing path.
 They never overwrite different content or follow a target symlink. A retry can
 finish a matching partial skill bundle after an interruption. The wizard does
 not change global Git configuration or install hooks. Existing repository hooks
-still run during capture.
+run during a non-dry capture.
 
 The wizard first validates and bootstraps the coordination domain. It then
 writes a durable initialization intent before it changes a worktree, lane,
@@ -247,8 +258,8 @@ one coordination domain.
 Use `--repo-dir` to select a repository without changing directories. Use
 `--json` when a program needs typed results. `wip env` exports `WIP_LANE`,
 `WIP_AGENT`, and `WIP_SESSION` for later commands. An explicit
-`GIT_INDEX_FILE` selects the caller's source index; other inherited
-repository-routing variables do not override the selected repository.
+`GIT_INDEX_FILE` selects the caller index for `staged_index` source mode. Other
+inherited repository-routing variables do not override the selected repository.
 
 Commit plans hold per-group verification commands and optional timeouts. The
 default verification and hook timeout is two minutes, and the maximum is 24
@@ -269,58 +280,90 @@ Run this command from the checkout recorded for the lane. A worktree-bound
 lane returns `WORKTREE_MISMATCH` from another checkout and does not renew its
 lease.
 
-Stage only the paths that the agent owns. Other staged paths can remain in the
-same index.
+In a dedicated worktree, select `worktree_snapshot`. This source includes exact
+tracked changes in the selected scopes. It does not stage those changes:
+
+```text
+wip --json status
+wip --json plan \
+  --source worktree_snapshot \
+  --untracked forbid \
+  --path internal/parser \
+  --path docs/parser.md \
+  --out plan.json
+```
+
+The `forbid` policy stops when an untracked path exists in a selected scope.
+Use `--untracked include` only after you review every selected untracked path.
+
+Use `staged_index` for a controlled shared-checkout exception. Stage only the
+owned paths. Other staged paths can remain in the caller index:
 
 ```text
 git add -- internal/parser docs/parser.md
-wip --json status
-wip --json plan --out plan.json
+wip --json plan \
+  --source staged_index \
+  --untracked not_applicable \
+  --path internal/parser \
+  --path docs/parser.md \
+  --out plan.json
 ```
 
 `wip status` is the operational read for an agent. It reports:
 
-- leased entries that are capture candidates;
-- captured entries that remain staged;
-- foreign staged entries outside the lane;
-- active claims with no staged or pending entry;
+- leased entries that are capture candidates.
+- captured entries that remain staged.
+- foreign staged entries outside the lane.
+- active claims with no staged or pending entry.
 - lease time, ref health, policy, and latest intent state.
+
+Status describes the caller index. It does not select or authorize a
+`worktree_snapshot` source.
 
 The command renews active leases after it validates the lane identity. Use
 `wip status --observe` when a pure read is required.
 
-`wip plan` groups paths at component boundaries. It writes one draft with all
-capture bindings and empty message fields. The command creates `plan.json`
-without replacing an existing file.
+`wip plan` groups the selected source paths at component boundaries. It writes
+one draft with all capture bindings and empty message fields. The command
+creates `plan.json` without replacing an existing file.
 
-The planner compares the active source index with the lane's current commit.
-It omits staged paths that the lane already captured.
+The planner compares the selected source with the lane's current commit. It
+omits paths that the lane already captured.
+
+Use `wip plan --observe` to preview the draft without lease renewal or an
+output file. The command rejects `--observe` with `--out`. It does not change
+the Git common directory, the checkout, or the caller index.
 
 Review every group for intent and dependency closure. Add one message to each
 group. Then change the top-level `state` from `draft` to `reviewed`.
 
 ```json
 {
-  "schema_version": "2.0.0",
+  "schema_version": "3.0.0",
   "state": "reviewed",
   "lane": "parser-errors",
+  "agent": "codex",
+  "session": "parser-errors-review",
   "target_ref": "refs/heads/wip/codex/parser-errors",
   "lane_tip": "<exact object ID>",
   "source_head": "<exact object ID>",
-  "source_index_digest": "sha256:<exact digest>",
+  "source_mode": "worktree_snapshot",
+  "untracked_policy": "forbid",
+  "source_digest": "sha256:<exact digest>",
+  "source_scopes": ["docs/parser.md", "internal/parser"],
   "lease_digest": "sha256:<exact digest>",
   "message_policy": {
     "id": "conventional-v1",
     "version": "1.0.0",
     "digest": "sha256:<exact digest>"
   },
-  "staged_paths": ["docs/parser.md", "internal/parser/errors.go"],
+  "source_paths": ["docs/parser.md", "internal/parser/errors.go"],
   "groups": [
     {
       "key": "internal/parser",
       "suggested_scope": "parser",
       "suggested_prefix": "<type>(parser): ",
-      "rationale": "nearest component boundary; review semantic and dependency closure",
+      "rationale": "nearest component boundary; review intent and dependency closure",
       "message": "fix(parser): preserve source error locations",
       "files": ["internal/parser/errors.go"],
       "verify": [
@@ -331,7 +374,7 @@ group. Then change the top-level `state` from `draft` to `reviewed`.
       "key": "docs/parser",
       "suggested_scope": "parser",
       "suggested_prefix": "<type>(parser): ",
-      "rationale": "nearest component boundary; review semantic and dependency closure",
+      "rationale": "nearest component boundary; review intent and dependency closure",
       "message": "docs(parser): explain source error locations",
       "files": ["docs/parser.md"]
     }
@@ -344,8 +387,8 @@ group. Then change the top-level `state` from `draft` to `reviewed`.
 wip --json capture --plan plan.json
 ```
 
-`wip capture` recalculates the lane, source, index, path, lease, and policy
-bindings before hooks run. It rejects a draft or stale plan.
+`wip capture` recalculates the lane, source, path, lease, and policy bindings
+before hooks run. It rejects a draft or stale plan.
 
 The result contains the capture receipt and a typed handoff. The handoff is
 capture-only evidence. It does not authorize landing, merging, or pushing.
@@ -354,15 +397,26 @@ Use `wip capture --final --plan plan.json` to release the lane after handoff
 validation. The command holds the lane lock from validation through release.
 The lane ref and commits remain.
 
-The v2 plan schema is [docs/PLAN.schema.json](docs/PLAN.schema.json). The
-operational status and handoff schemas are
+The version 3 plan schema is [docs/PLAN.schema.json](docs/PLAN.schema.json).
+The operational status and version 2 cumulative handoff schemas are
 [docs/STATUS.schema.json](docs/STATUS.schema.json) and
 [docs/HANDOFF.schema.json](docs/HANDOFF.schema.json).
 The test suite validates real command data against all four schemas and checks
 that strict schemas reject invalid data.
 
 `wip commit` remains a compatibility and interactive command. It accepts the
-reviewed v2 plan or the legacy plan array. `wip capture` accepts only v2.
+reviewed version 3 plan or the legacy plan array. `wip capture` accepts only
+version 3.
+
+`wip commit --dry-run` is a no-exec preview. It snapshots repository hook bytes
+and validates the source and candidate tree structure. It does not execute
+repository hooks or verification commands. It does not renew leases, create
+commits, write an intent, or move a ref.
+
+The dry-run result uses schema `3.0.0`. It reports `gate_outcome: "skipped"`
+and an `execution` object. Each execution count reports planned, executed, and
+skipped operations. Every executed count is zero. A successful dry-run is not
+proof that the configured gates pass.
 
 When one commit is intentional, use this explicit command:
 
@@ -396,8 +450,9 @@ set. A handoff for a released lane stays read-only.
 It locks the existing lane lock file without creating or rewriting lock
 metadata.
 
-For a pure read, use `--observe`, `--observe=true`, or `-observe` with `status`
-and `env`. `--observe=false` keeps normal renewal behavior.
+For a pure read, use `--observe`, `--observe=true`, or `-observe` with `status`,
+`env`, and `plan`. `--observe=false` keeps normal renewal behavior. An observed
+plan cannot write an output file.
 
 Manual renewal remains available:
 
@@ -405,9 +460,9 @@ Manual renewal remains available:
 wip renew
 ```
 
-`wip commit` snapshots and renews the lane's complete active lease set before
-capture. It renews that same set in the background. The final publication check
-renews and compares the set again.
+A non-dry `wip commit` snapshots and renews the complete active lease set before
+capture. It renews that set in the background. The final publication check
+renews and compares the set again. `wip commit --dry-run` does not renew leases.
 
 Add another claim with:
 
@@ -421,16 +476,20 @@ Inspect the lane with:
 wip status
 ```
 
-Use `wip handoff` to validate and print the latest complete capture receipt:
+Use `wip handoff` to validate and print the complete base-to-tip capture chain:
 
 ```text
 wip --json handoff --lane parser-errors
 ```
 
+The version 2 handoff contains every continuous completed capture segment from
+the lane base to its current tip. It binds the exact result with
+`handoff_digest`. It sets `landing_authorized` to `false`.
+
 The handoff omits agent IDs, session IDs, absolute worktree paths, remote URLs,
-and file contents. It sets `landing_authorized` to `false`. Intent selection,
-receipt validation, active-lease renewal, and status construction use one lane
-lock.
+and file contents. Intent-chain validation, active-lease renewal, and status
+construction use one lane lock. A supplied `--plan-id` and `--plan-digest` must
+name the tip segment. They cannot select an older single segment.
 
 When the task is complete, release the coordination state:
 
@@ -440,6 +499,38 @@ wip release
 
 Release and abort both preserve the local agent ref. Neither command deletes
 commits, lands a branch, pushes a remote, or merges work.
+
+## Migrate one coordination domain
+
+Use the explicit migration only during a repository writer freeze. The preview
+is byte-for-byte read-only:
+
+```text
+wip --json migrate --preview
+```
+
+Save the exact `data.plan` object as `migration-plan.json`. Review its producer,
+source manifests, destination manifests, ref expectations, dispositions,
+conflicts, and `plan_digest`.
+
+Apply only the same plan with the same source-matched executable:
+
+```text
+wip --json migrate \
+  --apply \
+  --plan migration-plan.json \
+  --plan-digest sha256:<reviewed-digest> \
+  --yes
+```
+
+The migration imports valid capture records into `<git-common-dir>/wip/v1`.
+It copies review records into `<git-common-dir>/wip/review/v1`. The review store
+includes immutable `handoffs/` and `plans/` directories. It moves the legacy
+store into a sealed, read-only archive after the new records are durable.
+
+Use `--resume` with the same plan after an interruption. Use `--rollback` only
+before the legacy source moves. The command never dual-writes both domains and
+never grants landing authority.
 
 ## Inspect and archive state
 
@@ -508,21 +599,20 @@ older restored receipt only confirms that its earlier restore completed.
 
 ## Important index behavior
 
-A successful capture leaves the source `HEAD`, worktree, and complete Git index
-unchanged. Captured entries therefore remain staged relative to the source
-branch. This is deliberate: `wip` cannot safely clear selected entries while an
-uncoordinated process can update the shared index.
+A successful capture leaves the source `HEAD`, worktree, and complete caller
+index unchanged. A `staged_index` capture therefore leaves its entries staged.
+A `worktree_snapshot` capture does not stage or unstage any path.
 
 `wip` ignores inherited repository-local Git variables that can redirect or
 reinterpret the repository, common directory, worktree, namespace, refs,
 shallow boundary, configuration, or object storage. The canonical repository
 selected by `--repo-dir` or the current directory wins. It honors an inherited
-`GIT_INDEX_FILE` as the caller's active source index. Capture hooks receive the
-private candidate index instead.
+`GIT_INDEX_FILE` as the caller index for `staged_index` source mode. Capture
+hooks receive the private candidate index instead.
 
-You can modify and stage a later version of the same leased path. The next
-capture compares that staged version with the current lane commit. Do not run a
-broad reset, stash, or clean command to hide the staged state.
+You can modify a later version of the same leased path. The next capture
+compares the selected source with the current lane commit. Do not run a broad
+reset, stash, or clean command to hide source state.
 
 ## Recover an interrupted capture
 
@@ -554,7 +644,7 @@ recovery. Common actions are:
 - `LANE_NOT_ACTIVE`: run `wip init`, or load the exact lane identity.
 - `PATH_LEASE_CONFLICT`: select disjoint paths or wait for the owner to release
   its lease.
-- `SOURCE_INDEX_MOVED`: inspect the selected staged paths and rerun the complete
+- `SOURCE_MOVED`: inspect the selected source paths and create a new reviewed
   plan.
 - `LOCK_TIMEOUT`: the default zero wait fails fast. Inspect active lanes and
   retry later, or set a bounded `--lock-wait` outside an agent turn.
@@ -591,8 +681,8 @@ evidence tracker are in
 [docs/OSS-PUBLIC-BETA.md](docs/OSS-PUBLIC-BETA.md).
 
 The beta remains capture-only. [KEP-0001](docs/KEP-0001-capture-to-landing-boundary.md)
-defines the safety boundary for a possible future landing command without
-authorizing its implementation. Non-authors can use the redacted
+defines the adapter boundary for a separate landing authority. It does not
+authorize a standalone landing implementation. Non-authors can use the redacted
 [beta exercise](docs/BETA-EXERCISE.md) to produce independent evidence.
 Repository owners can use the human-gated
 [publication handoff](docs/PUBLICATION-HANDOFF.md) and
