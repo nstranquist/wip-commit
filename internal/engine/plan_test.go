@@ -452,6 +452,44 @@ func TestRunHandlesNewlineFilename(t *testing.T) {
 	}
 }
 
+func TestVerifyDirectoryAllowsSymlinkedScratchParent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires platform-specific privileges")
+	}
+	repo := engineTestRepo(t)
+	write(t, repo.Root, "component/core.txt", "new core\n")
+	engineGit(t, repo.Root, "add", "component/core.txt")
+	head := engineGit(t, repo.Root, "rev-parse", "HEAD")
+	target := "refs/heads/wip/agent/symlinked-temp-root"
+	engineGit(t, repo.Root, "update-ref", target, head, "")
+
+	realTempRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tempLink := filepath.Join(t.TempDir(), "tmp-link")
+	if err := os.Symlink(realTempRoot, tempLink); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", tempLink)
+
+	result, err := Run(context.Background(), Options{
+		Repo: repo, TargetRef: target, ExpectedRef: head, ExpectedSourceHead: head,
+		AllowedPaths: []string{"component/core.txt"},
+		Groups: []Group{{
+			Message: "test(verify): allow physical candidate directory",
+			Files:   []string{"component/core.txt"},
+			Verify:  []VerifyCommand{{Argv: []string{"git", "--version"}, Directory: "component"}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.RefUpdated || engineGit(t, repo.Root, "rev-parse", target) != result.FinalCommit {
+		t.Fatalf("verification did not publish the candidate: %#v", result)
+	}
+}
+
 func TestVerifyDirectoryCannotFollowSymlinkOutsideCandidate(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink creation requires platform-specific privileges")

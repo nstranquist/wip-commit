@@ -566,12 +566,20 @@ func verifyTree(ctx context.Context, repo gitx.Repo, environment []string, tree 
 	}
 	scratch := ""
 	if execute {
-		var err error
-		scratch, err = os.MkdirTemp("", "wip-verify-*")
+		createdScratch, err := os.MkdirTemp("", "wip-verify-*")
 		if err != nil {
 			return fail.Wrap("VERIFY_FAILED", err)
 		}
-		defer func() { _ = os.RemoveAll(scratch) }()
+		defer func() { _ = os.RemoveAll(createdScratch) }()
+		// macOS exposes /var as a symlink to /private/var. Resolve the scratch
+		// root once before comparing a resolved verification subdirectory to it.
+		// Otherwise an in-tree directory appears to escape whenever TMPDIR uses
+		// the /var spelling. The candidate directory is still resolved for every
+		// command, so a symlink inside the candidate cannot cross this root.
+		scratch, err = filepath.EvalSymlinks(createdScratch)
+		if err != nil {
+			return fail.Wrap("VERIFY_FAILED", err)
+		}
 		if _, err := repo.Text(ctx, environment, "checkout-index", "--all", "--force", "--prefix="+scratch+string(filepath.Separator)); err != nil {
 			return fail.Wrap("VERIFY_FAILED", err)
 		}
