@@ -51,6 +51,33 @@ func TestInspectWorktreeSourceRejectsUntrackedUnlessIncluded(t *testing.T) {
 	}
 }
 
+func TestInspectWorktreeSourceCapturesTrackedFileBelowIgnoredDirectory(t *testing.T) {
+	repo := engineTestRepo(t)
+	write(t, repo.Root, ".gitignore", ".cache/\n")
+	write(t, repo.Root, ".cache/catalog/truth.json", "base truth\n")
+	engineGit(t, repo.Root, "add", ".gitignore")
+	engineGit(t, repo.Root, "add", "--force", ".cache/catalog/truth.json")
+	engineGit(t, repo.Root, "commit", "-m", "track ignored truth")
+	write(t, repo.Root, ".cache/catalog/truth.json", "current truth\n")
+	indexBefore := engineGitRaw(t, repo.Root, "ls-files", "-s", "-z")
+	objectsBefore := objectNames(t, filepath.Join(repo.CommonDir, "objects"))
+	head := engineGit(t, repo.Root, "rev-parse", "HEAD")
+
+	snapshot, err := InspectSource(context.Background(), repo, head, []string{".cache/catalog/truth.json"}, SourceWorktree, UntrackedInclude)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Paths) != 1 || snapshot.Paths[0] != ".cache/catalog/truth.json" || snapshot.Entries[".cache/catalog/truth.json"] == "" {
+		t.Fatalf("snapshot = %#v", snapshot)
+	}
+	if got := engineGitRaw(t, repo.Root, "ls-files", "-s", "-z"); got != indexBefore {
+		t.Fatalf("caller index changed:\nwant %q\n got %q", indexBefore, got)
+	}
+	if got := objectNames(t, filepath.Join(repo.CommonDir, "objects")); !samePlanStringsForTest(got, objectsBefore) {
+		t.Fatalf("inspection changed common object database:\nwant %q\n got %q", objectsBefore, got)
+	}
+}
+
 func TestInspectStagedSourceIgnoresUnstagedBytes(t *testing.T) {
 	repo := engineTestRepo(t)
 	write(t, repo.Root, "core.txt", "staged core\n")

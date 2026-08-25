@@ -168,9 +168,22 @@ func snapshotWorktreeAt(ctx context.Context, repo gitx.Repo, baseCommit string, 
 	if len(paths) == 0 {
 		return newSourceSnapshot(SourceWorktree, untracked, baseCommit, nil, map[string]string{}), indexPath, nil
 	}
-	args := append([]string{"add", "--all", "--"}, paths...)
-	if _, err := repo.Text(ctx, environment, args...); err != nil {
-		return SourceSnapshot{}, indexPath, fail.Wrap("SOURCE_SNAPSHOT_FAILED", err)
+	// Git can reject an exact tracked file when one of its parent directories
+	// is ignored. Update base-tracked entries separately so ignore rules cannot
+	// hide them. Add only the already-enumerated untracked files with --force;
+	// this never expands an ignored directory or weakens the explicit include
+	// policy.
+	if len(tracked) > 0 {
+		args := append([]string{"add", "--update", "--"}, tracked...)
+		if _, err := repo.Text(ctx, environment, args...); err != nil {
+			return SourceSnapshot{}, indexPath, fail.Wrap("SOURCE_SNAPSHOT_FAILED", err)
+		}
+	}
+	if len(untrackedPaths) > 0 {
+		args := append([]string{"add", "--force", "--"}, untrackedPaths...)
+		if _, err := repo.Text(ctx, environment, args...); err != nil {
+			return SourceSnapshot{}, indexPath, fail.Wrap("SOURCE_SNAPSHOT_FAILED", err)
+		}
 	}
 	entries, err := repo.IndexEntries(ctx, environment)
 	if err != nil {
