@@ -173,17 +173,6 @@ func (application app) runArchive(ctx context.Context, repo gitx.Repo, args []st
 	return application.success("archive", result, fmt.Sprintf("archived %d released lane record(s) in %s; all lane refs and commits were preserved", len(receipt.Candidates), receipt.ID))
 }
 
-func inspectArchiveStore(repo gitx.Repo) (store.Store, error) {
-	laneStore, initialized, err := store.Inspect(repo)
-	if err != nil {
-		return store.Store{}, err
-	}
-	if !initialized {
-		return store.Store{}, fail.New("ARCHIVE_NOT_FOUND", "archive receipt does not exist because wip state is not initialized")
-	}
-	return laneStore, nil
-}
-
 func openArchiveStoreForWrite(repo gitx.Repo) (store.Store, *store.WriterFence, error) {
 	_, initialized, err := store.Inspect(repo)
 	if err != nil {
