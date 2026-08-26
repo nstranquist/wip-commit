@@ -154,8 +154,26 @@ func TestValidateExistingPathRejectsReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = opened.Close() }()
-	if err := os.Rename(path, filepath.Join(directory, "old.lock")); err != nil {
-		t.Fatal(err)
+	oldPath := filepath.Join(directory, "old.lock")
+	if err := os.Rename(path, oldPath); err != nil {
+		if runtime.GOOS != "windows" {
+			t.Fatal(err)
+		}
+		// Windows denies replacement while the lock handle is open. That is a
+		// stronger kernel guarantee than the identity check exercised below on
+		// systems that allow renaming an open file. Prove that the failed rename
+		// preserved the original path, bytes, and identity.
+		if err := validateExistingPath(path, opened); err != nil {
+			t.Fatalf("failed rename changed the open lock identity: %v", err)
+		}
+		body, readErr := os.ReadFile(path)
+		if readErr != nil || string(body) != "original\n" {
+			t.Fatalf("failed rename changed the open lock: %q err=%v", body, readErr)
+		}
+		if _, statErr := os.Lstat(oldPath); !os.IsNotExist(statErr) {
+			t.Fatalf("failed rename published the old path: %v", statErr)
+		}
+		return
 	}
 	if err := os.WriteFile(path, []byte("replacement\n"), 0o600); err != nil {
 		t.Fatal(err)
