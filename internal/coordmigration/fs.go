@@ -53,7 +53,7 @@ func manifestTree(commonDir, logicalRoot string) (TreeManifest, error) {
 			return err
 		}
 		relative = filepath.ToSlash(relative)
-		item := ManifestEntry{Path: relative, Mode: modeString(info.Mode().Perm())}
+		item := ManifestEntry{Path: relative, Mode: modeString(info.Mode())}
 		switch {
 		case info.Mode()&os.ModeSymlink != 0:
 			return fmt.Errorf("manifest rejects symlink %s", filepath.ToSlash(filepath.Join(logicalRoot, relative)))
@@ -105,7 +105,7 @@ func confinedPath(commonDir, relative string) (string, error) {
 	return filepath.Join(commonDir, clean), nil
 }
 
-func modeString(mode os.FileMode) string { return fmt.Sprintf("%04o", mode.Perm()) }
+func modeString(mode os.FileMode) string { return fmt.Sprintf("%04o", canonicalMode(mode)) }
 
 func parseMode(value string) (os.FileMode, error) {
 	parsed, err := strconv.ParseUint(value, 8, 32)
@@ -158,8 +158,22 @@ func createExact(path string, body []byte, mode os.FileMode) error {
 		return fmt.Errorf("destination conflict: %s", path)
 	}
 	info, err := os.Lstat(path)
-	if err != nil || info.Mode().Perm() != mode.Perm() {
-		return fmt.Errorf("destination mode conflict: %s", path)
+	if err != nil {
+		return fmt.Errorf("inspect destination mode %s: %w", path, err)
+	}
+	if actual, want := modeString(info.Mode()), modeString(mode); actual != want {
+		repaired, repairErr := repairExactMode(path, info.Mode(), mode)
+		if repairErr != nil {
+			return fmt.Errorf("finalize destination mode %s: %w", path, repairErr)
+		}
+		if !repaired {
+			return fmt.Errorf("destination mode conflict: %s has %s (%s), want %s", path, actual, info.Mode(), want)
+		}
+		info, err = os.Lstat(path)
+		if err != nil || modeString(info.Mode()) != want {
+			return fmt.Errorf("destination mode repair failed: %s", path)
+		}
+		return syncDirectory(filepath.Dir(path))
 	}
 	return nil
 }
@@ -210,17 +224,22 @@ func createConfinedExact(commonDir, relative string, body []byte, mode os.FileMo
 	}
 	base := parts[len(parts)-1]
 	if info, statErr := root.Lstat(base); statErr == nil {
-		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		if err := verifyConfinedContent(root, base, info, body); err != nil {
 			return fmt.Errorf("destination conflict: %s", relative)
 		}
-		file, openErr := root.Open(base)
-		if openErr != nil {
-			return openErr
-		}
-		existing, readErr := io.ReadAll(io.LimitReader(file, int64(len(body))+1))
-		closeErr := file.Close()
-		if readErr != nil || closeErr != nil || !bytes.Equal(existing, body) || info.Mode().Perm() != mode.Perm() {
-			return fmt.Errorf("destination conflict: %s", relative)
+		if actual, want := modeString(info.Mode()), modeString(mode); actual != want {
+			repaired, repairErr := repairConfinedMode(root, base, info.Mode(), mode)
+			if repairErr != nil {
+				return fmt.Errorf("finalize destination mode %s: %w", relative, repairErr)
+			}
+			if !repaired {
+				return fmt.Errorf("destination mode conflict: %s has %s (%s), want %s", relative, actual, info.Mode(), want)
+			}
+			info, statErr = root.Lstat(base)
+			if statErr != nil || modeString(info.Mode()) != want {
+				return fmt.Errorf("destination mode repair failed: %s", relative)
+			}
+			return syncDirectory(filepath.Join(commonDir, filepath.Dir(clean)))
 		}
 		return nil
 	} else if !errors.Is(statErr, os.ErrNotExist) {
@@ -231,7 +250,7 @@ func createConfinedExact(commonDir, relative string, body []byte, mode os.FileMo
 		return err
 	}
 	temporary := fmt.Sprintf(".~%s.%x", base, nonce[:])
-	file, err := root.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	file, err := root.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, confinedLinkSourceMode(mode))
 	if err != nil {
 		return err
 	}
@@ -262,7 +281,49 @@ func createConfinedExact(commonDir, relative string, body []byte, mode os.FileMo
 		return err
 	}
 	removeTemporary = false
+	if err := finalizeConfinedLink(root, base, mode); err != nil {
+		return err
+	}
+	info, err := root.Lstat(base)
+	if err != nil {
+		return err
+	}
+	if err := verifyConfinedFile(root, base, info, body, mode); err != nil {
+		return err
+	}
 	return syncDirectory(filepath.Join(commonDir, filepath.Dir(clean)))
+}
+
+func verifyConfinedFile(root *os.Root, base string, info os.FileInfo, body []byte, mode os.FileMode) error {
+	if err := verifyConfinedContent(root, base, info, body); err != nil {
+		return err
+	}
+	if modeString(info.Mode()) != modeString(mode) {
+		return fmt.Errorf("file mode is %s, want %s", modeString(info.Mode()), modeString(mode))
+	}
+	return nil
+}
+
+func verifyConfinedContent(root *os.Root, base string, info os.FileInfo, body []byte) error {
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("path is not a regular file")
+	}
+	file, err := root.Open(base)
+	if err != nil {
+		return err
+	}
+	existing, readErr := io.ReadAll(io.LimitReader(file, int64(len(body))+1))
+	closeErr := file.Close()
+	if readErr != nil {
+		return readErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if !bytes.Equal(existing, body) {
+		return errors.New("file content does not match")
+	}
+	return nil
 }
 
 func loadPlan(path string) (Plan, error) {

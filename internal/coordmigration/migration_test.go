@@ -60,7 +60,7 @@ func TestApplyLegacyOnlyImportsAndSeals(t *testing.T) {
 	assertDigest(t, filepath.Join(repo.CommonDir, "wip", "review", "v1", "reconciliation", "history.json"), plan.ReconciliationCopies[0].SourceSHA256)
 	archive := filepath.Join(archiveMigrationRoot(repo.CommonDir, plan.MigrationID), "source")
 	info, err := os.Stat(archive)
-	if err != nil || info.Mode().Perm() != 0o500 {
+	if err != nil || modeString(info.Mode()) != modeString(os.ModeDir|0o500) {
 		t.Fatalf("archive is not sealed: mode=%v err=%v", infoMode(info), err)
 	}
 	status, err := InspectStatus(repo, plan.MigrationID)
@@ -85,7 +85,7 @@ func TestEmptyAndPublicOnlyMigrations(t *testing.T) {
 		}
 		lockPath := filepath.Join(repo.CommonDir, "wip", "v1", "locks", "leases.lock")
 		info, err := os.Lstat(lockPath)
-		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+		if err != nil || !info.Mode().IsRegular() || modeString(info.Mode()) != "0600" {
 			t.Fatalf("registry lock is unavailable after apply: mode=%v err=%v", infoMode(info), err)
 		}
 		if body, err := os.ReadFile(lockPath); err != nil || len(body) != 0 {
@@ -169,7 +169,7 @@ func TestRegistryLockPublishesBeforeImportedRecords(t *testing.T) {
 	lockRelative := "wip/v1/" + captureRegistryLock
 	lockPath := filepath.Join(repo.CommonDir, filepath.FromSlash(lockRelative))
 	info, err := os.Lstat(lockPath)
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+	if err != nil || !info.Mode().IsRegular() || modeString(info.Mode()) != "0600" {
 		t.Fatalf("registry lock is unavailable before record publication: mode=%v err=%v", infoMode(info), err)
 	}
 	if body, err := os.ReadFile(lockPath); err != nil || len(body) != 0 {
@@ -592,6 +592,12 @@ func TestStatusKeepsReceiptCrashInProgressAndBindsArchiveSeal(t *testing.T) {
 		t.Fatal(err)
 	}
 	seal.PlanDigest = "sha256:" + strings.Repeat("0", 64)
+	// The completed seal is intentionally read-only. Simulate an external
+	// attacker that first makes the file writable before changing its bytes.
+	// Windows does not replace a file while its read-only attribute is set.
+	if err := os.Chmod(sealPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := writeJSON(sealPath, seal, 0o400, true); err != nil {
 		t.Fatal(err)
 	}
@@ -643,7 +649,7 @@ func TestRollbackBeforeMoveLeavesMarkerAndSource(t *testing.T) {
 		t.Fatalf("fresh migration after rollback = %#v err=%v", completed, err)
 	}
 	retired := retiredJournalPath(repo.CommonDir, plan.MigrationID)
-	if info, err := os.Lstat(retired); err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o400 {
+	if info, err := os.Lstat(retired); err != nil || !info.Mode().IsRegular() || modeString(info.Mode()) != "0400" {
 		t.Fatalf("retired rollback journal mode=%v err=%v", infoMode(info), err)
 	}
 	current, exists, err := readJournal(migrationJournalPath(repo.CommonDir))
@@ -976,6 +982,101 @@ func TestConfinedPublicationRejectsNestedSymlinkParent(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(outside, "receipt.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("publication escaped through symlink: %v", err)
+	}
+}
+
+func TestConfinedPublicationCreatesExactReadOnlyFile(t *testing.T) {
+	common := t.TempDir()
+	relative := "wip/migration/v1/migration-0123456789abcdef01234567/plan.json"
+	destination := filepath.Join(common, filepath.FromSlash(relative))
+	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("reviewed immutable plan\n")
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := createConfinedExact(common, relative, body, 0o400); err != nil {
+			t.Fatalf("attempt %d: %v", attempt+1, err)
+		}
+	}
+	got, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, body) {
+		t.Fatalf("body = %q, want %q", got, body)
+	}
+	info, err := os.Lstat(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMode := modeString(info.Mode()); gotMode != "0400" {
+		t.Fatalf("canonical mode = %s, want 0400", gotMode)
+	}
+	entries, err := os.ReadDir(filepath.Dir(destination))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".~plan.json.") {
+			t.Fatalf("temporary publication entry remains: %s", entry.Name())
+		}
+	}
+}
+
+func TestExactPublicationCreatesIdempotentReadOnlyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "plan.json")
+	body := []byte("reviewed bootstrap plan\n")
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := createExact(path, body, 0o400); err != nil {
+			t.Fatalf("attempt %d: %v", attempt+1, err)
+		}
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, body) {
+		t.Fatalf("body = %q, want %q", got, body)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMode := modeString(info.Mode()); gotMode != "0400" {
+		t.Fatalf("canonical mode = %s, want 0400", gotMode)
+	}
+}
+
+func TestWindowsReadOnlyFinalizeWindowResumesExactPublications(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows mode finalization has a platform-specific crash window")
+	}
+	common := t.TempDir()
+	body := []byte("reviewed immutable plan\n")
+
+	bootstrap := filepath.Join(common, "bootstrap-plan.json")
+	writeTestFile(t, bootstrap, body, 0o600)
+	if err := createExact(bootstrap, body, 0o400); err != nil {
+		t.Fatalf("resume bootstrap publication: %v", err)
+	}
+	if info, err := os.Lstat(bootstrap); err != nil || modeString(info.Mode()) != "0400" {
+		t.Fatalf("bootstrap mode=%v err=%v", infoMode(info), err)
+	}
+
+	relative := "wip/migration/v1/migration-0123456789abcdef01234567/plan.json"
+	destination := filepath.Join(common, filepath.FromSlash(relative))
+	writeTestFile(t, destination, body, 0o600)
+	if err := createConfinedExact(common, relative, body, 0o400); err != nil {
+		t.Fatalf("resume confined publication: %v", err)
+	}
+	if info, err := os.Lstat(destination); err != nil || modeString(info.Mode()) != "0400" {
+		t.Fatalf("confined mode=%v err=%v", infoMode(info), err)
+	}
+
+	conflict := filepath.Join(common, "conflict-plan.json")
+	writeTestFile(t, conflict, []byte("foreign bytes\n"), 0o600)
+	if err := createExact(conflict, body, 0o400); err == nil {
+		t.Fatal("mode repair accepted foreign bytes")
 	}
 }
 

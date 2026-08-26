@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 
@@ -207,7 +208,7 @@ func verifyCanonicalTransition(repoCommon string, plan Plan, journal Journal, re
 	}
 	if requirePost {
 		if current.Digest != plan.PlannedCanonicalData.Digest {
-			return failCanonical(errors.New("canonical data does not match the reviewed post-publication manifest"))
+			return failCanonical(fmt.Errorf("canonical data does not match the reviewed post-publication manifest: %s", canonicalManifestDifference(plan.PlannedCanonicalData, current)))
 		}
 	} else {
 		authorized := publishedPathSet(journal)
@@ -222,6 +223,57 @@ func verifyCanonicalTransition(repoCommon string, plan Plan, journal Journal, re
 		return failCanonical(err)
 	}
 	return nil
+}
+
+func canonicalManifestDifference(want, got CanonicalManifest) string {
+	if difference := treeManifestDifference("capture", want.Capture, got.Capture); difference != "" {
+		return difference
+	}
+	if difference := treeManifestDifference("review", want.Review, got.Review); difference != "" {
+		return difference
+	}
+	return fmt.Sprintf("combined digest is %s, want %s", got.Digest, want.Digest)
+}
+
+func treeManifestDifference(label string, want, got TreeManifest) string {
+	if got.LogicalRoot != want.LogicalRoot {
+		return fmt.Sprintf("%s logical root is %q, want %q", label, got.LogicalRoot, want.LogicalRoot)
+	}
+	if got.Exists != want.Exists {
+		return fmt.Sprintf("%s exists is %t, want %t", label, got.Exists, want.Exists)
+	}
+	wantEntries := make(map[string]ManifestEntry, len(want.Entries))
+	gotEntries := make(map[string]ManifestEntry, len(got.Entries))
+	paths := make(map[string]struct{}, len(want.Entries)+len(got.Entries))
+	for _, entry := range want.Entries {
+		wantEntries[entry.Path] = entry
+		paths[entry.Path] = struct{}{}
+	}
+	for _, entry := range got.Entries {
+		gotEntries[entry.Path] = entry
+		paths[entry.Path] = struct{}{}
+	}
+	ordered := make([]string, 0, len(paths))
+	for path := range paths {
+		ordered = append(ordered, path)
+	}
+	sort.Strings(ordered)
+	for _, path := range ordered {
+		wantEntry, wantFound := wantEntries[path]
+		gotEntry, gotFound := gotEntries[path]
+		switch {
+		case !gotFound:
+			return fmt.Sprintf("%s path %q is missing", label, path)
+		case !wantFound:
+			return fmt.Sprintf("%s path %q is unexpected", label, path)
+		case gotEntry != wantEntry:
+			return fmt.Sprintf("%s path %q is %#v, want %#v", label, path, gotEntry, wantEntry)
+		}
+	}
+	if got.Digest != want.Digest {
+		return fmt.Sprintf("%s digest is %s, want %s", label, got.Digest, want.Digest)
+	}
+	return ""
 }
 
 func publishedPathSet(journal Journal) map[string]bool {
@@ -327,7 +379,7 @@ func migrationOutputEntries(commonDir string, plan Plan, current TreeManifest) (
 			allowed[path] = append(allowed[path], entry)
 			sealed := entry
 			if entry.Type == "directory" {
-				sealed.Mode = "0500"
+				sealed.Mode = modeString(os.ModeDir | 0o500)
 			} else {
 				sealed.Mode = "0400"
 			}

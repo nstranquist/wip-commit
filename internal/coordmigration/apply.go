@@ -917,7 +917,7 @@ func completeReceipt(repo gitx.Repo, plan Plan) (Receipt, error) {
 		return Receipt{}, err
 	}
 	if canonical.Digest != plan.PlannedCanonicalData.Digest {
-		return Receipt{}, fail.New("MIGRATION_CANONICAL_MOVED", "canonical data does not match the reviewed post-publication manifest")
+		return Receipt{}, fail.New("MIGRATION_CANONICAL_MOVED", "canonical data does not match the reviewed post-publication manifest: "+canonicalManifestDifference(plan.PlannedCanonicalData, canonical))
 	}
 	canonicalDigest := canonical.Digest
 	archiveDigest := ""
