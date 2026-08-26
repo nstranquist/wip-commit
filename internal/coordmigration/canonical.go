@@ -3,7 +3,6 @@ package coordmigration
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 
@@ -299,12 +298,15 @@ func migrationOutputEntries(commonDir string, plan Plan, current TreeManifest) (
 			}
 			allowed[path] = append(allowed[path], sealed)
 		}
-		allowed[archiveBase+"/seal.json"] = allowed[archiveBase+"/seal.json"]
+		// The seal is a valid journal output, but its exact bytes are known
+		// only after the archive is complete. Keep an explicit empty variant
+		// set until a present seal is validated below.
+		allowed[archiveBase+"/seal.json"] = nil
 	}
 	receiptPath := migrationReceiptRelativePath(plan.MigrationID)
 	rollbackPath := filepath.ToSlash(filepath.Join("wip", "migration", "v1", plan.MigrationID, "rollback.json"))
-	allowed[receiptPath] = allowed[receiptPath]
-	allowed[rollbackPath] = allowed[rollbackPath]
+	allowed[receiptPath] = nil
+	allowed[rollbackPath] = nil
 	currentEntries := fullManifestEntries(current, "wip")
 	for _, dynamic := range []struct {
 		path     string
@@ -461,15 +463,4 @@ func verifyExactCanonicalPrestate(commonDir string, plan Plan) error {
 		return errors.New("canonical store changed after the reviewed preview")
 	}
 	return nil
-}
-
-func canonicalPathExists(commonDir, relative string) (bool, error) {
-	info, err := os.Lstat(filepath.Join(commonDir, filepath.FromSlash(relative)))
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return info.Mode()&os.ModeSymlink == 0, nil
 }

@@ -164,17 +164,6 @@ func createExact(path string, body []byte, mode os.FileMode) error {
 	return nil
 }
 
-func copyExact(source, destination string, expectedDigest string, mode os.FileMode) error {
-	body, err := safeio.ReadRegular(source, maxManifestBytes)
-	if err != nil {
-		return err
-	}
-	if digest(body) != expectedDigest {
-		return fmt.Errorf("source moved while copying %s", source)
-	}
-	return createExact(destination, body, mode)
-}
-
 func copyConfinedExact(source, commonDir, destination, expectedDigest string, mode os.FileMode) error {
 	body, err := safeio.ReadRegular(source, maxManifestBytes)
 	if err != nil {
