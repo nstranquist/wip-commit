@@ -475,7 +475,7 @@ func afterOperation(path string, journal *Journal, options ApplyOptions, operati
 func prepareCanonical(repo gitx.Repo, plan Plan, authorize func(string) error) error {
 	paths := []string{
 		"wip", "wip/v1", "wip/v1/lanes", "wip/v1/leases", "wip/v1/locks", "wip/v1/intents", "wip/v1/profiles", "wip/v1/init-intents", "wip/v1/archive",
-		"wip/review", "wip/review/v1", "wip/review/v1/locks", "wip/review/v1/handoffs", "wip/review/v1/landing-intents", "wip/review/v1/archive", "wip/review/v1/plans", "wip/review/v1/reconciliation",
+		"wip/review", "wip/review/v1", "wip/review/v1/locks", "wip/review/v1/handoffs", "wip/review/v1/landing-intents", "wip/review/v1/archive", "wip/review/v1/capture-aborts", "wip/review/v1/capture-completions", "wip/review/v1/capture-reservations", "wip/review/v1/plans", "wip/review/v1/reconciliation",
 		"wip/archive", "wip/archive/legacy-ndev-wip", "wip/migration", "wip/migration/v1", filepath.ToSlash(filepath.Join("wip", "migration", "v1", plan.MigrationID)),
 	}
 	for _, path := range paths {
@@ -498,6 +498,18 @@ func prepareCanonical(repo gitx.Repo, plan Plan, authorize func(string) error) e
 		if err := createConfinedExact(repo.CommonDir, lockRelative, nil, 0o600); err != nil {
 			return err
 		}
+	}
+	reviewMarker, err := ndevReviewDomainBody()
+	if err != nil {
+		return err
+	}
+	if authorize != nil {
+		if err := authorize("wip/review/v1/domain.json"); err != nil {
+			return err
+		}
+	}
+	if err := createConfinedExact(repo.CommonDir, "wip/review/v1/domain.json", reviewMarker, 0o600); err != nil {
+		return err
 	}
 	marker := domainRecord{SchemaVersion: 2, Domain: DomainID, StateVersion: 1, MinimumReaderProtocol: contract.Protocol, RequiredCapabilities: contract.StateReaderCapabilities()}
 	markerBody, err := normalizedJSON(marker)

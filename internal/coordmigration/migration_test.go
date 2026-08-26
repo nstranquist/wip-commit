@@ -94,11 +94,19 @@ func TestEmptyAndPublicOnlyMigrations(t *testing.T) {
 		if exists, err := regularDirectoryState(filepath.Join(repo.CommonDir, "wip", "review", "v1")); err != nil || !exists {
 			t.Fatalf("review store missing: %v", err)
 		}
-		for _, directory := range []string{"archive", "handoffs", "landing-intents", "locks", "plans", "reconciliation"} {
+		for _, directory := range []string{"archive", "capture-aborts", "capture-completions", "capture-reservations", "handoffs", "landing-intents", "locks", "plans", "reconciliation"} {
 			path := filepath.Join(repo.CommonDir, "wip", "review", "v1", directory)
 			if exists, err := regularDirectoryState(path); err != nil || !exists {
 				t.Fatalf("required review store directory %s missing: %v", directory, err)
 			}
+		}
+		marker, err := os.ReadFile(filepath.Join(repo.CommonDir, "wip", "review", "v1", "domain.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantMarker := []byte(`{"schema_version":1,"domain":"nicos.tools/ndev/wip-review","state_version":2,"authority":"ndev","queue_entry_schema_version":2,"handoff_schema_version":"2.0.0","automatic_landing":false,"handoff_landing_authorized":false,"review_digest_required":true}` + "\n")
+		if !bytes.Equal(marker, wantMarker) {
+			t.Fatalf("review authority marker mismatch:\n%s", marker)
 		}
 	})
 	t.Run("public-only", func(t *testing.T) {

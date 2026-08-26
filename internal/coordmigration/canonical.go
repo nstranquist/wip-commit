@@ -1,6 +1,7 @@
 package coordmigration
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -11,10 +12,37 @@ import (
 
 var (
 	captureDirectories = []string{".", "archive", "init-intents", "intents", "lanes", "leases", "locks", "profiles"}
-	reviewDirectories  = []string{".", "archive", "handoffs", "landing-intents", "locks", "plans", "reconciliation"}
+	reviewDirectories  = []string{".", "archive", "capture-aborts", "capture-completions", "capture-reservations", "handoffs", "landing-intents", "locks", "plans", "reconciliation"}
 )
 
 const captureRegistryLock = "locks/leases.lock"
+
+// ndevReviewDomainRecord is the exact NDev 0.5.0 review authority marker.
+// The paired beta migration publishes this marker and every required empty
+// directory in the same reviewed canonical manifest as imported records.
+type ndevReviewDomainRecord struct {
+	SchemaVersion            int    `json:"schema_version"`
+	Domain                   string `json:"domain"`
+	StateVersion             int    `json:"state_version"`
+	Authority                string `json:"authority"`
+	QueueEntrySchemaVersion  int    `json:"queue_entry_schema_version"`
+	HandoffSchemaVersion     string `json:"handoff_schema_version"`
+	AutomaticLanding         bool   `json:"automatic_landing"`
+	HandoffLandingAuthorized bool   `json:"handoff_landing_authorized"`
+	ReviewDigestRequired     bool   `json:"review_digest_required"`
+}
+
+func ndevReviewDomainBody() ([]byte, error) {
+	body, err := json.Marshal(ndevReviewDomainRecord{
+		SchemaVersion: 1, Domain: "nicos.tools/ndev/wip-review", StateVersion: 2,
+		Authority: "ndev", QueueEntrySchemaVersion: 2, HandoffSchemaVersion: "2.0.0",
+		AutomaticLanding: false, HandoffLandingAuthorized: false, ReviewDigestRequired: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return append(body, '\n'), nil
+}
 
 func manifestCanonicalData(commonDir string) (CanonicalManifest, error) {
 	capture, err := manifestTree(commonDir, filepath.ToSlash(filepath.Join("wip", "v1")))
@@ -46,6 +74,13 @@ func planCanonicalData(expected CanonicalManifest, plan Plan) (CanonicalManifest
 	}
 	review, err := plannedTree(expected.Review, reviewDirectories)
 	if err != nil {
+		return CanonicalManifest{}, err
+	}
+	reviewMarker, err := ndevReviewDomainBody()
+	if err != nil {
+		return CanonicalManifest{}, err
+	}
+	if err := putPlannedFile(&review, "wip/review/v1/domain.json", "wip/review/v1", int64(len(reviewMarker)), digest(reviewMarker), "0600"); err != nil {
 		return CanonicalManifest{}, err
 	}
 	for _, record := range append(append([]ImportRecord{}, plan.LaneImports...), plan.LeaseImports...) {
@@ -257,7 +292,7 @@ func migrationOutputEntries(commonDir string, plan Plan, current TreeManifest) (
 	}
 	for _, path := range []string{
 		"wip", "wip/v1", "wip/v1/archive", "wip/v1/init-intents", "wip/v1/intents", "wip/v1/lanes", "wip/v1/leases", "wip/v1/locks", "wip/v1/profiles",
-		"wip/review", "wip/review/v1", "wip/review/v1/archive", "wip/review/v1/handoffs", "wip/review/v1/landing-intents", "wip/review/v1/locks", "wip/review/v1/plans", "wip/review/v1/reconciliation",
+		"wip/review", "wip/review/v1", "wip/review/v1/archive", "wip/review/v1/capture-aborts", "wip/review/v1/capture-completions", "wip/review/v1/capture-reservations", "wip/review/v1/handoffs", "wip/review/v1/landing-intents", "wip/review/v1/locks", "wip/review/v1/plans", "wip/review/v1/reconciliation",
 		"wip/archive", "wip/archive/legacy-ndev-wip",
 		"wip/migration", "wip/migration/v1", filepath.ToSlash(filepath.Join("wip", "migration", "v1", plan.MigrationID)),
 	} {
