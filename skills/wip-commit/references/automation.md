@@ -76,7 +76,11 @@ verification commands. Then set `state` to `reviewed`.
 Edit only the object that `wip plan --out` created. Do not copy a partial JSON
 example or create a second plan format. Add each `message` and optional typed
 `verify` command. Give each verification command a bounded `timeout_ms`. Set
-`state` to `reviewed` after the complete object passes review. Keep the
+`directory` to its smallest runnable candidate subtree. Use `materialize` only
+for reviewed repository-relative dependencies that the command needs. A root
+command with neither field requests the full candidate tree and can exceed the
+fixed materialization limit. Set `state` to `reviewed` after the complete
+object passes review. Keep the
 generated lane, source mode, untracked policy, source digest, source scopes,
 lease, policy, guidance, path, group key, scope, prefix, and rationale fields
 exact. Keep every source path in exactly one group.

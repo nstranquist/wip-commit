@@ -8,7 +8,9 @@
     "coordination.migration.v1",
     "doctor.v1",
     "handoff.v2.cumulative-capture-only",
+    "hook.environment.v1",
     "install.digest-upgrade.v1",
+    "lane.init.anchor-recovery.v1",
     "lane.init.v1",
     "lease.claim.v1",
     "plan.v3.observe",
@@ -21,8 +23,9 @@
     "state.profile.v2",
     "state.reader-floor.v1",
     "status.v2.observe",
+    "verify.materialization.v1",
     "version.v2.provenance"
   ],
   "portable_skill_contract": "wip.portable-skill/2.0.0",
-  "portable_bundle_sha256": "sha256:39444297d05fe6d53e73cc317ca91ad3f445fb58ecf8f2303a1dc7beba0ab5cf"
+  "portable_bundle_sha256": "sha256:e1cf340c2ae102bef31a9ff43bb765be043ca4481897f4b7b3538c361328b02a"
 }

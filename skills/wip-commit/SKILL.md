@@ -150,7 +150,11 @@ wip --json capture --plan <plan.json>
 ```
 
 Each group needs an exact file list. The lane profile selects the message
-policy. Add bounded `verify` commands to the group that owns the code.
+policy. Add bounded `verify` commands to the group that owns the code. Set
+`directory` to the smallest candidate subtree that can run the command. Add
+only required repository-relative dependencies in `materialize`. A command
+with neither field requests the full candidate tree and can fail the fixed
+materialization limit.
 
 Use `wip commit --single --message` only for a deliberate one-commit
 compatibility capture. Do not use it in the guided automation path.
