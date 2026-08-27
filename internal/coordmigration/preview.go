@@ -133,13 +133,11 @@ func Preview(ctx context.Context, repo gitx.Repo, options PreviewOptions) (Plan,
 		return plan.ReconciliationCopies[i].Destination < plan.ReconciliationCopies[j].Destination
 	})
 	sort.Slice(plan.Dispositions, func(i, j int) bool {
-		return plan.Dispositions[i].Kind+"\x00"+plan.Dispositions[i].ID < plan.Dispositions[j].Kind+"\x00"+plan.Dispositions[j].ID
+		return dispositionLess(plan.Dispositions[i], plan.Dispositions[j])
 	})
 	sort.Slice(plan.ExpectedRefs, func(i, j int) bool { return plan.ExpectedRefs[i].Ref < plan.ExpectedRefs[j].Ref })
 	sort.Slice(plan.Conflicts, func(i, j int) bool {
-		left := plan.Conflicts[i].Code + "\x00" + plan.Conflicts[i].Destination
-		right := plan.Conflicts[j].Code + "\x00" + plan.Conflicts[j].Destination
-		return left < right
+		return conflictLess(plan.Conflicts[i], plan.Conflicts[j])
 	})
 	plan.PlanDigest, err = planDigest(plan)
 	if err != nil {
@@ -153,6 +151,44 @@ func Preview(ctx context.Context, repo gitx.Repo, options PreviewOptions) (Plan,
 		return Plan{}, fail.Errorf("MIGRATION_PLAN_TOO_LARGE", "migration plan is %d bytes; maximum is %d", len(encoded), MaxPlanBytes)
 	}
 	return plan, nil
+}
+
+func dispositionLess(left, right RecordDisposition) bool {
+	if left.Kind != right.Kind {
+		return left.Kind < right.Kind
+	}
+	if left.ID != right.ID {
+		return left.ID < right.ID
+	}
+	if left.Source != right.Source {
+		return left.Source < right.Source
+	}
+	if left.Action != right.Action {
+		return left.Action < right.Action
+	}
+	if left.Code != right.Code {
+		return left.Code < right.Code
+	}
+	return left.Message < right.Message
+}
+
+func conflictLess(left, right Conflict) bool {
+	if left.Code != right.Code {
+		return left.Code < right.Code
+	}
+	if left.Kind != right.Kind {
+		return left.Kind < right.Kind
+	}
+	if left.ID != right.ID {
+		return left.ID < right.ID
+	}
+	if left.Source != right.Source {
+		return left.Source < right.Source
+	}
+	if left.Destination != right.Destination {
+		return left.Destination < right.Destination
+	}
+	return left.Message < right.Message
 }
 
 func validateLegacyLayout(manifest TreeManifest) error {
@@ -210,7 +246,7 @@ type laneCandidate struct {
 	path, fileID, action, code, message string
 	lane                                legacyLane
 	normalized                          []byte
-	refVerified                         bool
+	expectedRefSHA                      string
 }
 
 type leaseCandidate struct {
@@ -270,21 +306,29 @@ func planLegacyRecords(ctx context.Context, repo gitx.Repo, plan *Plan, now time
 
 	// A lane record is not destination-readable in practice when its durable
 	// cursor cannot be resolved. Classify this before relationship closure so a
-	// terminal lane that becomes archive-only also removes dependent terminal
-	// leases from the canonical import set.
+	// terminal or stale lane that becomes archive-only also removes its
+	// dependent leases from the canonical import set.
 	for _, lane := range lanes {
 		if lane.action != "import" {
 			continue
 		}
 		actual, err := repo.Text(ctx, nil, "rev-parse", "--verify", lane.lane.Ref+"^{commit}")
+		if err == nil {
+			lane.expectedRefSHA = actual
+		}
+		stale := staleActiveLane(lane, leases, now)
 		if err == nil && actual == lane.lane.CurrentSHA {
-			lane.refVerified = true
+			if stale {
+				archiveStaleActiveLane(lane, leases, false)
+			}
 			continue
 		}
 		lane.code, lane.message = "REF_MISMATCH", "lane ref is absent or differs from its stored cursor"
 		if isTerminalLane(lane.lane.State) {
 			lane.action = "archive-only"
 			lane.code, lane.message = "HISTORICAL_REF_MISSING", "terminal lane ref is absent or differs from its stored cursor"
+		} else if err == nil && stale && refDescendsFrom(ctx, repo, lane.lane.CurrentSHA, actual) {
+			archiveStaleActiveLane(lane, leases, true)
 		} else {
 			lane.action = "conflict"
 		}
@@ -352,9 +396,9 @@ func planLegacyRecords(ctx context.Context, repo gitx.Repo, plan *Plan, now time
 			if conflict != nil {
 				plan.Conflicts = append(plan.Conflicts, *conflict)
 			}
-			if lane.refVerified && operation.Action != "conflict" {
-				plan.ExpectedRefs = append(plan.ExpectedRefs, RefExpectation{Ref: lane.lane.Ref, SHA: lane.lane.CurrentSHA})
-			}
+		}
+		if lane.expectedRefSHA != "" && operation.Action != "conflict" {
+			plan.ExpectedRefs = append(plan.ExpectedRefs, RefExpectation{Ref: lane.lane.Ref, SHA: lane.expectedRefSHA})
 		}
 		plan.LaneImports = append(plan.LaneImports, operation)
 		appendDisposition(plan, "lane", lane.fileID, source, operation.Action, lane.code, lane.message)
@@ -377,7 +421,7 @@ func planLegacyRecords(ctx context.Context, repo gitx.Repo, plan *Plan, now time
 				plan.Conflicts = append(plan.Conflicts, *conflict)
 			}
 			if lease.lease.State == "active" && lease.lease.ExpiresAt != nil && !now.Before(*lease.lease.ExpiresAt) {
-				appendDisposition(plan, "lease", lease.fileID, source, "import", "EXPIRED_ACTIVE_LEASE", "valid expired lease remains stored but does not grant an active path claim")
+				lease.code, lease.message = "EXPIRED_ACTIVE_LEASE", "valid expired lease remains stored but does not grant an active path claim"
 			}
 		}
 		plan.LeaseImports = append(plan.LeaseImports, operation)
@@ -390,6 +434,40 @@ func planLegacyRecords(ctx context.Context, repo gitx.Repo, plan *Plan, now time
 		return err
 	}
 	return nil
+}
+
+func staleActiveLane(lane *laneCandidate, leases map[string]*leaseCandidate, now time.Time) bool {
+	if lane.lane.State != "active" {
+		return false
+	}
+	for _, leaseID := range lane.lane.LeaseIDs {
+		lease := leases[leaseID]
+		if lease == nil || lease.action != "import" || lease.lease.LaneID != lane.lane.ID || lease.lease.Agent != lane.lane.Agent || lease.lease.Session != lane.lane.Session || lease.lease.State != "active" || lease.lease.ExpiresAt == nil || now.Before(*lease.lease.ExpiresAt) {
+			return false
+		}
+	}
+	return true
+}
+
+func archiveStaleActiveLane(lane *laneCandidate, leases map[string]*leaseCandidate, refAdvanced bool) {
+	lane.action = "archive-only"
+	lane.code = "STALE_ACTIVE_LANE"
+	lane.message = "active lane has no unexpired path lease; archive its coordination records and preserve its exact ref"
+	if refAdvanced {
+		lane.code = "STALE_ACTIVE_REF_ADVANCED"
+		lane.message = "active lane has no unexpired path lease and its ref advanced from the stored cursor; archive its coordination records and preserve the exact advanced ref"
+	}
+	for _, leaseID := range lane.lane.LeaseIDs {
+		lease := leases[leaseID]
+		lease.action = "archive-only"
+		lease.code = lane.code
+		lease.message = "expired active lease belongs to a stale lane whose coordination records are archive-only"
+	}
+}
+
+func refDescendsFrom(ctx context.Context, repo gitx.Repo, ancestor, descendant string) bool {
+	exit, err := repo.Exit(ctx, nil, "merge-base", "--is-ancestor", ancestor, descendant)
+	return err == nil && exit == 0
 }
 
 func invalidLaneLeaseState(laneState, leaseState string) bool {

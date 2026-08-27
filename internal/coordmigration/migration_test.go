@@ -100,6 +100,51 @@ func TestPreviewRejectsNonEmptyOrPartialLegacyV2Scaffold(t *testing.T) {
 	})
 }
 
+func TestPreviewDigestIsDeterministicForRepeatedConflictKeys(t *testing.T) {
+	repo, head := migrationTestRepo(t)
+	writeLegacyFixture(t, repo, head)
+
+	var lease legacyLease
+	if _, err := readJSONFile(filepath.Join(repo.CommonDir, "ndev-wip", "v1", "leases", "lease1.json"), &lease); err != nil {
+		t.Fatal(err)
+	}
+	lease.ExpiresAt = timePointer(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	writeTestJSON(t, filepath.Join(repo.CommonDir, "ndev-wip", "v1", "leases", "lease1.json"), lease, 0o600)
+
+	for _, id := range []string{"orphan-a", "orphan-b"} {
+		orphan := lease
+		orphan.ID = id
+		orphan.LaneID = "missing-" + id
+		writeTestJSON(t, filepath.Join(repo.CommonDir, "ndev-wip", "v1", "leases", id+".json"), orphan, 0o600)
+	}
+
+	now := func() time.Time { return time.Date(2026, 8, 26, 0, 0, 0, 0, time.UTC) }
+	first, err := previewForTest(context.Background(), repo, PreviewOptions{Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.State != "blocked" || len(first.Conflicts) < 2 {
+		t.Fatalf("fixture did not create repeated conflict keys: %#v", first.Conflicts)
+	}
+	firstBody, err := normalizedJSON(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 100; attempt++ {
+		got, err := previewForTest(context.Background(), repo, PreviewOptions{Now: now})
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotBody, err := normalizedJSON(got)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.PlanDigest != first.PlanDigest || !bytes.Equal(gotBody, firstBody) {
+			t.Fatalf("preview %d moved without state change: first=%s got=%s", attempt+1, first.PlanDigest, got.PlanDigest)
+		}
+	}
+}
+
 func TestApplyLegacyOnlyImportsAndSeals(t *testing.T) {
 	repo, head := migrationTestRepo(t)
 	writeLegacyFixture(t, repo, head)
@@ -426,7 +471,7 @@ func TestCrossStoreRelationshipAndScopeConflictsBlockMigration(t *testing.T) {
 	})
 }
 
-func TestExpiredActiveLeaseImportsWithoutGrantingPaths(t *testing.T) {
+func TestExpiredActiveLeaseArchivesStaleLaneAndPreservesRef(t *testing.T) {
 	repo, head := migrationTestRepo(t)
 	writeLegacyFixture(t, repo, head)
 	var lease legacyLease
@@ -436,8 +481,11 @@ func TestExpiredActiveLeaseImportsWithoutGrantingPaths(t *testing.T) {
 	lease.ExpiresAt = timePointer(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 	writeTestJSON(t, filepath.Join(repo.CommonDir, "ndev-wip", "v1", "leases", "lease1.json"), lease, 0o600)
 	plan := mustPreview(t, repo)
-	if plan.State != "ready" || importAction(plan.LeaseImports, "lease1") != "import" || !hasDisposition(plan, "EXPIRED_ACTIVE_LEASE") {
-		t.Fatalf("expired active lease plan=%#v dispositions=%#v", plan.LeaseImports, plan.Dispositions)
+	if plan.State != "ready" || importAction(plan.LaneImports, "lane1") != "archive-only" || importAction(plan.LeaseImports, "lease1") != "archive-only" || !hasDisposition(plan, "STALE_ACTIVE_LANE") {
+		t.Fatalf("stale lane plan: lanes=%#v leases=%#v dispositions=%#v", plan.LaneImports, plan.LeaseImports, plan.Dispositions)
+	}
+	if got := expectedRefSHA(plan, "refs/heads/wip/agent1/lane1"); got != head {
+		t.Fatalf("expected ref SHA = %q, want %q", got, head)
 	}
 	if _, err := applyForTest(context.Background(), repo, plan, plan.PlanDigest, ApplyOptions{}); err != nil {
 		t.Fatal(err)
@@ -446,16 +494,134 @@ func TestExpiredActiveLeaseImportsWithoutGrantingPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	paths, err := opened.ActivePaths("lane1")
-	if err != nil || len(paths) != 0 {
-		t.Fatalf("expired imported lease grants paths: paths=%v err=%v", paths, err)
+	if _, err := opened.Load("lane1"); fail.Code(err) != "LANE_NOT_FOUND" {
+		t.Fatalf("archive-only stale lane leaked into canonical state: %v", err)
 	}
-	lane, err := opened.Load("lane1")
-	if err != nil {
+	if _, err := opened.LoadLease("lease1"); fail.Code(err) != "LEASE_NOT_FOUND" {
+		t.Fatalf("archive-only stale lease leaked into canonical state: %v", err)
+	}
+	if got := strings.TrimSpace(runGit(t, repo.Root, "rev-parse", "refs/heads/wip/agent1/lane1")); got != head {
+		t.Fatalf("stale lane ref moved: got %s want %s", got, head)
+	}
+	archive := filepath.Join(archiveMigrationRoot(repo.CommonDir, plan.MigrationID), "source", "v1")
+	for _, path := range []string{"lanes/lane1.json", "leases/lease1.json"} {
+		if _, err := os.Stat(filepath.Join(archive, filepath.FromSlash(path))); err != nil {
+			t.Fatalf("archive-only stale record %s is missing from sealed source: %v", path, err)
+		}
+	}
+}
+
+func TestExpiredActiveLeaseArchivesDescendantAdvancedRef(t *testing.T) {
+	repo, head := migrationTestRepo(t)
+	writeLegacyFixture(t, repo, head)
+	expireLegacyLease(t, repo, "lease1")
+	tree := strings.TrimSpace(runGit(t, repo.Root, "rev-parse", head+"^{tree}"))
+	advanced := strings.TrimSpace(runGit(t, repo.Root, "commit-tree", tree, "-p", head, "-m", "advance stale lane ref"))
+	ref := "refs/heads/wip/agent1/lane1"
+	runGit(t, repo.Root, "update-ref", ref, advanced)
+
+	plan := mustPreview(t, repo)
+	if plan.State != "ready" || importAction(plan.LaneImports, "lane1") != "archive-only" || importAction(plan.LeaseImports, "lease1") != "archive-only" || !hasDisposition(plan, "STALE_ACTIVE_REF_ADVANCED") {
+		t.Fatalf("advanced stale lane plan: lanes=%#v leases=%#v conflicts=%#v dispositions=%#v", plan.LaneImports, plan.LeaseImports, plan.Conflicts, plan.Dispositions)
+	}
+	if got := expectedRefSHA(plan, ref); got != advanced {
+		t.Fatalf("expected advanced ref SHA = %q, want %q", got, advanced)
+	}
+	if _, err := applyForTest(context.Background(), repo, plan, plan.PlanDigest, ApplyOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := opened.ValidateCapture(context.Background(), lane, nil); err != nil {
-		t.Fatalf("expired lease destination relationship is invalid: %v", err)
+	if got := strings.TrimSpace(runGit(t, repo.Root, "rev-parse", ref)); got != advanced {
+		t.Fatalf("advanced stale lane ref moved: got %s want %s", got, advanced)
+	}
+}
+
+func TestStaleActiveLaneRefSafetyBoundaries(t *testing.T) {
+	tests := []struct {
+		name   string
+		expire bool
+		move   func(*testing.T, gitx.Repo, string)
+	}{
+		{
+			name: "live lease with advanced ref",
+			move: func(t *testing.T, repo gitx.Repo, head string) {
+				tree := strings.TrimSpace(runGit(t, repo.Root, "rev-parse", head+"^{tree}"))
+				advanced := strings.TrimSpace(runGit(t, repo.Root, "commit-tree", tree, "-p", head, "-m", "advance live lane ref"))
+				runGit(t, repo.Root, "update-ref", "refs/heads/wip/agent1/lane1", advanced)
+			},
+		},
+		{
+			name:   "expired lease with missing ref",
+			expire: true,
+			move: func(t *testing.T, repo gitx.Repo, _ string) {
+				runGit(t, repo.Root, "update-ref", "-d", "refs/heads/wip/agent1/lane1")
+			},
+		},
+		{
+			name:   "expired lease with diverged ref",
+			expire: true,
+			move: func(t *testing.T, repo gitx.Repo, head string) {
+				tree := strings.TrimSpace(runGit(t, repo.Root, "rev-parse", head+"^{tree}"))
+				diverged := strings.TrimSpace(runGit(t, repo.Root, "commit-tree", tree, "-m", "diverged stale lane ref"))
+				runGit(t, repo.Root, "update-ref", "refs/heads/wip/agent1/lane1", diverged)
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repo, head := migrationTestRepo(t)
+			writeLegacyFixture(t, repo, head)
+			if test.expire {
+				expireLegacyLease(t, repo, "lease1")
+			}
+			test.move(t, repo, head)
+			plan := mustPreview(t, repo)
+			if plan.State != "blocked" || importAction(plan.LaneImports, "lane1") != "conflict" || !hasConflict(plan, "REF_MISMATCH") {
+				t.Fatalf("unsafe stale ref did not block: lanes=%#v conflicts=%#v", plan.LaneImports, plan.Conflicts)
+			}
+		})
+	}
+}
+
+func TestActiveLaneWithoutLeasesArchivesAsStale(t *testing.T) {
+	repo, head := migrationTestRepo(t)
+	writeLegacyFixture(t, repo, head)
+	var lane legacyLane
+	if _, err := readJSONFile(filepath.Join(repo.CommonDir, "ndev-wip", "v1", "lanes", "lane1.json"), &lane); err != nil {
+		t.Fatal(err)
+	}
+	lane.LeaseIDs = nil
+	writeTestJSON(t, filepath.Join(repo.CommonDir, "ndev-wip", "v1", "lanes", "lane1.json"), lane, 0o600)
+	if err := os.Remove(filepath.Join(repo.CommonDir, "ndev-wip", "v1", "leases", "lease1.json")); err != nil {
+		t.Fatal(err)
+	}
+	plan := mustPreview(t, repo)
+	if plan.State != "ready" || importAction(plan.LaneImports, "lane1") != "archive-only" || !hasDisposition(plan, "STALE_ACTIVE_LANE") {
+		t.Fatalf("zero-lease stale lane plan: lanes=%#v conflicts=%#v dispositions=%#v", plan.LaneImports, plan.Conflicts, plan.Dispositions)
+	}
+}
+
+func TestActiveLaneWithLiveAndExpiredLeasesRemainsCanonical(t *testing.T) {
+	repo, head := migrationTestRepo(t)
+	writeLegacyFixture(t, repo, head)
+	expireLegacyLease(t, repo, "lease1")
+	var lane legacyLane
+	if _, err := readJSONFile(filepath.Join(repo.CommonDir, "ndev-wip", "v1", "lanes", "lane1.json"), &lane); err != nil {
+		t.Fatal(err)
+	}
+	var live legacyLease
+	if _, err := readJSONFile(filepath.Join(repo.CommonDir, "ndev-wip", "v1", "leases", "lease1.json"), &live); err != nil {
+		t.Fatal(err)
+	}
+	live.ID = "lease2"
+	live.Paths = []string{"SECOND.md"}
+	live.ExpiresAt = timePointer(time.Date(2030, 8, 24, 12, 0, 0, 0, time.UTC))
+	lane.LeaseIDs = []string{"lease1", "lease2"}
+	writeTestJSON(t, filepath.Join(repo.CommonDir, "ndev-wip", "v1", "lanes", "lane1.json"), lane, 0o600)
+	writeTestJSON(t, filepath.Join(repo.CommonDir, "ndev-wip", "v1", "leases", "lease2.json"), live, 0o600)
+
+	plan := mustPreview(t, repo)
+	if plan.State != "ready" || importAction(plan.LaneImports, "lane1") != "import" || importAction(plan.LeaseImports, "lease1") != "import" || importAction(plan.LeaseImports, "lease2") != "import" || !hasDisposition(plan, "EXPIRED_ACTIVE_LEASE") {
+		t.Fatalf("mixed-live lane plan: lanes=%#v leases=%#v conflicts=%#v dispositions=%#v", plan.LaneImports, plan.LeaseImports, plan.Conflicts, plan.Dispositions)
 	}
 }
 
@@ -1355,6 +1521,26 @@ func importAction(records []ImportRecord, id string) string {
 		}
 	}
 	return ""
+}
+
+func expectedRefSHA(plan Plan, ref string) string {
+	for _, expected := range plan.ExpectedRefs {
+		if expected.Ref == ref {
+			return expected.SHA
+		}
+	}
+	return ""
+}
+
+func expireLegacyLease(t *testing.T, repo gitx.Repo, id string) {
+	t.Helper()
+	path := filepath.Join(repo.CommonDir, "ndev-wip", "v1", "leases", id+".json")
+	var lease legacyLease
+	if _, err := readJSONFile(path, &lease); err != nil {
+		t.Fatal(err)
+	}
+	lease.ExpiresAt = timePointer(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	writeTestJSON(t, path, lease, 0o600)
 }
 
 func hasConflict(plan Plan, code string) bool {
