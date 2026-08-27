@@ -39,6 +39,67 @@ func TestPreviewIsByteForByteReadOnly(t *testing.T) {
 	}
 }
 
+func TestPreviewArchivesExactEmptyLegacyV2Scaffold(t *testing.T) {
+	repo, head := migrationTestRepo(t)
+	writeLegacyFixture(t, repo, head)
+	for _, directory := range []string{"lanes", "leases", "receipts"} {
+		if err := os.MkdirAll(filepath.Join(repo.CommonDir, "ndev-wip", "v2", directory), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	before := testTreeDigest(t, repo.CommonDir)
+	plan := mustPreview(t, repo)
+	after := testTreeDigest(t, repo.CommonDir)
+	if before != after {
+		t.Fatalf("preview changed Git common directory: before=%s after=%s", before, after)
+	}
+	for _, path := range []string{"v2", "v2/lanes", "v2/leases", "v2/receipts"} {
+		entry, found := testManifestEntry(plan.SourceLegacy, path)
+		if !found || entry.Type != "directory" {
+			t.Fatalf("source manifest does not bind empty scaffold directory %s: %#v", path, entry)
+		}
+	}
+
+	if _, err := applyForTest(context.Background(), repo, plan, plan.PlanDigest, ApplyOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(archiveMigrationRoot(repo.CommonDir, plan.MigrationID), "source")
+	for _, path := range []string{"v2", "v2/lanes", "v2/leases", "v2/receipts"} {
+		info, err := os.Stat(filepath.Join(archive, filepath.FromSlash(path)))
+		if err != nil || !info.IsDir() {
+			t.Fatalf("sealed archive lost v2 scaffold directory %s: mode=%v err=%v", path, infoMode(info), err)
+		}
+	}
+}
+
+func TestPreviewRejectsNonEmptyOrPartialLegacyV2Scaffold(t *testing.T) {
+	t.Run("non-empty", func(t *testing.T) {
+		repo, head := migrationTestRepo(t)
+		writeLegacyFixture(t, repo, head)
+		for _, directory := range []string{"lanes", "leases", "receipts"} {
+			if err := os.MkdirAll(filepath.Join(repo.CommonDir, "ndev-wip", "v2", directory), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		writeTestFile(t, filepath.Join(repo.CommonDir, "ndev-wip", "v2", "lanes", "lane.json"), []byte("{}\n"), 0o600)
+		if _, err := previewForTest(context.Background(), repo, PreviewOptions{}); fail.Code(err) != "MIGRATION_SOURCE_INVALID" {
+			t.Fatalf("non-empty legacy v2 scaffold was accepted: %v (%s)", err, fail.Code(err))
+		}
+	})
+
+	t.Run("partial", func(t *testing.T) {
+		repo, head := migrationTestRepo(t)
+		writeLegacyFixture(t, repo, head)
+		if err := os.MkdirAll(filepath.Join(repo.CommonDir, "ndev-wip", "v2", "lanes"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := previewForTest(context.Background(), repo, PreviewOptions{}); fail.Code(err) != "MIGRATION_SOURCE_INVALID" {
+			t.Fatalf("partial legacy v2 scaffold was accepted: %v (%s)", err, fail.Code(err))
+		}
+	})
+}
+
 func TestApplyLegacyOnlyImportsAndSeals(t *testing.T) {
 	repo, head := migrationTestRepo(t)
 	writeLegacyFixture(t, repo, head)

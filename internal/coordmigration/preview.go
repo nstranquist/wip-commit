@@ -162,11 +162,23 @@ func validateLegacyLayout(manifest TreeManifest) error {
 		"v1/lanes":  "directory",
 		"v1/leases": "directory",
 	}
+	emptyV2Scaffold := map[string]string{
+		"v2":          "directory",
+		"v2/lanes":    "directory",
+		"v2/leases":   "directory",
+		"v2/receipts": "directory",
+	}
 	seen := map[string]string{}
 	for _, entry := range manifest.Entries {
 		seen[entry.Path] = entry.Type
 		if entry.Path != "." && !strings.HasPrefix(entry.Path, "v1/") && entry.Path != "v1" {
-			return fmt.Errorf("legacy root contains unsupported top-level entry %s", entry.Path)
+			expectedType, allowed := emptyV2Scaffold[entry.Path]
+			if !allowed {
+				return fmt.Errorf("legacy root contains unsupported top-level entry %s", entry.Path)
+			}
+			if entry.Type != expectedType {
+				return fmt.Errorf("legacy v2 scaffold entry %s has type %s, want %s", entry.Path, entry.Type, expectedType)
+			}
 		}
 		if strings.HasPrefix(entry.Path, "v1/lanes/") {
 			if entry.Type != "file" || filepath.ToSlash(filepath.Dir(entry.Path)) != "v1/lanes" || !strings.HasSuffix(entry.Path, ".json") {
@@ -182,6 +194,13 @@ func validateLegacyLayout(manifest TreeManifest) error {
 	for path, kind := range required {
 		if seen[path] != kind {
 			return fmt.Errorf("legacy store is missing %s %s", kind, path)
+		}
+	}
+	if _, hasV2 := seen["v2"]; hasV2 {
+		for path, kind := range emptyV2Scaffold {
+			if seen[path] != kind {
+				return fmt.Errorf("legacy v2 scaffold is missing %s %s", kind, path)
+			}
 		}
 	}
 	return nil
