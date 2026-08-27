@@ -331,6 +331,15 @@ func prepareInitOptions(ctx context.Context, source gitx.Repo, options *initOpti
 
 func executeInit(ctx context.Context, source gitx.Repo, options initOptions, prompter prompt, output io.Writer) (result initResult, returnErr error) {
 	result = initResult{Version: version, DryRun: options.dryRun, RepoDir: source.Root, Worktree: source.Root, StagedPaths: []string{}, MessagePolicy: options.resolvedMessagePolicy, ModeRecommendation: "Use worktree mode for one agent per task."}
+	worktreeSource := source
+	if options.createWorktree != "" {
+		anchor, err := initWorktreeAnchor(ctx, source)
+		if err != nil {
+			return result, err
+		}
+		worktreeSource = anchor
+		result.RepoDir = anchor.Root
+	}
 	if options.mode == string(store.ModeShared) {
 		result.SharedModeWarning = "Shared mode is for lanes that must coexist in one checkout and shared index. Prefer worktree mode otherwise."
 	}
@@ -371,19 +380,19 @@ func executeInit(ctx context.Context, source gitx.Repo, options initOptions, pro
 			return result, fail.New("CANCELLED", "setup was not applied")
 		}
 	}
-	baseSHA, err := source.Text(ctx, nil, "rev-parse", "--verify", options.baseRef+"^{commit}")
+	baseSHA, err := worktreeSource.Text(ctx, nil, "rev-parse", "--verify", options.baseRef+"^{commit}")
 	if err != nil {
 		return result, fail.Wrap("BASE_NOT_FOUND", err)
 	}
 	result.BaseSHA = baseSHA
 	if options.dryRun {
-		if err := store.Check(source); err != nil {
+		if err := store.Check(worktreeSource); err != nil {
 			return result, err
 		}
 		target := source
 		targetExists := true
 		if options.createWorktree != "" {
-			target, targetExists, err = inspectWorktree(ctx, source, options.createWorktree, baseSHA)
+			target, targetExists, err = inspectWorktree(ctx, worktreeSource, options.createWorktree, baseSHA)
 			if err != nil {
 				return result, err
 			}
@@ -435,12 +444,12 @@ func executeInit(ctx context.Context, source gitx.Repo, options initOptions, pro
 		plannedWorktree = options.createWorktree
 	}
 	result.Worktree = plannedWorktree
-	writerFence, err := store.AcquireWriterFence(source, store.DefaultWriterFenceWait)
+	writerFence, err := store.AcquireWriterFence(worktreeSource, store.DefaultWriterFenceWait)
 	if err != nil {
 		return result, err
 	}
 	defer func() { _ = writerFence.Release() }()
-	coordinationStore, err := store.OpenWithWriterFence(source, writerFence)
+	coordinationStore, err := store.OpenWithWriterFence(worktreeSource, writerFence)
 	if err != nil {
 		return result, err
 	}
@@ -471,7 +480,7 @@ func executeInit(ctx context.Context, source gitx.Repo, options initOptions, pro
 		target := source
 		if options.createWorktree != "" {
 			var created bool
-			target, created, err = ensureWorktree(ctx, source, options.createWorktree, baseSHA)
+			target, created, err = ensureWorktree(ctx, worktreeSource, options.createWorktree, baseSHA)
 			if err != nil {
 				return err
 			}
@@ -536,6 +545,29 @@ func executeInit(ctx context.Context, source gitx.Repo, options initOptions, pro
 	}
 	updateResultIntent(&result, intent, intentPath)
 	return result, nil
+}
+
+// initWorktreeAnchor returns the primary checkout for the shared Git directory.
+// A recovery command can run from the linked worktree that it is recovering;
+// worktree creation must still be evaluated from the primary checkout.
+func initWorktreeAnchor(ctx context.Context, source gitx.Repo) (gitx.Repo, error) {
+	if source.GitDir == source.CommonDir {
+		return source, nil
+	}
+	listing, err := source.Raw(ctx, nil, "worktree", "list", "--porcelain", "-z")
+	if err != nil {
+		return gitx.Repo{}, fail.Wrap("WORKTREE_ANCHOR_NOT_FOUND", err)
+	}
+	for _, field := range strings.Split(listing, "\x00") {
+		if !strings.HasPrefix(field, "worktree ") {
+			continue
+		}
+		candidate, discoverErr := gitx.Discover(ctx, strings.TrimPrefix(field, "worktree "))
+		if discoverErr == nil && candidate.CommonDir == source.CommonDir && candidate.GitDir == candidate.CommonDir {
+			return candidate, nil
+		}
+	}
+	return gitx.Repo{}, fail.New("WORKTREE_ANCHOR_NOT_FOUND", "primary checkout for the linked worktree is unavailable")
 }
 
 func ensureLane(ctx context.Context, laneStore store.Store, options initOptions, baseSHA string) (store.Lane, error) {

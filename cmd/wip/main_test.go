@@ -596,6 +596,35 @@ func TestEnvRejectsWrongWorktreeWithoutChangingLeaseOrGitState(t *testing.T) {
 	}
 }
 
+func TestInitRecoveryCanRunFromItsCreatedLinkedWorktree(t *testing.T) {
+	directory := cliTestRepo(t)
+	linked := filepath.Join(t.TempDir(), "agent-worktree")
+	args := []string{"--json", "--repo-dir", directory, "init", "--mode", "worktree", "--create-worktree", linked, "--lane", "linked-recovery", "--agent", "agent", "--session", "session", "--path", "core.txt", "--non-interactive", "--no-install", "--no-install-skill"}
+	created := runCLI(t, args, "")
+	if created.code != 0 || !created.envelope.OK {
+		t.Fatalf("initial worktree setup: %#v stderr=%s", created.envelope, created.stderr)
+	}
+
+	args[2] = linked
+	recovered := runCLI(t, args, "")
+	if recovered.code != 0 || !recovered.envelope.OK {
+		t.Fatalf("linked-worktree recovery: %#v stderr=%s", recovered.envelope, recovered.stderr)
+	}
+	var result initResult
+	decodeData(t, recovered.envelope.Data, &result)
+	anchorRepo, anchorErr := gitx.Discover(context.Background(), directory)
+	linkedRepo, linkedErr := gitx.Discover(context.Background(), linked)
+	if anchorErr != nil || linkedErr != nil {
+		t.Fatalf("discover recovery roots: anchor=%v linked=%v", anchorErr, linkedErr)
+	}
+	if result.RepoDir != anchorRepo.Root || result.Worktree != linkedRepo.Root || result.CreatedWorktree {
+		t.Fatalf("recovery roots = %#v, want anchor %q and existing worktree %q", result, anchorRepo.Root, linkedRepo.Root)
+	}
+	if len(result.Recovery) != 0 || result.IntentState != "complete" {
+		t.Fatalf("recovery did not complete the immutable init intent: %#v", result)
+	}
+}
+
 func TestInitDryRunAndInstallerAreNonDestructive(t *testing.T) {
 	directory := cliTestRepo(t)
 	linked := filepath.Join(t.TempDir(), "not-created")
