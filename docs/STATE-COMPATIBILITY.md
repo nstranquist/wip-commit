@@ -192,6 +192,13 @@ The migration then moves the complete legacy root into a sealed archive. It
 does not dual-write the legacy and canonical roots. It does not authorize
 landing.
 
+The preview does not import an active lane that has no live path lease. It
+marks the stale lane and its expired leases `archive-only`. The plan binds the
+exact lane ref SHA, including a descendant SHA that advanced from the stored
+cursor. Apply verifies that SHA before it changes coordination state. A missing
+or diverged ref blocks migration. A moved ref also blocks migration when the
+lane has a live lease. The migration does not delete or move the lane ref.
+
 If apply stops, use `--resume` with the same plan and digest. Use `--rollback`
 only before the migration moves the legacy source. After that move, preserve
 the archive and resume forward.
