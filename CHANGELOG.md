@@ -60,6 +60,8 @@ Planned first prerelease: `v0.2.0-beta.1`.
   Schemas.
 - Version 1 profile and intent compatibility without immutable digest changes.
 - Capture-intent schema version 3 with read compatibility for versions 1 and 2.
+- Migration status schema version 1.1.0 with separate historical cutover and
+  current live-store manifest digests.
 
 ### Changed
 
@@ -92,6 +94,9 @@ Planned first prerelease: `v0.2.0-beta.1`.
 - The minimum build toolchain is Go 1.25.12. This patched floor excludes
   GO-2026-4602, GO-2026-4864, and GO-2026-4970 from reachable standard-library
   paths found by the release vulnerability scan.
+- Completed migration status now accepts valid post-cutover writes in the two
+  live data roots. It keeps exact checks for incomplete migrations and the
+  static migration envelope.
 
 ### Known limitations
 
