@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,12 +32,17 @@ const (
 	maxPlannedPaths      = 10_000
 	maxVerifyCommands    = 64
 	maxVerifyArguments   = 256
+	maxVerifyScopes      = 256
+	maxVerifyTreeEntries = 16_384
+	maxVerifyTreeBytes   = 512 << 20
+	maxVerifyListing     = 64 << 20
 )
 
 type VerifyCommand struct {
-	Argv      []string `json:"argv"`
-	Directory string   `json:"directory,omitempty"`
-	TimeoutMS int64    `json:"timeout_ms,omitempty"`
+	Argv        []string `json:"argv"`
+	Directory   string   `json:"directory,omitempty"`
+	Materialize []string `json:"materialize,omitempty"`
+	TimeoutMS   int64    `json:"timeout_ms,omitempty"`
 }
 
 type Group struct {
@@ -295,7 +301,7 @@ func Run(ctx context.Context, options Options) (result Result, err error) {
 		}
 		tree := preHookTree
 		if !options.DryRun {
-			if err := preHook.run(ctx, options.Repo, hookEnvironment(environment, target, ""), options.HookTimeout, options.Output, options.ErrorOutput); err != nil {
+			if err := preHook.run(ctx, options.Repo, hookEnvironment(environment, hookPhasePreCommit, target, ""), options.HookTimeout, options.Output, options.ErrorOutput); err != nil {
 				return result, err
 			}
 			tree, treeErr = options.Repo.Text(ctx, environment, "write-tree")
@@ -395,7 +401,7 @@ func Run(ctx context.Context, options Options) (result Result, err error) {
 			_, _ = fmt.Fprintf(options.ErrorOutput, "wip: prepare post-commit index for %s: %v\n", commit.Commit, err)
 			continue
 		}
-		if err := postHook.run(ctx, options.Repo, hookEnvironment(environment, target, commit.Commit), options.HookTimeout, options.Output, options.ErrorOutput); err != nil {
+		if err := postHook.run(ctx, options.Repo, hookEnvironment(environment, hookPhasePostCommit, target, commit.Commit), options.HookTimeout, options.Output, options.ErrorOutput); err != nil {
 			_, _ = fmt.Fprintf(options.ErrorOutput, "wip: post-commit hook failed for %s: %v\n", commit.Commit, err)
 		}
 	}
@@ -439,6 +445,13 @@ func normalizeGroups(repo gitx.Repo, input []Group, _ bool) ([]Group, []string, 
 		if err := ValidateMessageSafety(group.Message); err != nil {
 			return nil, nil, fail.Wrap("INVALID_COMMIT_MESSAGE", fmt.Errorf("group %d: %w", index+1, err))
 		}
+		for commandIndex := range group.Verify {
+			normalized, verifyErr := normalizeVerifyCommand(repo, group.Verify[commandIndex], commandIndex)
+			if verifyErr != nil {
+				return nil, nil, fail.Wrap("INVALID_VERIFY_COMMAND", fmt.Errorf("group %d: %w", index+1, verifyErr))
+			}
+			group.Verify[commandIndex] = normalized
+		}
 		paths, err := repo.NormalizePaths(group.Files)
 		if err != nil {
 			return nil, nil, err
@@ -461,6 +474,67 @@ func normalizeGroups(repo gitx.Repo, input []Group, _ bool) ([]Group, []string, 
 	}
 	sort.Strings(all)
 	return groups, all, nil
+}
+
+func normalizeVerifyCommand(repo gitx.Repo, command VerifyCommand, index int) (VerifyCommand, error) {
+	if len(command.Argv) == 0 || strings.TrimSpace(command.Argv[0]) == "" {
+		return VerifyCommand{}, fmt.Errorf("verify command %d has no executable", index+1)
+	}
+	if len(command.Argv) > maxVerifyArguments {
+		return VerifyCommand{}, fmt.Errorf("verify command %d exceeds %d arguments", index+1, maxVerifyArguments)
+	}
+	for _, argument := range command.Argv {
+		if strings.ContainsRune(argument, '\x00') {
+			return VerifyCommand{}, fmt.Errorf("verify command %d contains a NUL argument", index+1)
+		}
+	}
+	if command.TimeoutMS < 0 || command.TimeoutMS > MaxVerifyTimeout.Milliseconds() {
+		return VerifyCommand{}, fmt.Errorf("verify command %d timeout is outside the safety range", index+1)
+	}
+	if command.Directory != "" && command.Directory != "." {
+		directory, err := normalizeVerifyScope(repo, command.Directory)
+		if err != nil {
+			return VerifyCommand{}, fmt.Errorf("verify command %d directory: %w", index+1, err)
+		}
+		command.Directory = directory
+	}
+	if len(command.Materialize) > maxVerifyScopes {
+		return VerifyCommand{}, fmt.Errorf("verify command %d exceeds %d materialization scopes", index+1, maxVerifyScopes)
+	}
+	materialize := make([]string, 0, len(command.Materialize))
+	seen := map[string]bool{}
+	for _, raw := range command.Materialize {
+		scope, err := normalizeVerifyScope(repo, raw)
+		if err != nil {
+			return VerifyCommand{}, fmt.Errorf("verify command %d materialization scope: %w", index+1, err)
+		}
+		if seen[scope] {
+			return VerifyCommand{}, fmt.Errorf("verify command %d has duplicate materialization scope %q", index+1, scope)
+		}
+		seen[scope] = true
+		materialize = append(materialize, scope)
+	}
+	sort.Strings(materialize)
+	command.Materialize = materialize
+	return command, nil
+}
+
+func normalizeVerifyScope(repo gitx.Repo, raw string) (string, error) {
+	if strings.TrimSpace(raw) == "" || strings.ContainsRune(raw, '\x00') || strings.ContainsRune(raw, '\\') || filepath.IsAbs(raw) {
+		return "", fmt.Errorf("scope must be a non-empty portable repository-relative path")
+	}
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(raw)))
+	if clean != raw || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("scope %q is not canonical", raw)
+	}
+	normalized, err := repo.NormalizePaths([]string{raw})
+	if err != nil || len(normalized) != 1 || normalized[0] != raw {
+		if err != nil {
+			return "", err
+		}
+		return "", fmt.Errorf("scope %q is not canonical", raw)
+	}
+	return raw, nil
 }
 
 func privateIndex(ctx context.Context, repo gitx.Repo, root, base string, baseEnvironment []string) (string, []string, func(), error) {
@@ -564,6 +638,10 @@ func verifyTree(ctx context.Context, repo gitx.Repo, environment []string, tree 
 	if len(commands) == 0 {
 		return nil
 	}
+	paths, err := verifyMaterializationPaths(ctx, repo, environment, tree, commands, maxVerifyTreeEntries, maxVerifyTreeBytes)
+	if err != nil {
+		return err
+	}
 	scratch := ""
 	if execute {
 		createdScratch, err := os.MkdirTemp("", "wip-verify-*")
@@ -580,39 +658,15 @@ func verifyTree(ctx context.Context, repo gitx.Repo, environment []string, tree 
 		if err != nil {
 			return fail.Wrap("VERIFY_FAILED", err)
 		}
-		if _, err := repo.Text(ctx, environment, "checkout-index", "--all", "--force", "--prefix="+scratch+string(filepath.Separator)); err != nil {
-			return fail.Wrap("VERIFY_FAILED", err)
+		if err := checkoutVerifyPaths(ctx, repo, environment, scratch+string(filepath.Separator), paths); err != nil {
+			return err
 		}
 	}
 	for index, command := range commands {
-		if len(command.Argv) == 0 || strings.TrimSpace(command.Argv[0]) == "" {
-			return fail.Errorf("INVALID_VERIFY_COMMAND", "verify command %d has no executable", index+1)
-		}
-		if len(command.Argv) > maxVerifyArguments {
-			return fail.Errorf("INVALID_VERIFY_COMMAND", "verify command %d exceeds %d arguments", index+1, maxVerifyArguments)
-		}
-		for _, argument := range command.Argv {
-			if strings.ContainsRune(argument, '\x00') {
-				return fail.Errorf("INVALID_VERIFY_COMMAND", "verify command %d contains a NUL argument", index+1)
-			}
-		}
-		if strings.ContainsRune(command.Directory, '\x00') {
-			return fail.Errorf("INVALID_VERIFY_COMMAND", "verify command %d directory contains NUL", index+1)
-		}
 		directory := scratch
 		if command.Directory != "" {
-			candidate := filepath.Clean(command.Directory)
-			if filepath.IsAbs(candidate) || candidate == ".." || strings.HasPrefix(candidate, ".."+string(filepath.Separator)) {
-				return fail.Errorf("INVALID_VERIFY_COMMAND", "verify command %d directory escapes the candidate tree", index+1)
-			}
-			if !execute {
-				if candidate != "." {
-					kind, kindErr := repo.Text(ctx, environment, "cat-file", "-t", tree+":"+filepath.ToSlash(candidate))
-					if kindErr != nil || kind != "tree" {
-						return fail.Errorf("INVALID_VERIFY_COMMAND", "verify command %d directory is unavailable in the candidate tree", index+1)
-					}
-				}
-			} else {
+			candidate := filepath.FromSlash(command.Directory)
+			if execute {
 				resolved, resolveErr := filepath.EvalSymlinks(filepath.Join(scratch, candidate))
 				if resolveErr != nil {
 					return fail.Errorf("INVALID_VERIFY_COMMAND", "verify command %d directory is unavailable", index+1)
@@ -623,9 +677,6 @@ func verifyTree(ctx context.Context, repo gitx.Repo, environment []string, tree 
 				}
 				directory = resolved
 			}
-		}
-		if command.TimeoutMS < 0 || command.TimeoutMS > MaxVerifyTimeout.Milliseconds() {
-			return fail.Errorf("INVALID_VERIFY_COMMAND", "verify command %d timeout is outside the safety range", index+1)
 		}
 		if !execute {
 			continue
@@ -657,15 +708,141 @@ func verifyTree(ctx context.Context, repo gitx.Repo, environment []string, tree 
 	return nil
 }
 
+func verifyMaterializationPaths(ctx context.Context, repo gitx.Repo, environment []string, tree string, commands []VerifyCommand, maxEntries int, maxBytes int64) ([]string, error) {
+	fullTree := false
+	scopeSet := map[string]bool{}
+	for index, command := range commands {
+		if command.Directory == "." {
+			fullTree = true
+		} else if command.Directory != "" {
+			kind, kindErr := repo.Text(ctx, environment, "cat-file", "-t", tree+":"+command.Directory)
+			if kindErr != nil || kind != "tree" {
+				return nil, fail.Errorf("INVALID_VERIFY_COMMAND", "verify command %d directory is unavailable in the candidate tree", index+1)
+			}
+			scopeSet[command.Directory] = true
+		} else if len(command.Materialize) == 0 {
+			fullTree = true
+		}
+		for _, scope := range command.Materialize {
+			scopeSet[scope] = true
+		}
+	}
+	scopes := make([]string, 0, len(scopeSet))
+	for scope := range scopeSet {
+		scopes = append(scopes, scope)
+	}
+	sort.Strings(scopes)
+
+	arguments := []string{"ls-tree", "-r", "-l", "-z", "--full-tree", tree}
+	if !fullTree {
+		arguments = append(arguments, "--")
+		for _, scope := range scopes {
+			arguments = append(arguments, ":(top,literal)"+scope)
+		}
+	}
+	listing := &boundedBuffer{limit: maxVerifyListing}
+	errorsOutput := &boundedBuffer{limit: maxVerifyOutput}
+	command := process.CommandContext(ctx, "git", append([]string{"-C", repo.Root}, arguments...)...)
+	command.Env = gitx.Environment(environment)
+	command.Stdout, command.Stderr = listing, errorsOutput
+	if runErr := command.Run(); runErr != nil {
+		return nil, fail.Errorf("VERIFY_FAILED", "list candidate tree: %s", strings.TrimSpace(errorsOutput.String()))
+	}
+	if listing.Truncated() {
+		return nil, fail.Errorf("VERIFY_MATERIALIZATION_LIMIT", "candidate tree listing exceeds %d bytes", maxVerifyListing)
+	}
+	paths, _, parseErr := parseVerifyTreeListing(listing.String(), maxEntries, maxBytes)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	if !fullTree {
+		for _, scope := range scopes {
+			matched := false
+			for _, path := range paths {
+				if path == scope || strings.HasPrefix(path, scope+"/") {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return nil, fail.Errorf("INVALID_VERIFY_COMMAND", "materialization scope %q is unavailable in the candidate tree", scope)
+			}
+		}
+	}
+	return paths, nil
+}
+
+func parseVerifyTreeListing(listing string, maxEntries int, maxBytes int64) ([]string, int64, error) {
+	paths := make([]string, 0)
+	seen := map[string]bool{}
+	var totalBytes int64
+	for _, row := range strings.Split(listing, "\x00") {
+		if row == "" {
+			continue
+		}
+		metadata, path, found := strings.Cut(row, "\t")
+		fields := strings.Fields(metadata)
+		if !found || len(fields) != 4 || path == "" {
+			return nil, 0, fail.New("VERIFY_FAILED", "candidate tree listing is malformed")
+		}
+		if seen[path] {
+			continue
+		}
+		size := int64(0)
+		if fields[3] != "-" {
+			parsed, err := strconv.ParseInt(fields[3], 10, 64)
+			if err != nil || parsed < 0 {
+				return nil, 0, fail.New("VERIFY_FAILED", "candidate tree listing has an invalid object size")
+			}
+			size = parsed
+		}
+		if len(paths) >= maxEntries {
+			return nil, 0, fail.Errorf("VERIFY_MATERIALIZATION_LIMIT", "candidate tree exceeds %d materialized entries", maxEntries)
+		}
+		if size > maxBytes-totalBytes {
+			return nil, 0, fail.Errorf("VERIFY_MATERIALIZATION_LIMIT", "candidate tree exceeds %d materialized bytes", maxBytes)
+		}
+		seen[path] = true
+		paths = append(paths, path)
+		totalBytes += size
+	}
+	sort.Strings(paths)
+	return paths, totalBytes, nil
+}
+
+func checkoutVerifyPaths(ctx context.Context, repo gitx.Repo, environment []string, prefix string, paths []string) error {
+	var input bytes.Buffer
+	for _, path := range paths {
+		_, _ = input.WriteString(path)
+		_ = input.WriteByte(0)
+	}
+	errorsOutput := &boundedBuffer{limit: maxVerifyOutput}
+	command := process.CommandContext(ctx, "git", "-C", repo.Root, "checkout-index", "--force", "--stdin", "-z", "--prefix="+prefix)
+	command.Env = gitx.Environment(environment)
+	command.Stdin = &input
+	command.Stderr = errorsOutput
+	if err := command.Run(); err != nil {
+		detail := strings.TrimSpace(errorsOutput.String())
+		if detail == "" {
+			detail = err.Error()
+		}
+		return fail.Errorf("VERIFY_FAILED", "materialize candidate tree: %s", detail)
+	}
+	return nil
+}
+
 func verificationEnvironment(tree string) []string {
 	blocked := map[string]bool{
-		"GIT_INDEX_FILE":     true,
-		"WIP_AGENT":          true,
-		"WIP_CANDIDATE_TREE": true,
-		"WIP_COMMIT_OBJECT":  true,
-		"WIP_LANE":           true,
-		"WIP_SESSION":        true,
-		"WIP_TARGET_REF":     true,
+		"GIT_INDEX_FILE":       true,
+		"WIP_AGENT":            true,
+		"WIP_CAPTURE":          true,
+		"WIP_CANDIDATE_TREE":   true,
+		"WIP_COMMIT_OBJECT":    true,
+		"WIP_HOOK_PHASE":       true,
+		"WIP_LANE":             true,
+		"WIP_SESSION":          true,
+		"WIP_SOURCE_READ_ONLY": true,
+		"WIP_TARGET_REF":       true,
 	}
 	inherited := gitx.Environment(nil)
 	environment := make([]string, 0, len(inherited)+1)
@@ -679,9 +856,10 @@ func verificationEnvironment(tree string) []string {
 }
 
 type boundedBuffer struct {
-	mu     sync.Mutex
-	buffer bytes.Buffer
-	limit  int
+	mu        sync.Mutex
+	buffer    bytes.Buffer
+	limit     int
+	truncated bool
 }
 
 func (buffer *boundedBuffer) Write(value []byte) (int, error) {
@@ -691,11 +869,20 @@ func (buffer *boundedBuffer) Write(value []byte) (int, error) {
 	remaining := buffer.limit - buffer.buffer.Len()
 	if remaining > 0 {
 		if len(value) > remaining {
+			buffer.truncated = true
 			value = value[:remaining]
 		}
 		_, _ = buffer.buffer.Write(value)
+	} else if len(value) > 0 {
+		buffer.truncated = true
 	}
 	return original, nil
+}
+
+func (buffer *boundedBuffer) Truncated() bool {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.truncated
 }
 
 func (buffer *boundedBuffer) String() string {

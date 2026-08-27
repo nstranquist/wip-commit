@@ -19,10 +19,12 @@ import (
 )
 
 const (
-	DefaultHookTimeout = 2 * time.Minute
-	MaxHookTimeout     = 24 * time.Hour
-	maxHookBytes       = 4 << 20
-	preflightReadOnly  = "NICOS_PREFLIGHT_READ_ONLY"
+	DefaultHookTimeout  = 2 * time.Minute
+	MaxHookTimeout      = 24 * time.Hour
+	maxHookBytes        = 4 << 20
+	preflightReadOnly   = "NICOS_PREFLIGHT_READ_ONLY"
+	hookPhasePreCommit  = "pre-commit"
+	hookPhasePostCommit = "post-commit"
 )
 
 type hookSnapshot struct {
@@ -160,17 +162,29 @@ func hooksDigest(hooks ...boundHook) string {
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil))
 }
 
-func hookEnvironment(privateEnvironment []string, target, object string) []string {
-	environment := make([]string, 0, len(privateEnvironment)+3)
+func hookEnvironment(privateEnvironment []string, phase, target, object string) []string {
+	blocked := map[string]bool{
+		preflightReadOnly:      true,
+		"WIP_CAPTURE":          true,
+		"WIP_COMMIT_OBJECT":    true,
+		"WIP_HOOK_PHASE":       true,
+		"WIP_SOURCE_READ_ONLY": true,
+		"WIP_TARGET_REF":       true,
+	}
+	environment := make([]string, 0, len(privateEnvironment)+6)
 	for _, entry := range privateEnvironment {
 		name, _, _ := strings.Cut(entry, "=")
-		if strings.EqualFold(name, preflightReadOnly) {
-			continue
+		if !blocked[strings.ToUpper(name)] {
+			environment = append(environment, entry)
 		}
-		environment = append(environment, entry)
 	}
-	environment = append(environment, preflightReadOnly+"=1")
-	environment = append(environment, "WIP_TARGET_REF="+target)
+	environment = append(environment,
+		preflightReadOnly+"=1",
+		"WIP_CAPTURE=1",
+		"WIP_HOOK_PHASE="+phase,
+		"WIP_SOURCE_READ_ONLY=1",
+		"WIP_TARGET_REF="+target,
+	)
 	if strings.TrimSpace(object) != "" {
 		environment = append(environment, "WIP_COMMIT_OBJECT="+object)
 	}
