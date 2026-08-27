@@ -15,8 +15,8 @@ import (
 // capture intents from baseCommit through tipCommit. It fails on a gap,
 // ambiguity, foreign branch, moved ref, invalid record, or invalid Git object.
 func CompleteIntentChain(ctx context.Context, repo gitx.Repo, targetRef, baseCommit, tipCommit string) ([]Intent, error) {
-	if !validIntentTargetRef(targetRef) || !intentObjectPattern.MatchString(baseCommit) || !intentObjectPattern.MatchString(tipCommit) || baseCommit == tipCommit {
-		return nil, fail.New("INVALID_HANDOFF_CHAIN", "handoff chain identity is invalid or empty")
+	if !validIntentTargetRef(targetRef) || !intentObjectPattern.MatchString(baseCommit) || !intentObjectPattern.MatchString(tipCommit) {
+		return nil, fail.New("INVALID_HANDOFF_CHAIN", "handoff chain identity is invalid")
 	}
 	actual, err := repo.Text(ctx, nil, "rev-parse", "--verify", targetRef+"^{commit}")
 	if err != nil {
@@ -24,6 +24,9 @@ func CompleteIntentChain(ctx context.Context, repo gitx.Repo, targetRef, baseCom
 	}
 	if actual != tipCommit {
 		return nil, fail.New("REF_MOVED", "lane ref changed before cumulative handoff validation")
+	}
+	if baseCommit == tipCommit {
+		return []Intent{}, nil
 	}
 
 	directory := filepath.Join(repo.CommonDir, "wip", "v1", "intents")

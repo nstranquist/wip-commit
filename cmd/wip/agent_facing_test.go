@@ -33,6 +33,16 @@ func TestLaneJSONAlwaysSerializesLeaseExpiry(t *testing.T) {
 	}
 }
 
+func TestHandoffReportsNotReadyForUnmovedLane(t *testing.T) {
+	directory := cliTestRepo(t)
+	initializeCLI(t, directory, "empty-handoff", "core.txt")
+
+	result := runCLI(t, []string{"--json", "--repo-dir", directory, "handoff", "--lane", "empty-handoff"}, "")
+	if result.code == 0 || result.envelope.Error == nil || result.envelope.Error.Code != "HANDOFF_NOT_READY" {
+		t.Fatalf("empty handoff = %#v stderr=%s", result.envelope, result.stderr)
+	}
+}
+
 func TestReviewedPlanCaptureProducesBoundPrivateHandoff(t *testing.T) {
 	directory := cliTestRepo(t)
 	writeCLI(t, directory, "core.txt", "new core\n")

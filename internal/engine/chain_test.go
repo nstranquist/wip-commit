@@ -32,6 +32,21 @@ func TestCompleteIntentChainBindsEveryCaptureFromLaneBaseToTip(t *testing.T) {
 	}
 }
 
+func TestCompleteIntentChainTreatsUnmovedLaneAsEmpty(t *testing.T) {
+	repo := engineTestRepo(t)
+	base := engineGit(t, repo.Root, "rev-parse", "HEAD")
+	target := "refs/heads/wip/agent/empty"
+	engineGit(t, repo.Root, "update-ref", target, base, "")
+
+	chain, err := CompleteIntentChain(context.Background(), repo, target, base, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chain) != 0 {
+		t.Fatalf("chain = %#v, want empty", chain)
+	}
+}
+
 func TestCompleteIntentChainFailsOnMissingSegment(t *testing.T) {
 	repo := engineTestRepo(t)
 	base := engineGit(t, repo.Root, "rev-parse", "HEAD")
