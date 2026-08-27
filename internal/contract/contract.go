@@ -23,7 +23,9 @@ var capabilities = []string{
 	"coordination.migration.v1",
 	"doctor.v1",
 	"handoff.v2.cumulative-capture-only",
+	"hook.environment.v1",
 	"install.digest-upgrade.v1",
+	"lane.init.anchor-recovery.v1",
 	"lane.init.v1",
 	"lease.claim.v1",
 	"plan.v3.observe",
@@ -36,6 +38,7 @@ var capabilities = []string{
 	"state.profile.v2",
 	"state.reader-floor.v1",
 	"status.v2.observe",
+	"verify.materialization.v1",
 	"version.v2.provenance",
 }
 
