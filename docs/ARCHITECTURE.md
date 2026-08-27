@@ -49,19 +49,23 @@ store and refs through the Git common directory.
 
 Git subprocesses remove inherited repository-local environment variables that
 can redirect or reinterpret the repository, common directory, worktree,
-namespace, refs, shallow boundary, configuration, or object storage. Discovery
-and capture therefore stay bound to the canonical checkout. An inherited
-`GIT_INDEX_FILE` remains the caller view only for `staged_index` source mode.
-The capture transaction supplies its private index explicitly to Git and
-prepared hooks. Prepared hooks also receive a forced
-`NICOS_PREFLIGHT_READ_ONLY=1` value, the lane target ref, and, for post-commit,
-the exact commit object. The read-only value is a cooperative signal and does
-not sandbox repository code. A `worktree_snapshot` uses a separate temporary
-source index.
+namespace, refs, shallow boundary, configuration, object storage, or pathspec
+mode. Discovery and capture therefore stay bound to the canonical checkout. An
+inherited `GIT_INDEX_FILE` remains the caller view only for `staged_index`
+source mode. The capture transaction supplies its private index explicitly to
+Git and prepared hooks. Prepared hooks receive canonical capture, hook-phase,
+target-ref, source-read-only, and exact post-commit object markers. The forced
+read-only value is a cooperative signal; it does not sandbox repository code.
+A `worktree_snapshot` uses a separate temporary source index.
 
 Candidate verification commands remove the active WIP identity, target ref,
 commit object, caller index, and stale candidate-tree variables. They receive
 only the current `WIP_CANDIDATE_TREE` value from the capture process.
+Their directory is an implicit candidate-tree materialization scope. The plan
+can add exact repository-relative dependencies with `materialize`. A command
+with neither field requests the full tree. The kernel uses literal pathspecs,
+counts immutable tree entries and blob bytes before disk writes, and supplies
+selected paths to `checkout-index` as NUL-delimited input.
 
 `<git-common-dir>/wip/domain.json` owns the state version. A shared
 `wip-coordination.lock` serializes public and legacy domain creation. The
@@ -231,7 +235,8 @@ For one split plan, `wip` performs these steps:
 7. Create a private index from the current lane commit.
 8. For each group, copy only its exact source entries into the private index.
 9. Run the copied pre-commit hook, check the changed-path scope, run `git diff
-   --check`, and run verify commands in a candidate-tree checkout.
+   --check`, bound and materialize the reviewed candidate-tree scopes, and run
+   verify commands in that checkout.
 10. Create each commit with `git commit-tree`. No ref points to the partial chain.
 11. Recheck the lane, lease set, source `HEAD`, selected source digest, and hook
     paths. This second source check detects changes during the transaction.
@@ -330,7 +335,9 @@ digest, active leases, and message policy.
 
 Each group contains review guidance, an empty draft message, exact files, and
 optional verify commands. A reviewer adds messages and changes `state` to
-`reviewed`.
+`reviewed`. Each verify command can set a working `directory` and additional
+repository-relative `materialize` scopes. These paths affect only the candidate
+checkout used by verification.
 
 `wip capture` accepts only this object. It calculates a canonical SHA-256 plan
 digest. A new capture stores that digest and its private-source binding in

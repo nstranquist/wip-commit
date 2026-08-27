@@ -42,6 +42,7 @@
 | `HOOK_SOURCE_MOVED` | A hook path changed during capture | Inspect the hook and rerun from a stable source |
 | `HOOK_TIMEOUT` | A hook exceeded its limit | Fix the hook or pass a reviewed larger timeout |
 | `VERIFY_FAILED` | A candidate-tree command failed | Fix the candidate change and rerun the whole plan |
+| `VERIFY_MATERIALIZATION_LIMIT` | A verify command requested more than 16,384 candidate entries or 512 MiB | Set the smallest `directory`, add only required `materialize` dependencies, and review a new plan |
 | `VERIFY_TIMEOUT` | A verify command exceeded its limit | Fix the command or pass a reviewed larger timeout |
 | `GIT_FAILED` | Git failed to inspect the selected source or Git objects | Fix the reported repository error, then run the exact command again |
 | `DIFF_CHECK_FAILED` | Git failed to complete the candidate whitespace check | Fix the reported Git error. Do not treat the check as passed |
