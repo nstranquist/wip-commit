@@ -233,6 +233,12 @@ one writer fence and one journal. It publishes canonical records before it
 moves and seals the complete legacy root. It never dual-writes both roots and
 never grants landing authority.
 
+The completion receipt is immutable cutover evidence. It is not a lock on the
+future live store. Completed migration status reports later live-store
+movement, skips transient private-index contents, and keeps the static
+migration envelope exact. Current record health remains the responsibility of
+the bounded doctor.
+
 The store rejects unsupported state-directory and record-schema versions. It
 checks the directory version before it creates local state. This rule prevents
 an older binary from silently coordinating through a separate state version.
