@@ -155,7 +155,21 @@ func InspectStatus(repo gitx.Repo, migrationID string) (Status, error) {
 		return Status{}, fail.New("MIGRATION_STATUS_INVALID", "rollback marker and completion receipt cannot coexist")
 	}
 	if planExists && journalExists && journal.MigrationID == migrationID {
-		if err := verifyCanonicalTransition(repo.CommonDir, plan, journal, phaseRequiresCanonicalPost(journal.Phase)); err != nil {
+		if status.Receipt != nil && journal.Phase == phaseComplete {
+			current, err := manifestCanonicalData(repo.CommonDir)
+			if err != nil {
+				return Status{}, fail.Wrap("MIGRATION_CANONICAL_MOVED", err)
+			}
+			// A completion receipt is historical cutover proof. Current writers
+			// can change the two live data roots after the writer fence is gone.
+			// Keep the static migration envelope exact, and report live-store
+			// movement instead of treating it as an interrupted migration.
+			if err := verifyCompletedCanonicalEnvelope(repo.CommonDir, plan, journal); err != nil {
+				return Status{}, fail.Wrap("MIGRATION_CANONICAL_MOVED", err)
+			}
+			status.CurrentCanonicalManifestDigest = current.Digest
+			status.CanonicalAdvanced = current.Digest != status.Receipt.CanonicalManifest
+		} else if err := verifyCanonicalTransition(repo.CommonDir, plan, journal, phaseRequiresCanonicalPost(journal.Phase)); err != nil {
 			return Status{}, fail.Wrap("MIGRATION_CANONICAL_MOVED", err)
 		}
 	}

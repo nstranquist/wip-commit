@@ -18,7 +18,13 @@ import (
 	"github.com/nstranquist/wip-commit/internal/safeio"
 )
 
+type manifestTreeFilter func(relative string, info os.FileInfo) (skipDirectory bool, err error)
+
 func manifestTree(commonDir, logicalRoot string) (TreeManifest, error) {
+	return manifestTreeFiltered(commonDir, logicalRoot, nil)
+}
+
+func manifestTreeFiltered(commonDir, logicalRoot string, filter manifestTreeFilter) (TreeManifest, error) {
 	manifest := TreeManifest{LogicalRoot: filepath.ToSlash(logicalRoot), Entries: []ManifestEntry{}}
 	root, err := confinedPath(commonDir, logicalRoot)
 	if err != nil {
@@ -53,6 +59,16 @@ func manifestTree(commonDir, logicalRoot string) (TreeManifest, error) {
 			return err
 		}
 		relative = filepath.ToSlash(relative)
+		skipDirectory := false
+		if filter != nil {
+			skipDirectory, err = filter(relative, info)
+			if err != nil {
+				return err
+			}
+			if skipDirectory && !info.IsDir() {
+				return fmt.Errorf("manifest filter cannot skip non-directory path %s", filepath.ToSlash(filepath.Join(logicalRoot, relative)))
+			}
+		}
 		item := ManifestEntry{Path: relative, Mode: modeString(info.Mode())}
 		switch {
 		case info.Mode()&os.ModeSymlink != 0:
@@ -75,6 +91,9 @@ func manifestTree(commonDir, logicalRoot string) (TreeManifest, error) {
 			return fmt.Errorf("manifest rejects non-regular path %s", filepath.ToSlash(filepath.Join(logicalRoot, relative)))
 		}
 		manifest.Entries = append(manifest.Entries, item)
+		if skipDirectory && relative != "." {
+			return filepath.SkipDir
+		}
 		return nil
 	})
 	if err != nil {

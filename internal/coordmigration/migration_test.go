@@ -1070,16 +1070,22 @@ func TestResumeAndStatusRejectCanonicalDrift(t *testing.T) {
 			t.Fatalf("canonical drift was accepted on resume: %v (%s)", err, fail.Code(err))
 		}
 	})
-	t.Run("status", func(t *testing.T) {
+	t.Run("incomplete status", func(t *testing.T) {
 		repo, head := migrationTestRepo(t)
 		writeLegacyFixture(t, repo, head)
 		plan := mustPreview(t, repo)
-		if _, err := applyForTest(context.Background(), repo, plan, plan.PlanDigest, ApplyOptions{}); err != nil {
+		_, err := applyForTest(context.Background(), repo, plan, plan.PlanDigest, ApplyOptions{AfterPhase: func(phase string) error {
+			if phase == phaseRecordsPublished {
+				return errors.New("stop after records")
+			}
+			return nil
+		}})
+		if fail.Code(err) != "MIGRATION_INTERRUPTED" {
 			t.Fatal(err)
 		}
 		writeTestFile(t, filepath.Join(repo.CommonDir, "wip", "v1", "lanes", "lane1.json"), []byte("{}\n"), 0o600)
 		if _, err := InspectStatus(repo, plan.MigrationID); fail.Code(err) != "MIGRATION_CANONICAL_MOVED" {
-			t.Fatalf("status accepted canonical drift: %v (%s)", err, fail.Code(err))
+			t.Fatalf("incomplete status accepted canonical drift: %v (%s)", err, fail.Code(err))
 		}
 	})
 	t.Run("resume rejects envelope sibling", func(t *testing.T) {
@@ -1151,6 +1157,74 @@ func TestResumeAndStatusRejectCanonicalDrift(t *testing.T) {
 			t.Fatalf("rollback mutated outputs before verification: %v", statErr)
 		}
 	})
+}
+
+func TestCompletedMigrationStatusReportsPostCutoverAdvance(t *testing.T) {
+	repo, head := migrationTestRepo(t)
+	writeLegacyFixture(t, repo, head)
+	plan := mustPreview(t, repo)
+	if _, err := applyForTest(context.Background(), repo, plan, plan.PlanDigest, ApplyOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	initial, err := InspectStatus(repo, plan.MigrationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initial.State != "complete" || initial.Receipt == nil || initial.CanonicalAdvanced || initial.CurrentCanonicalManifestDigest != initial.Receipt.CanonicalManifest {
+		t.Fatalf("unexpected initial completed status: %#v", initial)
+	}
+
+	laneStore, err := store.Open(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := laneStore.Renew("lane1", "agent1", "session1"); err != nil {
+		t.Fatal(err)
+	}
+	privateIndex := filepath.Join(repo.CommonDir, "wip", "indexes", "capture", "index")
+	writeTestFile(t, privateIndex, []byte("transient private index\n"), 0o600)
+
+	advanced, err := InspectStatus(repo, plan.MigrationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := manifestCanonicalData(repo.CommonDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if advanced.State != "complete" || advanced.Receipt == nil || !advanced.CanonicalAdvanced {
+		t.Fatalf("post-cutover writer did not produce advanced completed status: %#v", advanced)
+	}
+	if advanced.CurrentCanonicalManifestDigest != current.Digest || advanced.CurrentCanonicalManifestDigest == advanced.Receipt.CanonicalManifest {
+		t.Fatalf("post-cutover manifest was not reported exactly: status=%#v current=%s", advanced, current.Digest)
+	}
+}
+
+func TestCompletedMigrationStatusRejectsUnsafePrivateIndexRoot(t *testing.T) {
+	repo, head := migrationTestRepo(t)
+	writeLegacyFixture(t, repo, head)
+	plan := mustPreview(t, repo)
+	if _, err := applyForTest(context.Background(), repo, plan, plan.PlanDigest, ApplyOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(repo.CommonDir, "wip", "indexes"), []byte("not a directory\n"), 0o600)
+	if _, err := InspectStatus(repo, plan.MigrationID); fail.Code(err) != "MIGRATION_CANONICAL_MOVED" {
+		t.Fatalf("completed status accepted an unsafe private-index root: %v (%s)", err, fail.Code(err))
+	}
+}
+
+func TestCompletedMigrationStatusStillRejectsEnvelopeDrift(t *testing.T) {
+	repo, head := migrationTestRepo(t)
+	writeLegacyFixture(t, repo, head)
+	plan := mustPreview(t, repo)
+	if _, err := applyForTest(context.Background(), repo, plan, plan.PlanDigest, ApplyOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(repo.CommonDir, "wip", "unexpected.json"), []byte("{}\n"), 0o600)
+	if _, err := InspectStatus(repo, plan.MigrationID); fail.Code(err) != "MIGRATION_CANONICAL_MOVED" {
+		t.Fatalf("completed status accepted migration-envelope drift: %v (%s)", err, fail.Code(err))
+	}
 }
 
 func TestInterruptedMigrationFenceBlocksCurrentWriters(t *testing.T) {

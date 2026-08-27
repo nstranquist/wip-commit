@@ -293,6 +293,33 @@ func verifyCanonicalEnvelope(commonDir string, plan Plan, journal Journal) error
 	if err != nil {
 		return err
 	}
+	return verifyCanonicalEnvelopeManifest(commonDir, plan, journal, current, false)
+}
+
+// verifyCompletedCanonicalEnvelope protects immutable migration evidence while
+// excluding the live data roots and transient private-index contents. The
+// excluded roots must remain regular mode-0700 directories. Their record-level
+// health belongs to the current-state doctor, not the historical migration.
+func verifyCompletedCanonicalEnvelope(commonDir string, plan Plan, journal Journal) error {
+	current, err := manifestTreeFiltered(commonDir, "wip", func(relative string, info os.FileInfo) (bool, error) {
+		relative = filepath.ToSlash(relative)
+		switch relative {
+		case "v1", "review/v1", "indexes":
+			if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || modeString(info.Mode()) != "0700" {
+				return false, fmt.Errorf("post-cutover runtime root %s is not a regular mode-0700 directory", relative)
+			}
+			return true, nil
+		default:
+			return false, nil
+		}
+	})
+	if err != nil {
+		return err
+	}
+	return verifyCanonicalEnvelopeManifest(commonDir, plan, journal, current, true)
+}
+
+func verifyCanonicalEnvelopeManifest(commonDir string, plan Plan, journal Journal, current TreeManifest, allowPostCutoverRuntime bool) error {
 	before := fullManifestEntries(plan.ExpectedCanonical, "wip")
 	got := fullManifestEntries(current, "wip")
 	allowed, err := migrationOutputEntries(commonDir, plan, current)
@@ -311,7 +338,7 @@ func verifyCanonicalEnvelope(commonDir string, plan Plan, journal Journal) error
 		}
 		// The exact data-root transition was verified separately above. Keep
 		// the envelope check responsible for every parent and sibling path.
-		if canonicalDataPath(path) {
+		if canonicalDataPath(path) || allowPostCutoverRuntime && postCutoverRuntimePath(path) {
 			continue
 		}
 		variants, ok := allowed[path]
@@ -330,6 +357,9 @@ func verifyCanonicalEnvelope(commonDir string, plan Plan, journal Journal) error
 		}
 	}
 	for path, expected := range before {
+		if allowPostCutoverRuntime && (canonicalDataPath(path) || postCutoverRuntimePath(path)) {
+			continue
+		}
 		if actual, ok := got[path]; !ok || !equivalentManifestEntry(expected, actual) && !canonicalDataPath(path) {
 			return fmt.Errorf("canonical prestate path disappeared or changed: %s", path)
 		}
@@ -445,6 +475,10 @@ func equivalentManifestEntry(left, right ManifestEntry) bool {
 
 func canonicalDataPath(path string) bool {
 	return path == "wip/v1" || lenPrefix(path, "wip/v1/") || path == "wip/review/v1" || lenPrefix(path, "wip/review/v1/")
+}
+
+func postCutoverRuntimePath(path string) bool {
+	return path == "wip/indexes" || lenPrefix(path, "wip/indexes/")
 }
 
 func migrationReceiptRelativePath(migrationID string) string {

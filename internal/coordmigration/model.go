@@ -17,7 +17,7 @@ import (
 
 const (
 	PlanSchemaVersion     = "wip.coordination-migration-plan/1.2.0"
-	StatusSchemaVersion   = "wip.coordination-migration-status/1.0.0"
+	StatusSchemaVersion   = "wip.coordination-migration-status/1.1.0"
 	JournalSchemaVersion  = "wip.coordination-migration-journal/1.1.0"
 	RollbackSchemaVersion = "wip.coordination-migration-rollback/1.0.0"
 	ReceiptSchemaVersion  = "wip.coordination-migration-receipt/1.0.0"
@@ -232,17 +232,19 @@ type Receipt struct {
 }
 
 type Status struct {
-	SchemaVersion string          `json:"schema_version"`
-	State         string          `json:"state"`
-	MigrationID   string          `json:"migration_id,omitempty"`
-	PlanDigest    string          `json:"plan_digest,omitempty"`
-	Phase         string          `json:"phase,omitempty"`
-	LegacyExists  bool            `json:"legacy_exists"`
-	Canonical     bool            `json:"canonical_domain"`
-	Review        bool            `json:"review_store"`
-	Archive       bool            `json:"sealed_archive"`
-	Rollback      *RollbackMarker `json:"rollback,omitempty"`
-	Receipt       *Receipt        `json:"receipt,omitempty"`
+	SchemaVersion                  string          `json:"schema_version"`
+	State                          string          `json:"state"`
+	MigrationID                    string          `json:"migration_id,omitempty"`
+	PlanDigest                     string          `json:"plan_digest,omitempty"`
+	Phase                          string          `json:"phase,omitempty"`
+	LegacyExists                   bool            `json:"legacy_exists"`
+	Canonical                      bool            `json:"canonical_domain"`
+	Review                         bool            `json:"review_store"`
+	Archive                        bool            `json:"sealed_archive"`
+	CurrentCanonicalManifestDigest string          `json:"current_canonical_manifest_digest,omitempty"`
+	CanonicalAdvanced              bool            `json:"canonical_advanced"`
+	Rollback                       *RollbackMarker `json:"rollback,omitempty"`
+	Receipt                        *Receipt        `json:"receipt,omitempty"`
 }
 
 type Result struct {
