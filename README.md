@@ -215,7 +215,8 @@ writes a durable initialization intent before it changes a worktree, lane,
 lease, profile, binary, or skill. Each completed step is idempotent. If setup
 stops, the error includes the intent path, completed steps, and an exact resume
 command. The command pins the absolute repository and worktree paths and the
-resolved base commit ID.
+resolved base commit ID. If a retry starts inside the created linked worktree,
+`wip` resolves the primary checkout and keeps the same immutable setup.
 
 An exact retry repeats the full canonical path claim. This action repairs an
 interruption between lease publication and the lane back-reference.
@@ -377,7 +378,12 @@ group. Then change the top-level `state` from `draft` to `reviewed`.
       "message": "fix(parser): preserve source error locations",
       "files": ["internal/parser/errors.go"],
       "verify": [
-        {"argv": ["go", "test", "./internal/parser"], "timeout_ms": 120000}
+        {
+          "argv": ["go", "test", "."],
+          "directory": "internal/parser",
+          "materialize": ["go.mod", "go.sum"],
+          "timeout_ms": 120000
+        }
       ]
     },
     {
@@ -399,6 +405,13 @@ wip --json capture --plan plan.json
 
 `wip capture` recalculates the lane, source, path, lease, and policy bindings
 before hooks run. It rejects a draft or stale plan.
+
+A verify command's `directory` implicitly materializes that candidate subtree.
+The optional `materialize` array adds reviewed repository-relative files or
+subtrees, such as module metadata. A root command with neither field requests
+the complete candidate tree. Before it creates a scratch checkout, `wip`
+rejects a request above 16,384 entries or 512 MiB. Materialized dependencies
+are inputs to verification; they do not become captured paths.
 
 The result contains the capture receipt and a typed handoff. The handoff is
 capture-only evidence. It does not authorize landing, merging, or pushing.
@@ -622,10 +635,10 @@ A `worktree_snapshot` capture does not stage or unstage any path.
 
 `wip` ignores inherited repository-local Git variables that can redirect or
 reinterpret the repository, common directory, worktree, namespace, refs,
-shallow boundary, configuration, or object storage. The canonical repository
-selected by `--repo-dir` or the current directory wins. It honors an inherited
-`GIT_INDEX_FILE` as the caller index for `staged_index` source mode. Capture
-hooks receive the private candidate index instead.
+shallow boundary, configuration, object storage, or pathspec behavior. The
+canonical repository selected by `--repo-dir` or the current directory wins.
+It honors an inherited `GIT_INDEX_FILE` as the caller index for `staged_index`
+source mode. Capture hooks receive the private candidate index instead.
 
 You can modify a later version of the same leased path. The next capture
 compares the selected source with the current lane commit. Do not run a broad
@@ -687,6 +700,12 @@ command in `verify` can still use the network.
 A `verify` command does not inherit the active WIP lane identity or source
 `GIT_INDEX_FILE`. It receives only `WIP_CANDIDATE_TREE` from `wip`. This rule
 prevents a nested command from selecting the host capture lane by accident.
+
+A copied hook receives one canonical value for `WIP_CAPTURE=1`,
+`WIP_SOURCE_READ_ONLY=1`, `WIP_HOOK_PHASE`, and `WIP_TARGET_REF`.
+Post-commit hooks also receive `WIP_COMMIT_OBJECT`. Caller values for these
+names are removed before the hook starts. Repositories can use the read-only
+marker to prevent a capture hook from changing source-side generated files.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the transaction model,
 [docs/ERRORS.md](docs/ERRORS.md) for recovery actions, and

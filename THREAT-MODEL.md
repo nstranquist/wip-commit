@@ -167,9 +167,12 @@ review authority must bind any landing decision to the full handoff digest.
 the path. It requires a regular non-symlink file and limits it to 4 MiB. It then
 copies the hook to a private mode-`0700` path. It validates the original path
 again before the ref update. The copied hook runs with the private index and a
-forced `NICOS_PREFLIGHT_READ_ONLY=1` value. Compatible hook wrappers use this
-value to inspect the candidate without applying repairs to the source checkout.
-The value is a cooperative contract. It does not restrict arbitrary hook code.
+forced `NICOS_PREFLIGHT_READ_ONLY=1` value. It also receives canonical capture,
+phase, target-ref, and source-read-only markers. Caller values for those names
+are removed first. A post-commit hook also receives the exact commit object.
+Compatible hook wrappers use the read-only markers to inspect the candidate
+without applying repairs to the source checkout. These values are a cooperative
+contract. They do not restrict arbitrary hook code.
 
 On Windows, Git 2.36 or newer runs the private hook so that Git for Windows can
 apply its normal interpreter rules.
@@ -177,10 +180,15 @@ apply its normal interpreter rules.
 ### Verify commands
 
 Plan commands use typed argument arrays. They do not pass through a shell. Each
-command runs in a temporary checkout of the candidate private index. A command
-directory cannot be absolute, escape with `..`, or follow a symlink outside the
-candidate tree. Time, argument, output, command-count, group-count, path-count,
-and plan-size limits are enforced.
+command runs in a temporary checkout of the candidate private index. Its
+directory is an implicit materialization scope. A reviewed `materialize` array
+can add repository-relative dependencies. A root command with no explicit
+scope requests the full tree. `wip` enumerates the immutable candidate tree and
+enforces the 16,384-entry and 512 MiB limits before it creates the checkout. It
+passes selected paths to Git as NUL-delimited input. A command directory cannot
+be absolute, escape with `..`, or follow a symlink outside the candidate tree.
+Time, argument, output, scope-count, command-count, group-count, path-count,
+tree-entry, tree-byte, and plan-size limits are enforced.
 
 On Unix, a timed-out command kills its process group. Other platforms use Go's
 bounded process wait behavior.
@@ -221,8 +229,9 @@ POSIX or PowerShell quoting. An invalid lane ID fails before path construction.
 Git commands remove inherited repository-local environment variables except
 the caller index selector for `staged_index`. A caller cannot use routing,
 configuration, namespace, replacement, shallow-file, or object-storage
-variables to redirect `--repo-dir`. Prepared hooks receive only the private
-candidate index for their Git operations.
+variables to redirect `--repo-dir`. Git pathspec mode variables are also
+removed, and verifier scopes use literal top-level pathspecs. Prepared hooks
+receive only the private candidate index for their Git operations.
 
 The public and legacy implementations use one domain lock. Public state and
 legacy `ndev-wip` state cannot start beside each other. Read-only legacy checks
