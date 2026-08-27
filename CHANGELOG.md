@@ -62,6 +62,10 @@ Planned first prerelease: `v0.2.0-beta.1`.
 - Capture-intent schema version 3 with read compatibility for versions 1 and 2.
 - Migration status schema version 1.1.0 with separate historical cutover and
   current live-store manifest digests.
+- A canonical copied-hook environment with capture, phase, target-ref, commit,
+  and source-read-only markers. Caller values cannot override these markers.
+- Reviewed verifier materialization scopes with pre-checkout entry and byte
+  limits, literal Git pathspecs, and NUL-delimited checkout input.
 
 ### Changed
 
@@ -81,6 +85,9 @@ Planned first prerelease: `v0.2.0-beta.1`.
 - Interactive initialization now recommends one linked worktree per task.
 - Worktree initialization now requires a destination and reports where to
   continue. `env` rejects another checkout before lease renewal.
+- A worktree initialization retry can start inside its existing linked
+  worktree. It resolves and reports the primary checkout as the recovery
+  anchor.
 - Handoff validation, active renewal, and final guided release now keep one
   continuous lane lock. Completed receipts always revalidate Git objects.
 - Handoff output now validates the unique complete lane chain from base to tip.
