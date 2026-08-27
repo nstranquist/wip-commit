@@ -528,6 +528,13 @@ It copies review records into `<git-common-dir>/wip/review/v1`. The review store
 includes immutable `handoffs/` and `plans/` directories. It moves the legacy
 store into a sealed, read-only archive after the new records are durable.
 
+An active legacy lane is stale when it has no leases, or when all its exact
+active leases have expired. The migration gives the lane and its leases an
+`archive-only` disposition. It preserves the lane ref and binds its exact SHA
+in the plan. A ref that advanced only from the stored cursor is also preserved
+and bound. A missing ref, a diverged ref, or a moved ref with a live lease
+blocks the migration.
+
 Use `--resume` with the same plan after an interruption. Use `--rollback` only
 before the legacy source moves. The command never dual-writes both domains and
 never grants landing authority.
