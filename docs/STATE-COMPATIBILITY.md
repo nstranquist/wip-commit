@@ -181,6 +181,21 @@ Use this procedure only for the legacy NDev root at
 9. Require a complete receipt and a sealed legacy archive.
 10. Run `wip --json doctor` with the source-matched command.
 
+Migration status schema `wip.coordination-migration-status/1.1.0` separates the
+historical cutover manifest from the current live-store manifest. A complete
+status keeps the cutover digest in `receipt.canonical_manifest_digest`. It
+reports the current digest in `current_canonical_manifest_digest`. The
+`canonical_advanced` field is true when those digests differ after a valid
+post-cutover writer changes the live store. This difference is not a migration
+failure. Completed status also excludes transient `wip/indexes` content from
+the historical comparison. It still requires the private-index root to be a
+regular mode-0700 directory. Run `wip --json doctor` to validate the current
+records.
+
+Before the completion receipt and final journal phase exist, migration status
+still requires the exact reviewed canonical manifest. It also rejects a change
+to the static migration envelope after completion.
+
 Apply writes a plan-bound writer fence before it publishes canonical records.
 All capture-store writers stop while that fence is active. The migration
 publishes the exact regular `wip/v1/locks/leases.lock` artifact before imported

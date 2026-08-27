@@ -75,6 +75,15 @@ the registry lock before it publishes imported lane and lease records. It then
 moves the complete legacy root into a sealed archive. The migration never
 writes to both coordination roots.
 
+The completion receipt keeps the exact canonical manifest from cutover. Before
+the journal reaches `complete`, status requires that exact manifest. After
+completion, normal capture and review writers can change the live `v1` roots.
+Migration status reports the current manifest and sets `canonical_advanced`
+when it differs from the receipt. It still checks the immutable plan,
+journal, receipt, archive, domain marker, and static migration envelope.
+Transient private-index contents are outside the historical comparison. Their
+`wip/indexes` root must remain a regular mode-`0700` directory.
+
 Lane refs have this form:
 
 ```text

@@ -216,11 +216,13 @@
       "status": "verified",
       "owner": "maintainer",
       "human_gate": false,
-      "acceptance": "The project documents schema support, upgrade behavior, downgrade behavior, and fail-closed migration errors. Coordination migration uses a byte-pure preview and one digest-bound plan. It uses one writer fence and a manifest-bound registry lock. It also creates immutable review-plan and handoff directories and a sealed legacy archive.",
+      "acceptance": "The project documents schema support, upgrade behavior, downgrade behavior, and fail-closed migration errors. Coordination migration uses a byte-pure preview and one digest-bound plan. It uses one writer fence and a manifest-bound registry lock. It also creates immutable review-plan and handoff directories and a sealed legacy archive. Completed migration status preserves the exact cutover receipt while reporting later live-store movement separately.",
       "evidence": [
         {"kind": "artifact", "value": "docs/STATE-COMPATIBILITY.md and docs/ERRORS.md", "observed_on": "2026-08-14"},
         {"kind": "test", "value": "TestFutureStateDirectoryFailsBeforeV1Creation, TestUnknownVersionedStateEntryRequiresMigrationBeforeMutation, TestCoordinationDomainMarkerAndForeignDomainFailClosed, TestFutureLaneAndLeaseSchemasRequireMigration, TestFutureIntentSchemaRequiresMigration, TestFutureInitIntentSchemaRequiresMigration, and TestFutureProfileSchemaRequiresMigration", "observed_on": "2026-08-16"},
-        {"kind": "test", "value": "TestPreviewIsByteForByteReadOnly, TestRegistryLockPublishesBeforeImportedRecords, TestEmptyAndPublicOnlyMigrations, TestIncompatibleTerminalHistoryIsArchiveOnlyAndCanonicalStoreReads, and the complete internal/coordmigration test package", "observed_on": "2026-08-23"}
+        {"kind": "test", "value": "TestPreviewIsByteForByteReadOnly, TestRegistryLockPublishesBeforeImportedRecords, TestEmptyAndPublicOnlyMigrations, TestIncompatibleTerminalHistoryIsArchiveOnlyAndCanonicalStoreReads, and the complete internal/coordmigration test package", "observed_on": "2026-08-23"},
+        {"kind": "artifact", "value": "docs/OSS-SOURCE-REVIEW-2026-08-27.md", "observed_on": "2026-08-27"},
+        {"kind": "test", "value": "TestCompletedMigrationStatusReportsPostCutoverAdvance, TestCompletedMigrationStatusRejectsUnsafePrivateIndexRoot, TestCompletedMigrationStatusStillRejectsEnvelopeDrift, the complete internal/coordmigration package, and its race suite", "observed_on": "2026-08-27"}
       ]
     },
     {
