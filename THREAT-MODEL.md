@@ -166,7 +166,10 @@ review authority must bind any landing decision to the full handoff digest.
 `wip` opens each pre-commit and post-commit hook and compares the open file with
 the path. It requires a regular non-symlink file and limits it to 4 MiB. It then
 copies the hook to a private mode-`0700` path. It validates the original path
-again before the ref update. The copied hook runs with the private index.
+again before the ref update. The copied hook runs with the private index and a
+forced `NICOS_PREFLIGHT_READ_ONLY=1` value. Compatible hook wrappers use this
+value to inspect the candidate without applying repairs to the source checkout.
+The value is a cooperative contract. It does not restrict arbitrary hook code.
 
 On Windows, Git 2.36 or newer runs the private hook so that Git for Windows can
 apply its normal interpreter rules.

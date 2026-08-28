@@ -200,6 +200,12 @@ finish a matching partial skill bundle after an interruption. The wizard does
 not change global Git configuration or install hooks. Existing repository hooks
 run during a non-dry capture.
 
+Copied pre-commit and post-commit hooks receive
+`NICOS_PREFLIGHT_READ_ONLY=1` with the private candidate index. Compatible
+hooks must inspect only that candidate and must not apply repairs to the source
+checkout. This value is a cooperative hook contract, not a sandbox. Repository
+hooks remain trusted code and can still change files or use the network.
+
 The wizard first validates and bootstraps the coordination domain. It then
 writes a durable initialization intent before it changes a worktree, lane,
 lease, profile, binary, or skill. Each completed step is idempotent. If setup
