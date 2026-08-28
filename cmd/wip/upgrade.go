@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	upgradeSchemaVersion = "1.0.0"
+	upgradeSchemaVersion = "2.0.0"
 	maxUpgradeBinarySize = 512 << 20
 )
 
@@ -36,27 +36,34 @@ type upgradeOptions struct {
 }
 
 type upgradeResult struct {
-	SchemaVersion  string `json:"schema_version"`
-	Target         string `json:"target"`
-	Path           string `json:"path"`
-	CurrentSHA256  string `json:"current_sha256"`
-	DesiredSHA256  string `json:"desired_sha256"`
-	PlanDigest     string `json:"plan_digest"`
-	AlreadyCurrent bool   `json:"already_current"`
-	Applied        bool   `json:"applied"`
+	SchemaVersion        string `json:"schema_version"`
+	Target               string `json:"target"`
+	Path                 string `json:"path"`
+	CurrentSHA256        string `json:"current_sha256"`
+	DesiredSHA256        string `json:"desired_sha256"`
+	RevisionStore        string `json:"revision_store,omitempty"`
+	PreviousRevisionPath string `json:"previous_revision_path,omitempty"`
+	DesiredRevisionPath  string `json:"desired_revision_path,omitempty"`
+	PlanDigest           string `json:"plan_digest"`
+	AlreadyCurrent       bool   `json:"already_current"`
+	Applied              bool   `json:"applied"`
 }
 
 type upgradeBinding struct {
-	SchemaVersion string `json:"schema_version"`
-	Target        string `json:"target"`
-	Path          string `json:"path"`
-	CurrentSHA256 string `json:"current_sha256"`
-	DesiredSHA256 string `json:"desired_sha256"`
+	SchemaVersion        string `json:"schema_version"`
+	Target               string `json:"target"`
+	Path                 string `json:"path"`
+	CurrentSHA256        string `json:"current_sha256"`
+	DesiredSHA256        string `json:"desired_sha256"`
+	RevisionStore        string `json:"revision_store,omitempty"`
+	PreviousRevisionPath string `json:"previous_revision_path,omitempty"`
+	DesiredRevisionPath  string `json:"desired_revision_path,omitempty"`
 }
 
 type upgradeMaterial struct {
-	target, path, currentSHA256, desiredSHA256 string
-	alreadyCurrent                             bool
+	target, path, currentSHA256, desiredSHA256               string
+	revisionStore, previousRevisionPath, desiredRevisionPath string
+	alreadyCurrent                                           bool
 }
 
 func (application app) runUpgrade(ctx context.Context, args []string) int {
@@ -190,7 +197,11 @@ func ensureStateUpgradeQuiescent(ctx context.Context, repo gitx.Repo) error {
 }
 
 func bindUpgrade(material upgradeMaterial) (upgradeResult, error) {
-	binding := upgradeBinding{SchemaVersion: upgradeSchemaVersion, Target: material.target, Path: material.path, CurrentSHA256: material.currentSHA256, DesiredSHA256: material.desiredSHA256}
+	binding := upgradeBinding{
+		SchemaVersion: upgradeSchemaVersion, Target: material.target, Path: material.path,
+		CurrentSHA256: material.currentSHA256, DesiredSHA256: material.desiredSHA256,
+		RevisionStore: material.revisionStore, PreviousRevisionPath: material.previousRevisionPath, DesiredRevisionPath: material.desiredRevisionPath,
+	}
 	body, err := json.Marshal(binding)
 	if err != nil {
 		return upgradeResult{}, err
@@ -198,6 +209,7 @@ func bindUpgrade(material upgradeMaterial) (upgradeResult, error) {
 	return upgradeResult{
 		SchemaVersion: upgradeSchemaVersion, Target: material.target, Path: material.path,
 		CurrentSHA256: material.currentSHA256, DesiredSHA256: material.desiredSHA256,
+		RevisionStore: material.revisionStore, PreviousRevisionPath: material.previousRevisionPath, DesiredRevisionPath: material.desiredRevisionPath,
 		PlanDigest: digest(body), AlreadyCurrent: material.alreadyCurrent,
 	}, nil
 }
@@ -226,7 +238,14 @@ func inspectBinaryUpgrade(directory string) (upgradeMaterial, error) {
 		return upgradeMaterial{}, err
 	}
 	currentDigest, desiredDigest := digest(current), digest(desired)
-	return upgradeMaterial{target: "binary", path: path, currentSHA256: currentDigest, desiredSHA256: desiredDigest, alreadyCurrent: currentDigest == desiredDigest}, nil
+	revisionStore := filepath.Join(directory, "."+binaryName()+".revisions")
+	return upgradeMaterial{
+		target: "binary", path: path, currentSHA256: currentDigest, desiredSHA256: desiredDigest,
+		revisionStore:        revisionStore,
+		previousRevisionPath: binaryRevisionPath(revisionStore, currentDigest),
+		desiredRevisionPath:  binaryRevisionPath(revisionStore, desiredDigest),
+		alreadyCurrent:       currentDigest == desiredDigest,
+	}, nil
 }
 
 func applyBinaryUpgrade(reviewed upgradeMaterial) error {
@@ -249,6 +268,19 @@ func applyBinaryUpgrade(reviewed upgradeMaterial) error {
 	if err != nil {
 		return err
 	}
+	previous, err := safeio.ReadRegular(reviewed.path, maxUpgradeBinarySize)
+	if err != nil {
+		return fail.Wrap("UPGRADE_FAILED", err)
+	}
+	if digest(previous) != reviewed.currentSHA256 || digest(body) != reviewed.desiredSHA256 {
+		return fail.New("UPGRADE_PLAN_MOVED", "upgrade bytes changed after the reviewed plan was revalidated")
+	}
+	if err := retainBinaryRevision(reviewed.revisionStore, reviewed.previousRevisionPath, previous, reviewed.currentSHA256); err != nil {
+		return err
+	}
+	if err := retainBinaryRevision(reviewed.revisionStore, reviewed.desiredRevisionPath, body, reviewed.desiredSHA256); err != nil {
+		return err
+	}
 	if err := atomicfile.Write(reviewed.path, body, 0o755); err != nil {
 		return fail.Wrap("UPGRADE_FAILED", err)
 	}
@@ -258,6 +290,47 @@ func applyBinaryUpgrade(reviewed upgradeMaterial) error {
 			return err
 		}
 		return fail.New("UPGRADE_FAILED", "installed binary verification failed after atomic replacement")
+	}
+	return nil
+}
+
+func binaryRevisionPath(store, value string) string {
+	return filepath.Join(store, "sha256-"+strings.TrimPrefix(value, "sha256:"))
+}
+
+func retainBinaryRevision(store, path string, body []byte, expectedDigest string) error {
+	if path != binaryRevisionPath(store, expectedDigest) {
+		return fail.New("UPGRADE_FAILED", "binary revision path does not match its reviewed digest")
+	}
+	if err := ensureBinaryRevisionStore(store); err != nil {
+		return err
+	}
+	if err := atomicfile.Create(path, body, 0o555); err != nil && !errors.Is(err, atomicfile.ErrExists) {
+		return fail.Wrap("UPGRADE_FAILED", err)
+	}
+	retained, err := safeio.ReadRegular(path, maxUpgradeBinarySize)
+	if err != nil {
+		return fail.Wrap("UPGRADE_FAILED", err)
+	}
+	if digest(retained) != expectedDigest {
+		return fail.New("UPGRADE_CONFLICT", "retained binary revision does not match its content-addressed path")
+	}
+	if err := ensureBinaryRevisionStore(store); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ensureBinaryRevisionStore(path string) error {
+	if err := os.Mkdir(path, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		return fail.Wrap("UPGRADE_FAILED", err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fail.Wrap("UPGRADE_FAILED", err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fail.New("UPGRADE_CONFLICT", "binary revision store is not a regular directory")
 	}
 	return nil
 }
