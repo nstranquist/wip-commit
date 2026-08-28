@@ -178,11 +178,20 @@ func (application app) runHandoff(ctx context.Context, laneStore store.Store, ar
 		return application.failure("handoff", err, nil, 1)
 	}
 	if status.Lane.State == "active" && !laneStore.WriterFenced() {
-		writable, openErr := store.Open(laneStore.Repo)
+		writerFence, fenceErr := store.AcquireWriterFence(laneStore.Repo, store.DefaultWriterFenceWait)
+		if fenceErr != nil {
+			return application.failure("handoff", fenceErr, nil, 1)
+		}
+		defer func() { _ = writerFence.Release() }()
+		writable, openErr := store.OpenWithWriterFence(laneStore.Repo, writerFence)
 		if openErr != nil {
 			return application.failure("handoff", openErr, nil, 1)
 		}
 		laneStore = writable
+		status, err = resolveHandoffStatus(laneStore, identity)
+		if err != nil {
+			return application.failure("handoff", err, nil, 1)
+		}
 	}
 	lock, err := laneStore.ExistingLaneLock(status.Lane.ID, filelock.DefaultWait)
 	if err != nil {

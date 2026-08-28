@@ -105,9 +105,10 @@ func (application *app) run(ctx context.Context, args []string) int {
 	case "env":
 		readOnly = envObserveRequested(rest)
 	case "handoff":
-		// Handoff renews an active lane after it validates the capture receipt.
-		// Keep the repository writer fence for that complete transaction.
-		readOnly = false
+		// The handler inspects the lane first. It retains a writer fence for an
+		// active-lane renewal and keeps a released-lane handoff byte-for-byte
+		// read-only.
+		readOnly = true
 	case "status":
 		readOnly = statusObserveRequested(rest)
 	case "plan":

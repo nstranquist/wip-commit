@@ -589,6 +589,8 @@ func TestGuidedCaptureFinalReleasesAfterHandoffValidation(t *testing.T) {
 		t.Fatalf("final result = %#v", result)
 	}
 	laneStore := inspectCLIStore(t, directory)
+	common := cliGit(t, directory, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	stateBefore := commandTreeDigest(t, common)
 	lockPath := filepath.Join(laneStore.Root, "locks", "lane-final-capture.lock")
 	lockBefore, err := os.ReadFile(lockPath)
 	if err != nil {
@@ -604,6 +606,9 @@ func TestGuidedCaptureFinalReleasesAfterHandoffValidation(t *testing.T) {
 	}
 	if !bytes.Equal(lockAfter, lockBefore) {
 		t.Fatalf("released handoff changed the lane lock: before=%q after=%q", lockBefore, lockAfter)
+	}
+	if stateAfter := commandTreeDigest(t, common); stateAfter != stateBefore {
+		t.Fatalf("released handoff changed repository state: before=%s after=%s", stateBefore, stateAfter)
 	}
 }
 
@@ -700,6 +705,14 @@ func TestHandoffKeepsLaneLockThroughValidationAndRenewal(t *testing.T) {
 	}()
 
 	laneStore := inspectCLIStore(t, directory)
+	writerFence, err := store.AcquireWriterFence(laneStore.Repo, 100*time.Millisecond)
+	if err == nil {
+		_ = writerFence.Release()
+		t.Fatal("another writer acquired the repository fence after active handoff validation")
+	}
+	if fail.Code(err) != "LOCK_TIMEOUT" {
+		t.Fatalf("competing writer-fence error = %v (%s)", err, fail.Code(err))
+	}
 	lock, err := laneStore.LaneLock("locked-handoff", 100*time.Millisecond)
 	if err == nil {
 		_ = lock.Release()
