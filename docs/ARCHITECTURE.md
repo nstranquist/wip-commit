@@ -53,7 +53,11 @@ namespace, refs, shallow boundary, configuration, or object storage. Discovery
 and capture therefore stay bound to the canonical checkout. An inherited
 `GIT_INDEX_FILE` remains the caller view only for `staged_index` source mode.
 The capture transaction supplies its private index explicitly to Git and
-prepared hooks. A `worktree_snapshot` uses a separate temporary source index.
+prepared hooks. Prepared hooks also receive a forced
+`NICOS_PREFLIGHT_READ_ONLY=1` value, the lane target ref, and, for post-commit,
+the exact commit object. The read-only value is a cooperative signal and does
+not sandbox repository code. A `worktree_snapshot` uses a separate temporary
+source index.
 
 Candidate verification commands remove the active WIP identity, target ref,
 commit object, caller index, and stale candidate-tree variables. They receive
