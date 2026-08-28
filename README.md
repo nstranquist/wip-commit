@@ -134,7 +134,11 @@ wip --json upgrade --skill --skill-dir ~/.agents/skills \
 The binary target must already be a regular executable. The skill target can
 be an older canonical bundle, but it cannot contain unknown files, directories,
 or symbolic links. Use `wip init --install` or `--install-skill` for a missing
-target. See [State compatibility](docs/STATE-COMPATIBILITY.md) for the separate
+target. Before a binary changes, WIP durably retains the complete previous and
+desired executables under the content-addressed `.wip.revisions` directory next
+to the install target. WIP does not prune that rollback store. The reviewed
+plan reports both revision paths. See
+[State compatibility](docs/STATE-COMPATIBILITY.md) for the separate
 coordination-marker upgrade.
 
 ## Prove portable behavior
