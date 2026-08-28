@@ -264,6 +264,27 @@ func TestDryRunSkipsExecutableRepositoryHooks(t *testing.T) {
 	}
 }
 
+func TestHookEnvironmentForcesReadOnlyPreflightMarker(t *testing.T) {
+	t.Setenv(preflightReadOnly, "inherited-unsafe-value")
+	environment := hookEnvironment([]string{
+		"GIT_INDEX_FILE=/private/index",
+		preflightReadOnly + "=private-unsafe-value",
+	}, "refs/heads/wip/agent/read-only-hook", "commit-object")
+
+	markerCount := 0
+	markerValue := ""
+	for _, entry := range environment {
+		name, value, _ := strings.Cut(entry, "=")
+		if strings.EqualFold(name, preflightReadOnly) {
+			markerCount++
+			markerValue = value
+		}
+	}
+	if markerCount != 1 || markerValue != "1" {
+		t.Fatalf("%s entries = %d, value = %q", preflightReadOnly, markerCount, markerValue)
+	}
+}
+
 func TestVerificationEnvironmentDoesNotInheritCaptureIdentity(t *testing.T) {
 	for name, value := range map[string]string{
 		"GIT_INDEX_FILE":     "/foreign/index",
@@ -802,6 +823,50 @@ func TestHookSnapshotMovementFailsBeforeRefUpdate(t *testing.T) {
 	}
 	if got := engineGit(t, repo.Root, "rev-parse", target); got != head {
 		t.Fatalf("target moved despite hook race: %s", got)
+	}
+}
+
+func TestCopiedHooksReceiveReadOnlyPreflightMarker(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture uses POSIX hooks")
+	}
+	t.Setenv(preflightReadOnly, "0")
+	repo := engineTestRepo(t)
+	for name, body := range map[string]string{
+		"pre-commit":  "#!/bin/sh\ntest \"$NICOS_PREFLIGHT_READ_ONLY\" = 1\n",
+		"post-commit": "#!/bin/sh\nprintf '%s\\n' \"$NICOS_PREFLIGHT_READ_ONLY\" > hook-read-only-marker\n",
+	} {
+		hook := engineGit(t, repo.Root, "rev-parse", "--git-path", "hooks/"+name)
+		if !filepath.IsAbs(hook) {
+			hook = filepath.Join(repo.Root, hook)
+		}
+		if err := os.WriteFile(hook, []byte(body), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(t, repo.Root, "core.txt", "new core\n")
+	engineGit(t, repo.Root, "add", "core.txt")
+	head := engineGit(t, repo.Root, "rev-parse", "HEAD")
+	target := "refs/heads/wip/agent/read-only-hook"
+	engineGit(t, repo.Root, "update-ref", target, head, "")
+
+	result, err := Run(context.Background(), Options{
+		Repo: repo, TargetRef: target, ExpectedRef: head, ExpectedSourceHead: head,
+		AllowedPaths: []string{"core.txt"},
+		Groups:       []Group{{Message: "fix(hooks): force read-only preflight mode", Files: []string{"core.txt"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.RefUpdated {
+		t.Fatalf("capture did not publish its lane ref: %#v", result)
+	}
+	marker, err := os.ReadFile(filepath.Join(repo.Root, "hook-read-only-marker"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(marker) != "1\n" {
+		t.Fatalf("post-commit %s = %q", preflightReadOnly, marker)
 	}
 }
 

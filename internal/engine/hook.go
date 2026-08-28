@@ -22,6 +22,7 @@ const (
 	DefaultHookTimeout = 2 * time.Minute
 	MaxHookTimeout     = 24 * time.Hour
 	maxHookBytes       = 4 << 20
+	preflightReadOnly  = "NICOS_PREFLIGHT_READ_ONLY"
 )
 
 type hookSnapshot struct {
@@ -160,7 +161,15 @@ func hooksDigest(hooks ...boundHook) string {
 }
 
 func hookEnvironment(privateEnvironment []string, target, object string) []string {
-	environment := append([]string(nil), privateEnvironment...)
+	environment := make([]string, 0, len(privateEnvironment)+3)
+	for _, entry := range privateEnvironment {
+		name, _, _ := strings.Cut(entry, "=")
+		if strings.EqualFold(name, preflightReadOnly) {
+			continue
+		}
+		environment = append(environment, entry)
+	}
+	environment = append(environment, preflightReadOnly+"=1")
 	environment = append(environment, "WIP_TARGET_REF="+target)
 	if strings.TrimSpace(object) != "" {
 		environment = append(environment, "WIP_COMMIT_OBJECT="+object)
