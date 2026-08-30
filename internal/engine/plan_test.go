@@ -269,7 +269,7 @@ func TestHookEnvironmentForcesReadOnlyPreflightMarker(t *testing.T) {
 	environment := hookEnvironment([]string{
 		"GIT_INDEX_FILE=/private/index",
 		preflightReadOnly + "=private-unsafe-value",
-	}, "refs/heads/wip/agent/read-only-hook", "commit-object")
+	}, hookPhasePreCommit, "refs/heads/wip/agent/read-only-hook", "commit-object")
 
 	markerCount := 0
 	markerValue := ""
