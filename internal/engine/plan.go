@@ -817,7 +817,9 @@ func checkoutVerifyPaths(ctx context.Context, repo gitx.Repo, environment []stri
 		_ = input.WriteByte(0)
 	}
 	errorsOutput := &boundedBuffer{limit: maxVerifyOutput}
-	command := process.CommandContext(ctx, "git", "-C", repo.Root, "checkout-index", "--force", "--stdin", "-z", "--prefix="+prefix)
+	// Verification must see the candidate's committed bytes. A host-level
+	// core.autocrlf (the Windows default) would otherwise rewrite line endings.
+	command := process.CommandContext(ctx, "git", "-C", repo.Root, "-c", "core.autocrlf=false", "-c", "core.eol=lf", "checkout-index", "--force", "--stdin", "-z", "--prefix="+prefix)
 	command.Env = gitx.Environment(environment)
 	command.Stdin = &input
 	command.Stderr = errorsOutput
