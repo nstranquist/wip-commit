@@ -1,6 +1,6 @@
-# First publication handoff
+# First publication handoff (historical)
 
-Status: Ready for human execution
+Status: Executed on 2026-08-17. Do not run this handoff again.
 
 Target: `github.com/nstranquist/wip-commit`
 
@@ -8,14 +8,48 @@ Reviewed bootstrap: `b276204385636c5a8ac338491565bd4894255217`
 
 Owner approval: `owner-session-2026-08-16`
 
+First corrected public `main` on 2026-08-17:
+`206fa8b6a1dde1d97081133e4d447c0881849922`
+
+Current release target: `v0.2.0-beta.1`
+
+The historical commands retain the `candidate/v0.1.0-beta.1` ref name. That
+ref name records the completed publication event. It is not the current
+release target.
+
+The source repository now exists and has an active ruleset. The procedure below
+is the retained first-publication record. It is not a current mutation runbook.
+See [HOSTED-STATUS-2026-08-18.md](HOSTED-STATUS-2026-08-18.md).
+
+Public evidence: [PUBLICATION-EVIDENCE.md](PUBLICATION-EVIDENCE.md)
+
+## Execution note
+
+The pre-first-push receipt bound
+`ed3f1fadfbc74eb0aa41ef8b90e41f403213d33d` and its 17-path manifest. The first
+hosted run found three Windows host assumptions and a disabled dependency
+graph.
+
+Commit `206fa8b6a1dde1d97081133e4d447c0881849922` fixed the Windows findings and
+expanded the complete bootstrap delta to 20 reviewed paths. The corrected
+commit passed every required hosted check.
+
+Pull request 1 closed without a merge commit. Then `main` moved by a direct
+fast-forward.
+
+The pre-first-push command cannot validate this correction because the target
+now exists. The `finalized` procedure in
+[PUBLICATION-CORRECTION.md](PUBLICATION-CORRECTION.md) verified the completed
+sequence and produced the required private correction receipt.
+
 ## Boundary
 
 The owner approved the repository name, module path, and capture-only public
 beta scope. The owner has not approved a release tag.
 
-The repository instructions prohibit an agent push. A human must execute every
-command in the **Human-only first push** section. Do not merge the bootstrap
-pull request. Do not create a tag during this handoff.
+The repository instructions prohibited an agent push without an owner
+override. The owner gave one-time approval for this exact handoff. That
+approval did not authorize a pull-request merge or tag.
 
 The preflight command is read-only except for one new private receipt outside
 the checkout. It does not create a repository, remote, tag, branch, or Git ref,
@@ -80,10 +114,13 @@ Stop if any preflight check fails. Do not weaken a check or edit the receipt.
 Fix the candidate, capture a new reviewed commit series, and rerun the preflight
 to a new output path.
 
-## Human-only first push
+## Human-only first push (historical record)
+
+This section is an execution record. Do not run these commands again.
 
 In this section, `<candidate-commit>` means the exact `candidate.commit` from
-the validated receipt. A human repository owner must run these commands.
+the validated receipt. A human repository owner ran these commands during the
+historical handoff.
 
 1. Create an empty public repository. Do not add a README, license, or
    `.gitignore` from GitHub.
@@ -173,7 +210,7 @@ exists. All later changes must follow the active protected-branch policy.
 
 ## Gates that remain after the handoff
 
-Do not create `v0.1.0-beta.1` until the requirement tracker has evidence for:
+Do not create `v0.2.0-beta.1` until the requirement tracker has evidence for:
 
 - hosted Linux, macOS, and Windows execution on the final tag candidate.
 - repository rules and security settings.

@@ -2,15 +2,22 @@
 
 ## Current decision
 
-The project is a strong candidate for its own public repository. It is locally
-publish-ready for a `v0.1.0-beta.1` candidate. It is not publicly launched, and
-the local evidence does not support a stable `v1.0.0` claim.
+The project has a public source repository with active hosted controls. This
+repository's historical source candidates have passing hosted checks. The
+agent-facing candidate is locally publish-ready, but it has not passed its own
+protected hosted checks. No public beta tag or GitHub release exists. The
+evidence does not support a released, launched, adopted, or stable claim.
 
 The detailed release decision and current evidence are in
 [OSS-PUBLIC-BETA.md](OSS-PUBLIC-BETA.md) and
-[OSS-PUBLIC-BETA.requirements.yaml](OSS-PUBLIC-BETA.requirements.yaml). The plan
-is accepted. The approval fixes the name, module path, and capture-only scope.
-It does not authorize an agent push or a release tag.
+[OSS-PUBLIC-BETA.requirements.yaml](OSS-PUBLIC-BETA.requirements.yaml). Public
+execution evidence is in [PUBLICATION-EVIDENCE.md](PUBLICATION-EVIDENCE.md).
+
+The plan is accepted. The approval fixes the name, module path, and
+capture-only scope. It does not authorize a release tag.
+
+The live public-source and hosted-control check is in
+[HOSTED-STATUS-2026-08-18.md](HOSTED-STATUS-2026-08-18.md).
 
 ## Ready in this checkout
 
@@ -25,8 +32,16 @@ It does not authorize an agent push or a release tag.
 - One coordination-domain interlock for standalone and legacy installations.
 - Explicit initialization ownership. Probes and other lane commands cannot
   claim an uninitialized repository.
-- Exact staged-subset and all-or-nothing split capture.
-- Read-only component split proposals and split-plan automation defaults.
+- Exact staged-index and worktree-source capture with all-or-nothing split
+  publication.
+- One bound version 3 draft/reviewed capture-plan schema with no-overwrite
+  output.
+- Stale-plan checks for source mode, source digest, lane, paths, leases, and
+  message policy.
+- Operational status with capture, captured-staged, foreign, and empty-lease
+  classes and a strict public JSON Schema.
+- Ordinary-use lease renewal with pure `--observe` status, environment, and
+  plan reads.
 - Automatic lease heartbeat and an exact final publication fence.
 - Random no-clobber lease creation and fail-closed partial-release recovery.
 - Exact init-claim repair and complete-registry renewal and release checks.
@@ -34,7 +49,13 @@ It does not authorize an agent push or a release tag.
 - Bounded read-only state diagnosis.
 - Exact-plan, receipt-based archive, resume, and restore operations that
   preserve refs and commits.
-- Strict JSON and Conventional Commit policy.
+- Strict JSON and named message policies outside the capture kernel.
+- A privacy-bounded version 2 cumulative handoff with an exact digest and
+  explicit non-authorization.
+- A guided `wip capture` path that requires a reviewed version 3 plan.
+- A digest-bound coordination migration with a single-writer cutover, a
+  manifest-bound registry lock, a sealed legacy archive, and immutable
+  review-plan and handoff directories.
 - Threat model, architecture, error guide, security policy, and contribution
   guide.
 - Honest single-maintainer governance, succession expectations, and beta
@@ -58,12 +79,23 @@ It does not authorize an agent push or a release tag.
 - Deterministic six-target archives, checksums, and release receipt.
 - Tag-only artifact-attestation workflow with immutable action references.
 - State compatibility, upgrade, and downgrade policy.
-- A proposed capture-to-landing KEP that keeps the beta capture-only and
-  defines fail-closed requirements for any future landing command.
+- An amended capture-to-landing KEP that keeps the beta capture-only and
+  defines fail-closed requirements for a separate landing authority.
+- An accepted and amended agent-facing workflow KEP with plan version 3,
+  cumulative handoff version 2, and historical receipt compatibility.
 - A redacted independent beta exercise protocol and machine-checkable receipt
   schema.
 - A human-gated hosted-repository setup and evidence runbook.
 - A fail-closed pre-first-push receipt and exact human publication handoff.
+- Passing hosted Linux, macOS, Windows, race, lint, and dependency-review
+  checks on the exact public source candidate.
+- An active no-bypass `main` ruleset with rebase-only pull requests, review,
+  provider-bound checks, linear history, and ref protections.
+- Enabled dependency alerts, security updates, secret scanning, push
+  protection, and private vulnerability reporting.
+- A clean public-module installation smoke test for the exact untagged commit.
+- An accepted hosted-correction KEP, source-bound fail-closed command, schema,
+  test matrix, and finalized private receipt for the first hosted correction.
 - Fail-closed tests for unsupported state directories and record schemas.
 - Symlink-escape and dual-domain creation-race tests.
 - Concurrent first-use directory and no-clobber publication tests.
@@ -73,25 +105,22 @@ It does not authorize an agent push or a release tag.
 - Canonical Git repository and object-store binding despite inherited routing
   environment variables.
 
-## Required before public beta publication
+## Required before the public beta tag
 
-1. Follow [PUBLICATION-HANDOFF.md](PUBLICATION-HANDOFF.md). Create the public
-   repository and add a remote. The reviewed candidate checkout currently
-   has no remote.
-2. Run the prepared CI on hosted Linux, macOS, and Windows workers. Local cross
-   compilation is not a substitute for Windows runtime tests.
-3. Follow [HOSTED-SETUP.md](HOSTED-SETUP.md) to require pull-request review and
-   the observed passing CI checks on the default branch.
-4. Enable private vulnerability reporting, dependency alerts, and secret
-   scanning as described in the hosted setup runbook.
-5. Approve a Code of Conduct and configure confidential conduct reporting
+1. Run the exact agent-facing candidate through the protected pull-request
+   path. Require hosted Linux, macOS, Windows, race, lint, and dependency-review
+   checks. Local cross-compilation is not a Windows runtime test.
+2. Verify the maintainer's personal security-alert notifications.
+3. Approve a Code of Conduct and configure confidential conduct reporting
    before soliciting public contributions.
-6. Ask at least one independent user to follow
+4. Ask at least one independent user to follow
    [BETA-EXERCISE.md](BETA-EXERCISE.md) for shared and worktree flows. Retain a
    redacted receipt that passes [BETA-EXERCISE.schema.json](BETA-EXERCISE.schema.json).
-7. Run a clean public-module installation smoke test.
-8. Create and push `v0.1.0-beta.1` only after every tracked public-beta gate
+5. Obtain explicit owner approval for `v0.2.0-beta.1`.
+6. Create and push the signed tag only after every tracked public-beta gate
    passes. Check that the hosted release attestation succeeds.
+7. Verify the published archives and checksums. Install the final tag through
+   the public Go module path.
 
 ## Required before a stable release
 
@@ -110,7 +139,8 @@ It does not authorize an agent push or a release tag.
 
 ## Publication boundary
 
-The owner approved the public target and capture-only scope. A remote, history
-push, repository setting, and release are still external changes. The project
-instructions assign the first push to a human. Preparing this checkout does not
-perform those actions.
+The source repository, history, ruleset, and hosted security settings are
+public, and the active ruleset requires reviewed pull requests for later `main`
+updates. No tag, release, announcement, or adoption evidence exists. Do not
+infer those states from public source availability. This local candidate does
+not authorize a push or any hosted-state change.

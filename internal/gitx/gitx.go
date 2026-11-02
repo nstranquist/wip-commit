@@ -31,8 +31,12 @@ var isolatedRepositoryEnvironment = map[string]bool{
 	"GIT_CONFIG_PARAMETERS":            true,
 	"GIT_DIR":                          true,
 	"GIT_GRAFT_FILE":                   true,
+	"GIT_GLOB_PATHSPECS":               true,
+	"GIT_ICASE_PATHSPECS":              true,
 	"GIT_IMPLICIT_WORK_TREE":           true,
+	"GIT_LITERAL_PATHSPECS":            true,
 	"GIT_NAMESPACE":                    true,
+	"GIT_NOGLOB_PATHSPECS":             true,
 	"GIT_NO_REPLACE_OBJECTS":           true,
 	"GIT_OBJECT_DIRECTORY":             true,
 	"GIT_PREFIX":                       true,
@@ -40,6 +44,16 @@ var isolatedRepositoryEnvironment = map[string]bool{
 	"GIT_REPLACE_REF_BASE":             true,
 	"GIT_SHALLOW_FILE":                 true,
 	"GIT_WORK_TREE":                    true,
+}
+
+// trustedRepositoryOverrides are the repository-local selectors that the
+// capture kernel may supply itself after inherited selectors have been
+// removed. Keep this list narrow. In particular, callers cannot replace the
+// repository selected by Repo.Root, GitDir, or CommonDir.
+var trustedRepositoryOverrides = map[string]bool{
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES": true,
+	"GIT_INDEX_FILE":                   true,
+	"GIT_OBJECT_DIRECTORY":             true,
 }
 
 func Discover(ctx context.Context, directory string) (Repo, error) {
@@ -192,6 +206,28 @@ func (repo Repo) IndexEntries(ctx context.Context, env []string) (map[string]str
 	return entries, nil
 }
 
+// TreeEntries returns index-shaped entries for a committed tree. The values use
+// the same "<mode> <object> 0" representation as IndexEntries.
+func (repo Repo) TreeEntries(ctx context.Context, treeish string) (map[string]string, error) {
+	output, err := repo.Raw(ctx, nil, "ls-tree", "-r", "-z", "--full-tree", treeish)
+	if err != nil {
+		return nil, err
+	}
+	entries := map[string]string{}
+	for _, row := range strings.Split(output, "\x00") {
+		if row == "" {
+			continue
+		}
+		parts := strings.SplitN(row, "\t", 2)
+		fields := strings.Fields(parts[0])
+		if len(parts) != 2 || len(fields) != 3 {
+			return nil, fmt.Errorf("malformed git ls-tree row")
+		}
+		entries[parts[1]] = fields[0] + " " + fields[2] + " 0"
+	}
+	return entries, nil
+}
+
 func (repo Repo) NormalizePaths(input []string) ([]string, error) {
 	seen := map[string]string{}
 	out := make([]string, 0, len(input))
@@ -250,13 +286,19 @@ func commandRaw(ctx context.Context, dir string, env []string, args ...string) (
 
 func mergedEnvironment(extra []string) []string {
 	environment := make([]string, 0, len(os.Environ())+len(extra))
+	extraNames := make(map[string]bool, len(extra))
+	for _, entry := range extra {
+		extraNames[environmentName(entry)] = true
+	}
 	for _, entry := range os.Environ() {
-		if !isolatesRepositoryEnvironment(environmentName(entry)) {
+		name := environmentName(entry)
+		if !isolatesRepositoryEnvironment(name) && !extraNames[name] {
 			environment = append(environment, entry)
 		}
 	}
 	for _, entry := range extra {
-		if !isolatesRepositoryEnvironment(environmentName(entry)) {
+		name := environmentName(entry)
+		if !isolatesRepositoryEnvironment(name) || trustedRepositoryOverrides[name] {
 			environment = append(environment, entry)
 		}
 	}

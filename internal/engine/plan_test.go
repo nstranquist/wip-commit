@@ -17,6 +17,7 @@ import (
 
 	"github.com/nstranquist/wip-commit/internal/fail"
 	"github.com/nstranquist/wip-commit/internal/gitx"
+	"github.com/nstranquist/wip-commit/internal/policy"
 )
 
 func TestRunSplitPlanPreservesHeadAndFullIndex(t *testing.T) {
@@ -67,6 +68,68 @@ func TestRunSplitPlanPreservesHeadAndFullIndex(t *testing.T) {
 	}
 }
 
+func TestRunEnforcesSafetyButDoesNotOwnRepositoryNamingPolicy(t *testing.T) {
+	repo := engineTestRepo(t)
+	write(t, repo.Root, "core.txt", "new core\n")
+	engineGit(t, repo.Root, "add", "core.txt")
+	head := engineGit(t, repo.Root, "rev-parse", "HEAD")
+	target := "refs/heads/wip/agent/policy-boundary"
+	engineGit(t, repo.Root, "update-ref", target, head, "")
+	receipt := policy.Default()
+	entries, err := repo.IndexEntries(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Run(context.Background(), Options{
+		Repo: repo, TargetRef: target, ExpectedRef: head, ExpectedSourceHead: head,
+		AllowedPaths:         []string{"core.txt"},
+		Groups:               []Group{{Message: "plain repository checkpoint", Files: []string{"core.txt"}}},
+		ReviewPlanDigest:     "sha256:" + strings.Repeat("a", 64),
+		ExpectedSourceDigest: SelectedIndexDigest(entries, []string{"core.txt"}),
+		MessagePolicy:        receipt,
+	})
+	if err != nil {
+		t.Fatalf("capture kernel applied repository naming policy: %v", err)
+	}
+	if result.MessagePolicy == nil || *result.MessagePolicy != receipt || result.ReviewPlanDigest == "" {
+		t.Fatalf("policy binding evidence = %#v", result)
+	}
+}
+
+func TestRunRejectsReviewedIndexMismatchBeforeHooks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture uses a POSIX hook")
+	}
+	repo := engineTestRepo(t)
+	write(t, repo.Root, "core.txt", "new core\n")
+	engineGit(t, repo.Root, "add", "core.txt")
+	head := engineGit(t, repo.Root, "rev-parse", "HEAD")
+	target := "refs/heads/wip/agent/reviewed-index"
+	engineGit(t, repo.Root, "update-ref", target, head, "")
+	marker := filepath.Join(repo.Root, "hook-ran")
+	hook := filepath.Join(repo.GitDir, "hooks", "pre-commit")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\n: > hook-ran\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Run(context.Background(), Options{
+		Repo: repo, TargetRef: target, ExpectedRef: head, ExpectedSourceHead: head,
+		AllowedPaths:         []string{"core.txt"},
+		Groups:               []Group{{Message: "plain repository checkpoint", Files: []string{"core.txt"}}},
+		ReviewPlanDigest:     "sha256:" + strings.Repeat("a", 64),
+		ExpectedSourceDigest: "sha256:" + strings.Repeat("b", 64),
+		MessagePolicy:        policy.Default(),
+	})
+	if fail.Code(err) != "SOURCE_MOVED" {
+		t.Fatalf("index mismatch error = %v (%s)", err, fail.Code(err))
+	}
+	if result.RefUpdated {
+		t.Fatalf("index mismatch published a ref: %#v", result)
+	}
+	if _, statErr := os.Stat(marker); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("pre-commit hook ran before the reviewed index check: %v", statErr)
+	}
+}
+
 func TestDryRunDoesNotInventSplitParentCommits(t *testing.T) {
 	repo := engineTestRepo(t)
 	write(t, repo.Root, "core.txt", "new core\n")
@@ -95,6 +158,9 @@ func TestDryRunDoesNotInventSplitParentCommits(t *testing.T) {
 	if result.Commits[0].Commit != "" || result.Commits[1].Commit != "" || result.RefUpdated {
 		t.Fatalf("dry-run published commit evidence: %#v", result)
 	}
+	if result.SchemaVersion != ResultSchemaVersion || result.GateOutcome != "skipped" || result.Execution == nil || result.Execution.Policy != "no-exec" {
+		t.Fatalf("dry-run contract = %#v", result)
+	}
 	if got := engineGit(t, repo.Root, "rev-parse", target); got != head {
 		t.Fatalf("dry-run moved ref: %s -> %s", head, got)
 	}
@@ -103,15 +169,134 @@ func TestDryRunDoesNotInventSplitParentCommits(t *testing.T) {
 	}
 }
 
+func TestDryRunSkipsVerifyCommandsAndBeforePublish(t *testing.T) {
+	repo := engineTestRepo(t)
+	write(t, repo.Root, "core.txt", "new core\n")
+	engineGit(t, repo.Root, "add", "core.txt")
+	head := engineGit(t, repo.Root, "rev-parse", "HEAD")
+	target := "refs/heads/wip/agent/dry-run-no-exec"
+	engineGit(t, repo.Root, "update-ref", target, head, "")
+	verifyMarker := filepath.Join(t.TempDir(), "verify-ran")
+	publishMarker := filepath.Join(t.TempDir(), "before-publish-ran")
+	t.Setenv("WIP_DRY_RUN_VERIFY_MARKER", verifyMarker)
+
+	result, err := Run(context.Background(), Options{
+		Repo: repo, TargetRef: target, ExpectedRef: head, ExpectedSourceHead: head,
+		AllowedPaths: []string{"core.txt"},
+		Groups: []Group{{
+			Message: "fix(core): prove no-exec preview", Files: []string{"core.txt"},
+			Verify: []VerifyCommand{{Argv: []string{os.Args[0], "-test.run=^TestEngineDryRunVerifyMarkerHelper$", "-test.count=1"}}},
+		}},
+		DryRun: true,
+		BeforePublish: func() error {
+			return os.WriteFile(publishMarker, []byte("callback ran\n"), 0o600)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.GateOutcome != "skipped" || result.Execution == nil || result.Execution.Policy != "no-exec" {
+		t.Fatalf("dry-run result = %#v", result)
+	}
+	wantVerify := ExecutionCount{Planned: 1, Executed: 0, Skipped: 1}
+	if result.Execution.VerifyCommands != wantVerify {
+		t.Fatalf("verify execution report = %#v, want %#v", result.Execution.VerifyCommands, wantVerify)
+	}
+	for _, marker := range []string{verifyMarker, publishMarker} {
+		if _, statErr := os.Lstat(marker); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("dry-run executed marker %s: %v", marker, statErr)
+		}
+	}
+}
+
+func TestEngineDryRunVerifyMarkerHelper(t *testing.T) {
+	marker := os.Getenv("WIP_DRY_RUN_VERIFY_MARKER")
+	if marker == "" {
+		return
+	}
+	if err := os.WriteFile(marker, []byte("verify ran\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDryRunSkipsExecutableRepositoryHooks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture uses POSIX hooks; hosted Windows tests cover the no-exec verify path")
+	}
+	repo := engineTestRepo(t)
+	preMarker := filepath.Join(t.TempDir(), "pre-commit-ran")
+	postMarker := filepath.Join(t.TempDir(), "post-commit-ran")
+	t.Setenv("WIP_DRY_RUN_PRE_HOOK_MARKER", preMarker)
+	t.Setenv("WIP_DRY_RUN_POST_HOOK_MARKER", postMarker)
+	for name, body := range map[string]string{
+		"pre-commit":  "#!/bin/sh\n: > \"$WIP_DRY_RUN_PRE_HOOK_MARKER\"\n",
+		"post-commit": "#!/bin/sh\n: > \"$WIP_DRY_RUN_POST_HOOK_MARKER\"\n",
+	} {
+		hook := engineGit(t, repo.Root, "rev-parse", "--git-path", "hooks/"+name)
+		if !filepath.IsAbs(hook) {
+			hook = filepath.Join(repo.Root, hook)
+		}
+		if err := os.WriteFile(hook, []byte(body), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(t, repo.Root, "core.txt", "new core\n")
+	engineGit(t, repo.Root, "add", "core.txt")
+	head := engineGit(t, repo.Root, "rev-parse", "HEAD")
+	target := "refs/heads/wip/agent/dry-run-hooks"
+	engineGit(t, repo.Root, "update-ref", target, head, "")
+
+	result, err := Run(context.Background(), Options{
+		Repo: repo, TargetRef: target, ExpectedRef: head, ExpectedSourceHead: head,
+		AllowedPaths: []string{"core.txt"}, Groups: []Group{{Message: "fix(hooks): prove no-exec preview", Files: []string{"core.txt"}}}, DryRun: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantHook := ExecutionCount{Planned: 1, Executed: 0, Skipped: 1}
+	if result.Execution == nil || result.Execution.PreCommitHooks != wantHook || result.Execution.PostCommitHooks != wantHook {
+		t.Fatalf("hook execution report = %#v", result.Execution)
+	}
+	for _, marker := range []string{preMarker, postMarker} {
+		if _, statErr := os.Lstat(marker); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("dry-run executed hook marker %s: %v", marker, statErr)
+		}
+	}
+}
+
+func TestHookEnvironmentForcesReadOnlyPreflightMarker(t *testing.T) {
+	t.Setenv(preflightReadOnly, "inherited-unsafe-value")
+	environment := hookEnvironment([]string{
+		"GIT_INDEX_FILE=/private/index",
+		preflightReadOnly + "=private-unsafe-value",
+	}, hookPhasePreCommit, "refs/heads/wip/agent/read-only-hook", "commit-object")
+
+	markerCount := 0
+	markerValue := ""
+	for _, entry := range environment {
+		name, value, _ := strings.Cut(entry, "=")
+		if strings.EqualFold(name, preflightReadOnly) {
+			markerCount++
+			markerValue = value
+		}
+	}
+	if markerCount != 1 || markerValue != "1" {
+		t.Fatalf("%s entries = %d, value = %q", preflightReadOnly, markerCount, markerValue)
+	}
+}
+
 func TestVerificationEnvironmentDoesNotInheritCaptureIdentity(t *testing.T) {
 	for name, value := range map[string]string{
-		"GIT_INDEX_FILE":     "/foreign/index",
-		"WIP_AGENT":          "foreign-agent",
-		"WIP_CANDIDATE_TREE": "foreign-tree",
-		"WIP_COMMIT_OBJECT":  "foreign-commit",
-		"WIP_LANE":           "foreign-lane",
-		"WIP_SESSION":        "foreign-session",
-		"WIP_TARGET_REF":     "refs/heads/wip/foreign/lane",
+		"GIT_INDEX_FILE":       "/foreign/index",
+		"WIP_AGENT":            "foreign-agent",
+		"WIP_CAPTURE":          "1",
+		"WIP_CANDIDATE_TREE":   "foreign-tree",
+		"WIP_COMMIT_OBJECT":    "foreign-commit",
+		"WIP_HOOK_PHASE":       "pre-commit",
+		"WIP_LANE":             "foreign-lane",
+		"WIP_SESSION":          "foreign-session",
+		"WIP_SOURCE_READ_ONLY": "1",
+		"WIP_TARGET_REF":       "refs/heads/wip/foreign/lane",
 	} {
 		t.Setenv(name, value)
 	}
@@ -121,13 +306,62 @@ func TestVerificationEnvironmentDoesNotInheritCaptureIdentity(t *testing.T) {
 		name, value, _ := strings.Cut(entry, "=")
 		values[strings.ToUpper(name)] = value
 	}
-	for _, name := range []string{"GIT_INDEX_FILE", "WIP_AGENT", "WIP_COMMIT_OBJECT", "WIP_LANE", "WIP_SESSION", "WIP_TARGET_REF"} {
+	for _, name := range []string{"GIT_INDEX_FILE", "WIP_AGENT", "WIP_CAPTURE", "WIP_COMMIT_OBJECT", "WIP_HOOK_PHASE", "WIP_LANE", "WIP_SESSION", "WIP_SOURCE_READ_ONLY", "WIP_TARGET_REF"} {
 		if _, exists := values[name]; exists {
 			t.Fatalf("verification inherited %s", name)
 		}
 	}
 	if values["WIP_CANDIDATE_TREE"] != "candidate-tree" {
 		t.Fatalf("candidate tree = %q", values["WIP_CANDIDATE_TREE"])
+	}
+}
+
+func TestHookEnvironmentOverridesSpoofedCaptureContract(t *testing.T) {
+	private := []string{
+		"GIT_INDEX_FILE=/private/index",
+		"WIP_CAPTURE=0",
+		"wip_hook_phase=foreign",
+		"WIP_SOURCE_READ_ONLY=0",
+		"WIP_TARGET_REF=refs/heads/wip/foreign/lane",
+		"WIP_COMMIT_OBJECT=foreign",
+	}
+	pre := hookEnvironment(private, hookPhasePreCommit, "refs/heads/wip/agent/lane", "")
+	assertExactEnvironmentValue(t, pre, "WIP_CAPTURE", "1")
+	assertExactEnvironmentValue(t, pre, "WIP_HOOK_PHASE", hookPhasePreCommit)
+	assertExactEnvironmentValue(t, pre, "WIP_SOURCE_READ_ONLY", "1")
+	assertExactEnvironmentValue(t, pre, "WIP_TARGET_REF", "refs/heads/wip/agent/lane")
+	assertEnvironmentAbsent(t, pre, "WIP_COMMIT_OBJECT")
+	assertExactEnvironmentValue(t, pre, "GIT_INDEX_FILE", "/private/index")
+
+	post := hookEnvironment(private, hookPhasePostCommit, "refs/heads/wip/agent/lane", "abc123")
+	assertExactEnvironmentValue(t, post, "WIP_HOOK_PHASE", hookPhasePostCommit)
+	assertExactEnvironmentValue(t, post, "WIP_COMMIT_OBJECT", "abc123")
+}
+
+func assertExactEnvironmentValue(t *testing.T, environment []string, name, want string) {
+	t.Helper()
+	count := 0
+	for _, entry := range environment {
+		key, value, _ := strings.Cut(entry, "=")
+		if strings.EqualFold(key, name) {
+			count++
+			if value != want {
+				t.Fatalf("%s = %q, want %q in %q", name, value, want, environment)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("%s occurs %d times, want exactly once in %q", name, count, environment)
+	}
+}
+
+func assertEnvironmentAbsent(t *testing.T, environment []string, name string) {
+	t.Helper()
+	for _, entry := range environment {
+		key, _, _ := strings.Cut(entry, "=")
+		if strings.EqualFold(key, name) {
+			t.Fatalf("%s survived in %q", name, environment)
+		}
 	}
 }
 
@@ -141,14 +375,14 @@ func TestOversizedIntentFailsBeforeRefPublication(t *testing.T) {
 		paths[index] = fmt.Sprintf("generated/%04d/%080d.txt", index, index)
 	}
 	result := Result{
-		TargetRef:         target,
-		ExpectedRef:       head,
-		FinalCommit:       strings.Repeat("b", len(head)),
-		SourceHead:        head,
-		SourceIndexDigest: "sha256:" + strings.Repeat("c", 64),
-		FinalTree:         strings.Repeat("d", len(head)),
-		HookDigest:        "sha256:" + strings.Repeat("e", 64),
-		RequestedPaths:    paths,
+		TargetRef:      target,
+		ExpectedRef:    head,
+		FinalCommit:    strings.Repeat("b", len(head)),
+		SourceHead:     head,
+		SourceDigest:   "sha256:" + strings.Repeat("c", 64),
+		FinalTree:      strings.Repeat("d", len(head)),
+		HookDigest:     "sha256:" + strings.Repeat("e", 64),
+		RequestedPaths: paths,
 		Commits: []PlannedCommit{{
 			Index: 1, Message: "feat(records): exercise bounded intent", Parent: head,
 			Commit: strings.Repeat("b", len(head)), Tree: strings.Repeat("d", len(head)), ChangedPaths: paths,
@@ -223,6 +457,87 @@ func TestRunIsAtomicWhenLateVerifyFails(t *testing.T) {
 	}
 }
 
+func TestVerifyMaterializesOnlyDeclaredCandidateScopes(t *testing.T) {
+	repo := engineTestRepo(t)
+	write(t, repo.Root, "component/core.txt", "base component\n")
+	write(t, repo.Root, "shared/dependency.txt", "declared dependency\n")
+	write(t, repo.Root, "unrelated.txt", "must stay unavailable\n")
+	engineGit(t, repo.Root, "add", "component/core.txt", "shared/dependency.txt", "unrelated.txt")
+	engineGit(t, repo.Root, "commit", "-m", "test: add scoped verification fixture")
+	head := engineGit(t, repo.Root, "rev-parse", "HEAD")
+	write(t, repo.Root, "component/core.txt", "candidate component\n")
+	engineGit(t, repo.Root, "add", "component/core.txt")
+	target := "refs/heads/wip/agent/scoped-verify"
+	engineGit(t, repo.Root, "update-ref", target, head, "")
+	t.Setenv("WIP_TEST_SCOPED_VERIFY", "1")
+
+	result, err := Run(context.Background(), Options{
+		Repo: repo, TargetRef: target, ExpectedRef: head, ExpectedSourceHead: head,
+		AllowedPaths: []string{"component/core.txt"},
+		Groups: []Group{{
+			Message: "test(verify): materialize reviewed scopes",
+			Files:   []string{"component/core.txt"},
+			Verify: []VerifyCommand{{
+				Argv:        []string{os.Args[0], "-test.run=^TestScopedVerifyMaterializationHelper$", "-test.count=1"},
+				Directory:   "component",
+				Materialize: []string{"shared/dependency.txt"},
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.RefUpdated {
+		t.Fatalf("scoped verification did not publish: %#v", result)
+	}
+}
+
+func TestScopedVerifyMaterializationHelper(t *testing.T) {
+	if os.Getenv("WIP_TEST_SCOPED_VERIFY") != "1" {
+		return
+	}
+	for path, want := range map[string]string{
+		"core.txt":                 "candidate component\n",
+		"../shared/dependency.txt": "declared dependency\n",
+	} {
+		body, err := os.ReadFile(path)
+		if err != nil || string(body) != want {
+			t.Fatalf("materialized %s = %q, %v; want %q", path, body, err, want)
+		}
+	}
+	if _, err := os.Lstat("../unrelated.txt"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unrelated candidate path became visible: %v", err)
+	}
+}
+
+func TestVerifyMaterializationLimitsFailClosed(t *testing.T) {
+	listing := "100644 blob aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 4\tone.txt\x00" +
+		"100644 blob bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 5\ttwo.txt\x00"
+	if _, _, err := parseVerifyTreeListing(listing, 1, 100); fail.Code(err) != "VERIFY_MATERIALIZATION_LIMIT" {
+		t.Fatalf("entry limit error = %v (%s)", err, fail.Code(err))
+	}
+	if _, _, err := parseVerifyTreeListing(listing, 10, 3); fail.Code(err) != "VERIFY_MATERIALIZATION_LIMIT" {
+		t.Fatalf("byte limit error = %v (%s)", err, fail.Code(err))
+	}
+	if _, _, err := parseVerifyTreeListing("malformed\x00", 10, 100); fail.Code(err) != "VERIFY_FAILED" {
+		t.Fatalf("malformed listing error = %v (%s)", err, fail.Code(err))
+	}
+}
+
+func TestVerifyMaterializationScopesMustBeCanonical(t *testing.T) {
+	repo := engineTestRepo(t)
+	for _, scope := range []string{"../outside", "component/../core.txt", "component\\core.txt", ".git/config", "."} {
+		_, err := normalizeVerifyCommand(repo, VerifyCommand{Argv: []string{"git", "--version"}, Materialize: []string{scope}}, 0)
+		if err == nil {
+			t.Errorf("invalid materialization scope %q passed", scope)
+		}
+	}
+	_, err := normalizeVerifyCommand(repo, VerifyCommand{Argv: []string{"git", "--version"}, Materialize: []string{"core.txt", "core.txt"}}, 0)
+	if err == nil {
+		t.Fatal("duplicate materialization scope passed")
+	}
+}
+
 func TestRunDetectsSelectedIndexMovementAfterFinalGate(t *testing.T) {
 	repo := engineTestRepo(t)
 	write(t, repo.Root, "core.txt", "first staged value\n")
@@ -239,7 +554,7 @@ func TestRunDetectsSelectedIndexMovementAfterFinalGate(t *testing.T) {
 			return nil
 		},
 	})
-	if fail.Code(err) != "SOURCE_INDEX_MOVED" {
+	if fail.Code(err) != "SOURCE_MOVED" {
 		t.Fatalf("error = %v (%s)", err, fail.Code(err))
 	}
 	if got := engineGit(t, repo.Root, "rev-parse", target); got != head {
@@ -288,6 +603,44 @@ func TestRunHandlesNewlineFilename(t *testing.T) {
 	}
 	if len(result.Commits[0].ChangedPaths) != 1 || result.Commits[0].ChangedPaths[0] != name {
 		t.Fatalf("changed paths = %#v", result.Commits[0].ChangedPaths)
+	}
+}
+
+func TestVerifyDirectoryAllowsSymlinkedScratchParent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires platform-specific privileges")
+	}
+	repo := engineTestRepo(t)
+	write(t, repo.Root, "component/core.txt", "new core\n")
+	engineGit(t, repo.Root, "add", "component/core.txt")
+	head := engineGit(t, repo.Root, "rev-parse", "HEAD")
+	target := "refs/heads/wip/agent/symlinked-temp-root"
+	engineGit(t, repo.Root, "update-ref", target, head, "")
+
+	realTempRoot, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tempLink := filepath.Join(t.TempDir(), "tmp-link")
+	if err := os.Symlink(realTempRoot, tempLink); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", tempLink)
+
+	result, err := Run(context.Background(), Options{
+		Repo: repo, TargetRef: target, ExpectedRef: head, ExpectedSourceHead: head,
+		AllowedPaths: []string{"component/core.txt"},
+		Groups: []Group{{
+			Message: "test(verify): allow physical candidate directory",
+			Files:   []string{"component/core.txt"},
+			Verify:  []VerifyCommand{{Argv: []string{"git", "--version"}, Directory: "component"}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.RefUpdated || engineGit(t, repo.Root, "rev-parse", target) != result.FinalCommit {
+		t.Fatalf("verification did not publish the candidate: %#v", result)
 	}
 }
 
@@ -476,6 +829,12 @@ func TestValidateAppliedChecksGitObjectsAgainstReceipt(t *testing.T) {
 			if _, clean, err := ValidateApplied(context.Background(), repo, result.PlanID, result.PlanDigest, target, head); err != nil || clean {
 				t.Fatalf("valid applied receipt clean=%v err=%v", clean, err)
 			}
+			if _, err := MarkIntent(repo, result.PlanID, result.PlanDigest, "complete"); err != nil {
+				t.Fatal(err)
+			}
+			if _, clean, err := ValidateApplied(context.Background(), repo, result.PlanID, result.PlanDigest, target, result.FinalCommit); err != nil || !clean {
+				t.Fatalf("valid complete receipt clean=%v err=%v", clean, err)
+			}
 
 			intent, path, err := LoadIntent(repo, result.PlanID, result.PlanDigest)
 			if err != nil {
@@ -493,7 +852,7 @@ func TestValidateAppliedChecksGitObjectsAgainstReceipt(t *testing.T) {
 			if err := os.WriteFile(path, append(body, '\n'), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := ValidateApplied(context.Background(), repo, result.PlanID, intent.PlanDigest, target, head); fail.Code(err) != "CAPTURE_RECEIPT_MISMATCH" {
+			if _, _, err := ValidateApplied(context.Background(), repo, result.PlanID, intent.PlanDigest, target, result.FinalCommit); fail.Code(err) != "CAPTURE_RECEIPT_MISMATCH" {
 				t.Fatalf("mismatched %s receipt error = %v (%s)", test.name, err, fail.Code(err))
 			}
 		})
@@ -597,6 +956,50 @@ func TestHookSnapshotMovementFailsBeforeRefUpdate(t *testing.T) {
 	}
 	if got := engineGit(t, repo.Root, "rev-parse", target); got != head {
 		t.Fatalf("target moved despite hook race: %s", got)
+	}
+}
+
+func TestCopiedHooksReceiveReadOnlyPreflightMarker(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture uses POSIX hooks")
+	}
+	t.Setenv(preflightReadOnly, "0")
+	repo := engineTestRepo(t)
+	for name, body := range map[string]string{
+		"pre-commit":  "#!/bin/sh\ntest \"$NICOS_PREFLIGHT_READ_ONLY\" = 1\n",
+		"post-commit": "#!/bin/sh\nprintf '%s\\n' \"$NICOS_PREFLIGHT_READ_ONLY\" > hook-read-only-marker\n",
+	} {
+		hook := engineGit(t, repo.Root, "rev-parse", "--git-path", "hooks/"+name)
+		if !filepath.IsAbs(hook) {
+			hook = filepath.Join(repo.Root, hook)
+		}
+		if err := os.WriteFile(hook, []byte(body), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(t, repo.Root, "core.txt", "new core\n")
+	engineGit(t, repo.Root, "add", "core.txt")
+	head := engineGit(t, repo.Root, "rev-parse", "HEAD")
+	target := "refs/heads/wip/agent/read-only-hook"
+	engineGit(t, repo.Root, "update-ref", target, head, "")
+
+	result, err := Run(context.Background(), Options{
+		Repo: repo, TargetRef: target, ExpectedRef: head, ExpectedSourceHead: head,
+		AllowedPaths: []string{"core.txt"},
+		Groups:       []Group{{Message: "fix(hooks): force read-only preflight mode", Files: []string{"core.txt"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.RefUpdated {
+		t.Fatalf("capture did not publish its lane ref: %#v", result)
+	}
+	marker, err := os.ReadFile(filepath.Join(repo.Root, "hook-read-only-marker"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(marker) != "1\n" {
+		t.Fatalf("post-commit %s = %q", preflightReadOnly, marker)
 	}
 }
 

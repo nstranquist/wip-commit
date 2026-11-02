@@ -1,5 +1,371 @@
 # Dogfood evidence
 
+This file contains dated historical evidence. Some entries record plan version
+2 and staged-index behavior. Use [ARCHITECTURE.md](ARCHITECTURE.md),
+[PLAN.schema.json](PLAN.schema.json), and [HANDOFF.schema.json](HANDOFF.schema.json)
+for the current protocol.
+
+## 2026-08-21 installed workflow and source-provenance exercise
+
+This exercise started with no `wip` executable on `PATH`. The complete portable
+skill was available in the standalone source tree. The existing agent skill
+paths remained bound to the broader Nicos-integrated workflow and were not
+overwritten.
+
+Evidence scope: local maintainer evidence. The exercise did not land, merge,
+push, tag, or publish any captured commit.
+
+### Disposable protocol
+
+The source-current beta binary installed itself at `~/.local/bin/wip`. Its
+installer also wrote a complete portable skill bundle to an isolated test
+directory. The installed binary and source binary were byte-equal. The three
+portable skill files were byte-equal to their source files.
+
+A disposable repository then passed these behaviors:
+
+- A shared lane captured a reviewed two-commit split at
+  `d962bd56dfde3064392499578d5e901f3f0169cc`.
+- The shared source `HEAD`, complete index digest, and staged tree stayed
+  unchanged. A foreign staged path stayed staged and did not enter the lane.
+- An overlapping claim returned `PATH_LEASE_CONFLICT`. The exact pending
+  initialization receipt completed after the first owner released its lease.
+- Two reconciliation calls returned the same already-complete receipt.
+- A linked-worktree lane captured a reviewed two-commit split at
+  `2385e60e9d9acec9479ccc3a9f52fd5d87c722a5`.
+- Both linked and anchor `HEAD` values and complete index digests stayed
+  unchanged.
+- Release preserved both lane refs and commits. Final doctor output was healthy
+  with no active lane or pending recovery.
+
+The first wrong-checkout probe found that the older product-passport branch let
+`wip env` return a worktree-bound identity from the anchor checkout. It did not
+renew the lease. The agent-facing branch already contained the intended
+`WORKTREE_MISMATCH` check. The older branch received the same fail-closed check,
+a lease and Git-state regression test, and matching user and skill guidance.
+
+The complete gate matrix for that correction passed `go test ./...`, `go vet
+./...`, `actionlint`, and `go test -race -count=3 ./...`.
+
+### Real self-hosted captures
+
+The older branch could not read the current store because its strict readers
+rejected newer `message_policy` and `review_plan_digest` fields. It stopped
+before staging or lane creation. The compatible agent-facing binary read the
+same store as healthy with no active or pending lane.
+
+The first real capture used
+`refs/heads/wip/codex/env-worktree-binding-fix`:
+
+- Tip: `b7e77a2a48c32e44ecf89c7fe188e1bcf8393e1b`.
+- Plan ID: `plan-128b94b2cee8fc6ce1dcf054`.
+- Capture intent digest:
+  `sha256:54b27961ca98ec067b85cbb010fbe74e8095bb56ba55015c5da7c5076b939335`.
+- Reviewed plan digest:
+  `sha256:19184ab8ce0844282e38bcb12f4b01ac0ab61bce48255b5c966f2a7446658461`.
+- Four commits covered the code and test, error guide, README, and portable
+  skill.
+- Final capture set `capture_only` to true, `landing_authorized` to false, and
+  `lane_released` to true.
+
+The compatibility exercise also showed that different development revisions
+reported the same plain beta version. A new typed version result now reports
+the exact source revision, source state, VCS time, and Go version. The release
+builder injects clean deterministic source identity even though it disables
+automatic Go VCS stamping.
+
+The second real capture used `refs/heads/wip/codex/version-provenance`:
+
+- Tip: `a42693a360b1b9cc987aa0c7926fd5b9792fbe34`.
+- Plan ID: `plan-578a7037a7436d366414b15a`.
+- Capture intent digest:
+  `sha256:093284cdd0570df0d5caee50225558f9fb6edd9251cad7189bb872a12d94901f`.
+- Reviewed plan digest:
+  `sha256:a9be503d8b60578dd899734c0f98469e7ac192aa95c4b2f06cc304f162ca2a83`.
+- Four commits covered typed version output, README guidance, deterministic
+  release stamping, and skill policy.
+- Final capture set `capture_only` to true, `landing_authorized` to false, and
+  `lane_released` to true.
+
+The complete provenance gate matrix passed `go test ./...`, `go vet ./...`,
+`actionlint`, and `go test -race -count=3 ./...`. The initial source-stamped
+installed binary had SHA-256
+`bd64e76d7cf7e907215ee6786f3a37064730516bad3d25a5fa9402106ec9e5cf`.
+Its JSON version result identifies revision
+`a42693a360b1b9cc987aa0c7926fd5b9792fbe34`, source state `clean`, VCS time
+`2026-08-21T01:02:47-05:00`, and Go `1.26.7`.
+
+### Scoped archive replay follow-up
+
+A preview narrowed to three released lanes returned an exact cutoff and digest.
+An apply that omitted the preview's `--lane` values failed closed with
+`ARCHIVE_PLAN_MOVED`; no record or ref moved. Repeating the three filters
+completed recoverable archive receipt `archive-a6eb70b719044cb82e4063b2`.
+
+That operator error exposed incomplete replay guidance. The follow-up capture
+used `refs/heads/wip/codex/archive-filter-replay`:
+
+- Tip: `4b309328955996e29629fef0a9239bd151266aec`.
+- Plan ID: `plan-13ef6bbf04693d466ec73705`.
+- Capture intent digest:
+  `sha256:2136a8c13e1721560692e3540692b5eab01861237b5eb6fbf3c032232fe24ff4`.
+- Reviewed plan digest:
+  `sha256:cceeacffd954ffaaae783f3b959a75691cc9b17b7bb3fb00858036416841b982`.
+- Four commits added canonical sorted `lane_filters`, actionable help and error
+  text, a two-lane regression test, and matching README and skill guidance.
+- The omitted-filter regression proves both eligible lanes remain unchanged;
+  the replayed filter archives only the reviewed lane.
+
+The follow-up passed `go test ./...`, `go vet ./...`, `actionlint`, and
+`go test -race -count=3 ./...`. A clean build from the captured tip installed
+itself through `wip init --install`. The installed and source binaries are
+byte-equal with SHA-256
+`4adf75c206c5804d98d4acf4a0ca85f5f7573607f621ecaeebfd54e2a69f9dd5`.
+Its JSON version result identifies revision
+`4b309328955996e29629fef0a9239bd151266aec`, source state `clean`, VCS time
+`2026-08-21T01:22:32-05:00`, and Go `1.26.7`.
+
+The installed binary then previewed `archive-filter-replay` with canonical
+`lane_filters`, replayed that filter, and completed recoverable receipt
+`archive-b27618aea8e554548bb6a9b5`. The lane ref and commit remained unchanged.
+
+The final repository doctor was healthy. Both source indexes intentionally kept
+their captured entries staged. No handoff authorized landing.
+
+## 2026-08-18 atomic finalization and schema review
+
+This exercise used a source-current binary in the isolated
+`feat/agent-facing-capture-v2` linked worktree. It tested the review corrections
+against real repository state.
+
+Evidence scope: local maintainer evidence. This exercise does not prove hosted
+CI, branch landing, a public release, or independent adoption.
+
+### Review corrections
+
+The final guided capture now keeps one lane lock from handoff validation through
+lane release. The active handoff command also selects and validates the intent,
+renews the lease, and builds status under one lane lock. Completed intents still
+validate every Git parent, tree, message, path set, scope, and final tree.
+
+Additional corrections bind `wip env` to the lane worktree before renewal and
+recognize every supported Boolean spelling of `--observe`. Initialization now
+requires an interactive worktree destination and reports where to continue
+after create or reuse.
+
+Deterministic contention tests paused after handoff validation. A competing
+lane lock returned `LOCK_TIMEOUT` for both active handoff and final capture.
+Wrong-worktree and observe tests proved that rejected or observing calls did
+not change lease timestamps.
+
+The released-handoff regression compared the lane lock before and after the
+command. The bytes were identical. Unit tests also proved that released
+handoff locking does not create a missing lock file or parent directory. The
+tests reject directories, symlinks, and replaced lock paths. They also prove
+that the read-only acquisition still waits for an existing owner.
+
+Real plan, status, legacy-plan, and handoff command data passed the published
+Draft 2020-12 schemas. A deliberately incomplete handoff with an unknown field
+was rejected.
+
+### Race-gate correction
+
+The first required three-count race run found a timing defect in the existing
+heartbeat test. The test slept near lease expiry. Race instrumentation
+sometimes moved execution past the deadline. Its failure path also left the
+test heartbeat running.
+
+The first correction polled the lease for a new timestamp. A later race run
+correctly hit the fail-closed stable-file check during atomic lease replacement.
+The final test uses an internal observer that fires only after a completed
+background refresh. It does not add a retry or weaken the production reader.
+
+Ten targeted heartbeat race repetitions passed. After the released-handoff
+lock correction, ten file-lock repetitions and five CLI contention repetitions
+also passed. The final `go test -race -count=3 ./...` run passed all packages.
+The CLI package completed in 157.817 seconds.
+
+The final local gate matrix also passed `go test ./...`, `go vet ./...`,
+`actionlint`, `golangci-lint run ./...`, `go mod verify`, and
+`govulncheck@v1.7.0 ./...`. The vulnerability scan found no reachable known
+vulnerability.
+
+`git fsck --strict --no-dangling` also passed. Gitleaks scanned the complete
+82-commit history and the final worktree. Both scans found no leak.
+
+### Protected landing review
+
+A read-only remote audit found `origin/main` at
+`4cf003bebbfd9c6281578ea9ef1b679dae67078f`. Pull request
+[#7](https://github.com/nstranquist/wip-commit/pull/7) remained open at
+`bfb720d9870f9f63d4c4110f9ee84aafc6d6a361`.
+
+The pull request and this branch both change the architecture and store lock
+model. A read-only three-tree preview found textual conflicts in
+`docs/ARCHITECTURE.md` and `internal/store/store.go`. During landing, preserve
+the pull request's state-registry read fence and this branch's continuous
+lane-lock transaction. Run the Windows concurrency stress test and the complete
+gate matrix on the combined candidate.
+
+No command pushed, merged, closed, or changed the pull request.
+
+### Reviewed repository capture
+
+The source `HEAD` stayed at
+`1194d4564c1009f81d486000734756e787956ed1`. Status reported 21 exact capture
+candidates and no foreign staged paths. The reviewed three-group plan ran a
+focused gate for the boundary change and full repository tests for the schema
+and documentation groups.
+
+The private chain was:
+
+1. `f47cedc0b69c46933c2872f552aa5f84f78d0177` — `fix(capture): harden agent workflow boundaries`
+2. `8d3764881ebc60eefa0e96845cabd8194379a4da` — `test(schema): validate published command contracts`
+3. `a6f7dee2049672baa78d61cc149e8f983ce3e033` — `docs(capture): explain atomic agent handoff workflow`
+
+Receipt evidence:
+
+- Lane: `refs/heads/wip/codex/agent-facing-v2-atomic-final`.
+- Plan ID: `plan-185477327d1cc03e1e04037e`.
+- Capture intent digest:
+  `sha256:e7edfba90386fb2a2c8b9c34f2e7844a92c92843d15b1ef8ef5f1607e412c873`.
+- Reviewed plan digest:
+  `sha256:5f339fd8cfcbe621ab170067dfcea023a4d5e6e61827e9ae3d1de5f785c26e41`.
+- Source-index digest:
+  `sha256:028fe1582dfea7c4609f05ca2804dd4d80ccc1dd0d973a789f3dc636b2488a39`.
+- Final tree: `f3223a96009d9fed401c33bb6fd7745aec60bc61`.
+- Every group-specific verification command passed.
+- The handoff set `capture_only` to true and `landing_authorized` to false.
+
+The final reviewed capture added this evidence file and used `--final`:
+
+- Commit: `e356d9f489ec2ff256dfef424a762a867defe858`.
+- Plan ID: `plan-1c61a7a787b31eb9d3b35560`.
+- Capture intent digest:
+  `sha256:4fbd19cc3d180cd223dd912508002db964b2d5f849b7ced4cbac909f8a599ca1`.
+- Reviewed plan digest:
+  `sha256:cd600afae3cd847d34b42792e39d942cecb708ca361232865689bc4b369d93ec`.
+- Final tree: `d285e5e57bf9491d2067222a7e38fa280e9b8d3c`.
+- `lane_released` was true, and the final context had no lease expiry.
+
+The source `HEAD` remained unchanged. The lane ref and all four private commits
+remain available. No command landed, merged, pushed, or deleted the lane ref.
+
+## 2026-08-18 reviewed guided capture
+
+This exercise used a source-current binary in a linked worktree. It captured
+the complete agent-facing workflow with the new version 2 plan and handoff
+contracts.
+
+Evidence scope: local maintainer evidence. This exercise does not prove hosted
+CI, publication, release, landing, or independent adoption.
+
+### Operational status and lease behavior
+
+The source `HEAD` was
+`206fa8b6a1dde1d97081133e4d447c0881849922`. The lane was
+`refs/heads/wip/codex/agent-facing-capture-v2`.
+
+An expired lane inspection returned `LEASE_EXPIRED` with a complete status
+object. It did not renew an expired lease. After an explicit claim, ordinary
+`status` and `plan` calls renewed the complete active path set.
+
+After exact staging, status reported 46 capture candidates and no foreign
+staged paths. It also reported three empty broad lease scopes. The status
+object validated against `STATUS.schema.json`.
+
+### Reviewed plan and safe failure
+
+The generated draft proposed 12 component groups. Review consolidated them
+into three dependency-closed groups:
+
+1. `feat(capture): add reviewed agent workflow`
+2. `docs(capture): define operational handoff contracts`
+3. `feat(skill): teach reviewed capture workflow`
+
+The first capture built the first private commit. The next group failed with
+`DIFF_CHECK_FAILED` because `docs/STATUS.schema.json` had one extra blank line
+at EOF. The lane ref stayed at its old value. The source `HEAD` and staged
+entries also stayed unchanged.
+
+After that byte was fixed, the old plan returned `STALE_PLAN` before hooks ran.
+This result confirmed that the reviewed plan bound the selected index content.
+A new generated draft received the same reviewed three-group structure.
+
+### Applied result
+
+The second capture produced this private linear chain:
+
+1. `6a9e14d1f83bb3c04202e4536d94578e2ca89019` — `feat(capture): add reviewed agent workflow`
+2. `19a4f1c1c6463c55bbe8bf3439691e5901cf040b` — `docs(capture): define operational handoff contracts`
+3. `4c27c2a6f477a33ef257a4722fc03c47d7473f0e` — `feat(skill): teach reviewed capture workflow`
+
+Receipt evidence:
+
+- Plan ID: `plan-9b2932bca63b757a5ec475b2`.
+- Capture intent digest:
+  `sha256:8c48dad5804a213823c24447957735e61f3853bea710b278f9fcde4a833281b5`.
+- Reviewed plan digest:
+  `sha256:d24c6a65ade6962da016d4c75d6d8141a03dc9744d980a6359e6284c3ef898c7`.
+- Final tree: `fda0fab63f375d37b1fb2fd4e5f424af8724fea0`.
+- Changed-path counts: 21, 22, and 3.
+- Each group-specific verification command passed.
+- The source `HEAD` stayed unchanged.
+- The complete `git ls-files --stage -z` digest stayed
+  `cfb3075ba51c7b6358c5bd04c7c4abf4fd3f928815f06470dedc0b5466adc50a`.
+
+The guided command emitted a handoff that validated against
+`HANDOFF.schema.json`. The handoff bound the named message policy and reviewed
+plan digest. It set `capture_only` to true and `landing_authorized` to false.
+
+The later standalone handoff returned the same receipt. Status reported zero
+capture candidates, 46 captured-but-still-staged paths, a complete intent, and
+no foreign staged paths. The lane remained active at that checkpoint so this
+evidence record could be added. A final one-file capture of this record
+releases the lane only after handoff validation. No command lands, merges, or
+pushes the private ref.
+
+### Post-capture review correction
+
+A later code review found a narrow interval between command validation and the
+kernel's first index read. A parallel writer could replace selected entries
+during that interval. Stable replacement content could then pass the kernel's
+final reread.
+
+The kernel now requires the reviewed source-index digest. It compares that
+digest with its initial source snapshot before hooks run. The final reread
+still detects changes during capture.
+
+`TestRunRejectsReviewedIndexMismatchBeforeHooks` proves that a mismatch returns
+`SOURCE_INDEX_MOVED` without running the repository hook or updating the ref.
+This correction requires a new final capture and supersedes the earlier lane
+tree as the release candidate.
+
+The corrected candidate used lane
+`refs/heads/wip/codex/agent-facing-capture-v2-final`. Its reviewed capture
+produced this chain:
+
+1. `7efa2bea4373b40b2089a6ff61b37778dcec7246` — `feat(capture): add reviewed agent workflow`
+2. `5e853892f31e08e8dc73a7a4f0b4f3a6c63c4a29` — `docs(capture): define operational handoff contracts`
+3. `eb9ac96215ec1033920a7569fb8961f09c3c2aed` — `feat(skill): teach reviewed capture workflow`
+
+Corrected receipt evidence:
+
+- Plan ID: `plan-16cafb8a9838ec64f7631b00`.
+- Capture intent digest:
+  `sha256:2a8922d1d1a0bd9356b4fc4a3bf7489f8d1fab7a27304777e37c4f0b0bcb084d`.
+- Reviewed plan digest:
+  `sha256:11d4605aa1795ab6a9b7154f7328205e2bb60abf380a84d209924389dfbda431`.
+- Reviewed and kernel source-index digest:
+  `sha256:cb2393c80e40ccd78ba612742625a09490e81f2843cf5e85c91c25a9ae479387`.
+- Final tree: `1f6bb2999e707426c67d3942e83565fb4e17b0a4`.
+- The source `HEAD` and complete staged-entry listing stayed unchanged.
+- A standalone active-lane handoff renewed the complete lease set only after
+  the receipt validated.
+
+The lane stayed active for this evidence edit. A final reviewed capture adds
+only this changed file and releases the lane after handoff validation.
+
 ## 2026-08-16 self-hosted shared capture
 
 This exercise used a source-current `wip` binary on the real dirty
@@ -18,6 +384,10 @@ hosted CI, an independent user exercise, or an independent security review.
 - `wip doctor` reported a healthy store and no pending recovery work.
 
 ### Safe failure under host pressure
+
+Historical contract note: this evidence predates the no-exec dry-run contract.
+Current `wip commit --dry-run` does not execute hooks or verification commands.
+Only a non-dry capture can provide current gate evidence.
 
 The first capture dry-run ran the complete internal test set. Disposable Git
 tests reached the host storage limit and returned `no space left on device`.
@@ -201,3 +571,44 @@ skill files were byte-equal to the source bundle.
 The redacted maintainer receipt is
 [BETA-EXERCISE.maintainer-2026-08-16.json](BETA-EXERCISE.maintainer-2026-08-16.json).
 It validates the protocol without closing the independent beta gate.
+
+## 2026-08-21 repeated archive and restore maintenance
+
+This exercise used the real `wip-commit` coordination store. A reviewed
+preview selected 34 released lanes and excluded the active correction lane.
+
+The first apply used the previously installed binary. It completed as
+`archive-86653415cc3e81cce70e103e`, but `wip doctor` then found that the older
+restored receipt `archive-74f4b31a69187b337ed50e88` no longer had its record
+live or in its own batch. The exact new receipt was restored immediately. The
+store returned to a healthy state, and every WIP ref stayed unchanged.
+
+The failure-boundary regression now runs this sequence:
+
+1. archive a released lane.
+2. restore the receipt.
+3. archive the same records into a different receipt.
+4. validate both the historical and current receipts.
+5. remove one successor record and require `ARCHIVE_FAILED`.
+6. restore the record and the current receipt.
+
+The CLI regression also requires `wip doctor` to stay healthy after the second
+archive. The implementation accepts a non-live historical record only when one
+newer, non-restored, fully validated receipt owns it. Missing, duplicated,
+unbound, or changed records still fail closed.
+
+The full tests, three race-enabled test runs, `go vet`, `actionlint`,
+`golangci-lint`, Linux and Windows cross-builds, and the portable behavioral
+benchmark passed. The benchmark candidate passed 16 of 16 checks. The
+deliberately weakened candidate passed 0 of 16. Both benchmark runs used zero
+AI calls and zero AI tokens.
+
+The source-current binary had SHA-256
+`d57891ca834bfd06e6ccd6e9af54f074034a84bb0dd2fc3e0f35e816861889c6`.
+It applied the reviewed 34-lane plan as
+`archive-1b8c142d0db2e33553893714`, with receipt digest
+`sha256:1b8c142d0db2e3355389371418c26e316e924629eda43cbfcafe9b5be68c568c`.
+The batch contains 118 records. The complete WIP ref inventory was byte-equal
+before and after apply. The final doctor read was healthy with one active lane,
+no archive candidates, no pending recovery, and no findings. No ref was
+deleted, landed, merged, or pushed.

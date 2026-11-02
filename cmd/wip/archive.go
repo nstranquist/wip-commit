@@ -16,11 +16,12 @@ import (
 )
 
 type archiveResult struct {
-	DryRun     bool                     `json:"dry_run"`
-	Cutoff     time.Time                `json:"cutoff,omitempty"`
-	PlanDigest string                   `json:"plan_digest,omitempty"`
-	Candidates []store.ArchiveCandidate `json:"candidates"`
-	Receipt    *store.ArchiveReceipt    `json:"receipt,omitempty"`
+	DryRun      bool                     `json:"dry_run"`
+	Cutoff      time.Time                `json:"cutoff,omitempty"`
+	PlanDigest  string                   `json:"plan_digest,omitempty"`
+	LaneFilters []string                 `json:"lane_filters"`
+	Candidates  []store.ArchiveCandidate `json:"candidates"`
+	Receipt     *store.ArchiveReceipt    `json:"receipt,omitempty"`
 }
 
 func (application app) runArchive(ctx context.Context, repo gitx.Repo, args []string) int {
@@ -53,12 +54,13 @@ func (application app) runArchive(ctx context.Context, repo gitx.Repo, args []st
 		if !*apply || !*yes {
 			return application.failure("archive", fail.New("CONFIRMATION_REQUIRED", "archive restore requires --apply --yes"), nil, 2)
 		}
-		laneStore, err := inspectArchiveStore(repo)
+		laneStore, writerFence, err := openArchiveStoreForWrite(repo)
 		if err != nil {
 			return application.failure("archive", err, nil, 1)
 		}
+		defer func() { _ = writerFence.Release() }()
 		receipt, err := laneStore.RestoreArchive(ctx, *restore)
-		result := archiveResult{DryRun: false, Candidates: []store.ArchiveCandidate{}, Receipt: &receipt}
+		result := archiveResult{DryRun: false, LaneFilters: []string{}, Candidates: []store.ArchiveCandidate{}, Receipt: &receipt}
 		if err != nil {
 			return application.failure("archive", err, result, 1)
 		}
@@ -71,12 +73,13 @@ func (application app) runArchive(ctx context.Context, repo gitx.Repo, args []st
 		if !*apply || !*yes {
 			return application.failure("archive", fail.New("CONFIRMATION_REQUIRED", "archive resume requires --apply --yes"), nil, 2)
 		}
-		laneStore, err := inspectArchiveStore(repo)
+		laneStore, writerFence, err := openArchiveStoreForWrite(repo)
 		if err != nil {
 			return application.failure("archive", err, nil, 1)
 		}
+		defer func() { _ = writerFence.Release() }()
 		receipt, err := laneStore.ResumeArchive(ctx, *resume)
-		result := archiveResult{DryRun: false, Cutoff: receipt.Before, Candidates: receipt.Candidates, Receipt: &receipt}
+		result := archiveResult{DryRun: false, Cutoff: receipt.Before, LaneFilters: []string{}, Candidates: receipt.Candidates, Receipt: &receipt}
 		if err != nil {
 			return application.failure("archive", err, result, 1)
 		}
@@ -94,7 +97,7 @@ func (application app) runArchive(ctx context.Context, repo gitx.Repo, args []st
 	if err != nil {
 		return application.failure("archive", err, nil, 1)
 	}
-	result := archiveResult{DryRun: !*apply, Cutoff: cutoff, Candidates: []store.ArchiveCandidate{}}
+	result := archiveResult{DryRun: !*apply, Cutoff: cutoff, LaneFilters: []string{}, Candidates: []store.ArchiveCandidate{}}
 	if !initialized {
 		return application.success("archive", result, "no wip coordination state is initialized")
 	}
@@ -112,7 +115,9 @@ func (application app) runArchive(ctx context.Context, repo gitx.Repo, args []st
 				return application.failure("archive", fail.New("INVALID_ARGS", "duplicate --lane value: "+lane), result, 2)
 			}
 			wanted[lane] = true
+			result.LaneFilters = append(result.LaneFilters, lane)
 		}
+		sort.Strings(result.LaneFilters)
 		filtered := candidates[:0]
 		for _, candidate := range candidates {
 			if wanted[candidate.LaneID] {
@@ -145,12 +150,17 @@ func (application app) runArchive(ctx context.Context, repo gitx.Repo, args []st
 		return application.failure("archive", fail.New("ARCHIVE_PLAN_REQUIRED", "apply requires --cutoff and --plan-digest from the reviewed preview"), result, 2)
 	}
 	if strings.TrimSpace(*expectedDigest) != result.PlanDigest {
-		return application.failure("archive", fail.New("ARCHIVE_PLAN_MOVED", "eligible archive records differ from the reviewed plan"), result, 1)
+		return application.failure("archive", fail.New("ARCHIVE_PLAN_MOVED", "eligible archive records differ from the reviewed plan; repeat every --lane filter from the preview or run a new preview"), result, 1)
 	}
 	if len(candidates) == 0 {
 		return application.failure("archive", fail.New("ARCHIVE_EMPTY", "no eligible lanes match the reviewed archive plan"), result, 1)
 	}
-	laneStore, err = store.Open(repo)
+	writerFence, err := store.AcquireWriterFence(repo, store.DefaultWriterFenceWait)
+	if err != nil {
+		return application.failure("archive", err, result, 1)
+	}
+	defer func() { _ = writerFence.Release() }()
+	laneStore, err = store.OpenWithWriterFence(repo, writerFence)
 	if err != nil {
 		return application.failure("archive", err, result, 1)
 	}
@@ -163,15 +173,30 @@ func (application app) runArchive(ctx context.Context, repo gitx.Repo, args []st
 	return application.success("archive", result, fmt.Sprintf("archived %d released lane record(s) in %s; all lane refs and commits were preserved", len(receipt.Candidates), receipt.ID))
 }
 
-func inspectArchiveStore(repo gitx.Repo) (store.Store, error) {
-	laneStore, initialized, err := store.Inspect(repo)
+func openArchiveStoreForWrite(repo gitx.Repo) (store.Store, *store.WriterFence, error) {
+	_, initialized, err := store.Inspect(repo)
 	if err != nil {
-		return store.Store{}, err
+		return store.Store{}, nil, err
 	}
 	if !initialized {
-		return store.Store{}, fail.New("ARCHIVE_NOT_FOUND", "archive receipt does not exist because wip state is not initialized")
+		return store.Store{}, nil, fail.New("ARCHIVE_NOT_FOUND", "archive receipt does not exist because wip state is not initialized")
 	}
-	return laneStore, nil
+	fence, err := store.AcquireWriterFence(repo, store.DefaultWriterFenceWait)
+	if err != nil {
+		return store.Store{}, nil, err
+	}
+	laneStore, initialized, err := store.Inspect(repo)
+	if err == nil && !initialized {
+		err = fail.New("ARCHIVE_NOT_FOUND", "archive receipt does not exist because wip state is not initialized")
+	}
+	if err == nil {
+		laneStore, err = store.OpenWithWriterFence(repo, fence)
+	}
+	if err != nil {
+		_ = fence.Release()
+		return store.Store{}, nil, err
+	}
+	return laneStore, fence, nil
 }
 
 func formatArchivePreview(result archiveResult) string {
@@ -182,7 +207,14 @@ func formatArchivePreview(result archiveResult) string {
 	for _, candidate := range result.Candidates {
 		lines = append(lines, fmt.Sprintf("%s %s %s leases=%d", candidate.LaneID, candidate.State, candidate.Commit, candidate.LeaseCount))
 	}
-	lines = append(lines, "cutoff: "+result.Cutoff.Format(time.RFC3339Nano), "plan digest: "+result.PlanDigest, "Review this list, then reuse the exact --cutoff and --plan-digest with --apply --yes. Lane refs and commits are never moved or deleted.")
+	if len(result.LaneFilters) > 0 {
+		filters := make([]string, 0, len(result.LaneFilters))
+		for _, lane := range result.LaneFilters {
+			filters = append(filters, "--lane "+lane)
+		}
+		lines = append(lines, "lane filters: "+strings.Join(filters, " "))
+	}
+	lines = append(lines, "cutoff: "+result.Cutoff.Format(time.RFC3339Nano), "plan digest: "+result.PlanDigest, "Review this list, then reuse the exact --cutoff and --plan-digest and repeat every listed --lane filter with --apply --yes. Lane refs and commits are never moved or deleted.")
 	return strings.Join(lines, "\n")
 }
 

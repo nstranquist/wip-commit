@@ -144,10 +144,12 @@ func TestWriteChecksumsUsesSortedArtifactInput(t *testing.T) {
 func TestBuildHostBinary(t *testing.T) {
 	root := moduleRoot(t)
 	binary := filepath.Join(t.TempDir(), "wip")
+	commit := strings.Repeat("b", 40)
+	epoch := int64(1_700_000_000)
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	if err := buildBinary(root, binary, "0.1.0-test", target{OS: runtime.GOOS, Arch: runtime.GOARCH}); err != nil {
+	if err := buildBinary(root, binary, "v0.2.0-test", commit, epoch, target{OS: runtime.GOOS, Arch: runtime.GOARCH}); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(binary)
@@ -157,6 +159,29 @@ func TestBuildHostBinary(t *testing.T) {
 	if info.Size() == 0 {
 		t.Fatal("built binary is empty")
 	}
+	output, err := exec.Command(binary, "--json", "version").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			SchemaVersion string `json:"schema_version"`
+			Version       string `json:"version"`
+			Channel       string `json:"channel"`
+			ReleaseTag    string `json:"release_tag"`
+			SourceStamped bool   `json:"source_stamped"`
+			Revision      string `json:"revision"`
+			SourceState   string `json:"source_state"`
+			VCSTime       string `json:"vcs_time"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.OK || result.Data.SchemaVersion != "2.0.0" || result.Data.Version != "0.2.0-test" || result.Data.Channel != "release" || result.Data.ReleaseTag != "v0.2.0-test" || !result.Data.SourceStamped || result.Data.Revision != commit || result.Data.SourceState != "clean" || result.Data.VCSTime != time.Unix(epoch, 0).UTC().Format(time.RFC3339) {
+		t.Fatalf("built binary provenance = %#v", result)
+	}
 }
 
 func TestBuildReleaseIsAtomicAndDeterministic(t *testing.T) {
@@ -164,7 +189,7 @@ func TestBuildReleaseIsAtomicAndDeterministic(t *testing.T) {
 	parent := t.TempDir()
 	first := filepath.Join(parent, "first")
 	second := filepath.Join(parent, "second")
-	version := "v0.1.0-test"
+	version := "v0.2.0-test"
 	commit := strings.Repeat("a", 40)
 	epoch := int64(1_700_000_000)
 	targets := []target{{OS: runtime.GOOS, Arch: runtime.GOARCH}}
@@ -231,7 +256,7 @@ func TestSourceVersionAndExclusiveFileCreation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != "0.1.0-beta.1" {
+	if version != "0.2.0-dev" {
 		t.Fatalf("source version = %q", version)
 	}
 	path := filepath.Join(t.TempDir(), "exclusive.txt")
@@ -254,7 +279,7 @@ func TestSourceVersionAcceptsWindowsLineEndings(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(commandDir, "main.go")
-	body := []byte("package main\r\n\r\nvar version = \"0.1.0-beta.1\"\r\n")
+	body := []byte("package main\r\n\r\nvar version = \"0.2.0-dev\"\r\n")
 	if err := os.WriteFile(path, body, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -262,8 +287,25 @@ func TestSourceVersionAcceptsWindowsLineEndings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != "0.1.0-beta.1" {
+	if version != "0.2.0-dev" {
 		t.Fatalf("source version = %q", version)
+	}
+}
+
+func TestReleaseTagMustMatchSourceDevelopmentLine(t *testing.T) {
+	for _, test := range []struct {
+		tag, source string
+		allowed     bool
+	}{
+		{"v0.2.0-beta.1", "0.2.0-dev", true},
+		{"v0.2.0", "0.2.0-dev", true},
+		{"v0.3.0-beta.1", "0.2.0-dev", false},
+		{"v0.2.0-beta.1", "0.2.0-beta.1", false},
+		{"not-a-tag", "0.2.0-dev", false},
+	} {
+		if allowed := validateReleaseLine(test.tag, test.source) == nil; allowed != test.allowed {
+			t.Errorf("validateReleaseLine(%q, %q) = %v, want %v", test.tag, test.source, allowed, test.allowed)
+		}
 	}
 }
 

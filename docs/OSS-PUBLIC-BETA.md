@@ -4,15 +4,17 @@ Plan ID: `wip-oss-public-beta`
 
 Status: Accepted
 
-Target: `v0.1.0-beta.1`
+Target: `v0.2.0-beta.1`
 
 Owner: Repository owner
 
-Last review: 2026-08-16
+Last review: 2026-08-18
 
 Approval: `owner-session-2026-08-16`
 
-Local preparation: Extended safety pass complete on 2026-08-16
+Local preparation: Extended safety pass complete on 2026-08-18
+
+Public source: Confirmed on 2026-08-18. No tag or GitHub release exists.
 
 ## Approved decision
 
@@ -24,12 +26,26 @@ The owner approved a capture-only public beta with these boundaries:
 - Support shared checkouts and linked worktrees through the same capture
   transaction.
 - Keep branch landing, merging, pushing, and remote coordination out of scope.
-- Use `v0.1.0-beta.1` only after all public-beta gates pass.
+- Use `v0.2.0-beta.1` only after all public-beta gates pass.
+
+## Hosted state on 2026-08-17
+
+The public source repository now exists at
+[`nstranquist/wip-commit`](https://github.com/nstranquist/wip-commit).
+Commit `206fa8b6a1dde1d97081133e4d447c0881849922` passed the hosted candidate and
+final `main` checks.
+
+The active `main` ruleset and security settings passed the hosted setup audit.
+[PUBLICATION-EVIDENCE.md](PUBLICATION-EVIDENCE.md) contains the public record.
+
+No beta tag or GitHub release exists. The independent beta, conduct,
+security-notification, tag-approval, and tagged-install gates remain.
 
 This approval fixes the repository name, module path, and capture-only scope.
-It does not approve a release tag. The project instructions require a human to
-perform the first push. Follow
-[PUBLICATION-HANDOFF.md](PUBLICATION-HANDOFF.md) for that exact boundary.
+It does not approve a release tag. The owner separately completed the first
+source publication through the first-push handoff on 2026-08-17. The historical
+authority boundary remains in
+[PUBLICATION-HANDOFF.md](PUBLICATION-HANDOFF.md). Do not run it again.
 
 ## Why this plan exists
 
@@ -43,7 +59,7 @@ adding a YAML dependency.
 
 Use these status values:
 
-- `verified`: Local evidence passed on the recorded source.
+- `verified`: Recorded local or hosted evidence passed on the exact source.
 - `prepared`: The repository artifact exists, but hosted evidence is absent.
 - `planned`: Owner-controlled implementation work remains.
 - `human-gated`: An owner decision or external mutation is required.
@@ -65,7 +81,12 @@ The owner-controlled repository work is complete. The checkout now contains:
   values.
 - no-clobber lease creation, a capture heartbeat, a final exact-set publication
   fence, and refusal of partially released lanes.
-- read-only split proposals and a split-plan default for automation.
+- one bound version 3 draft/reviewed plan schema with private-source bindings
+  and fail-closed stale-plan checks.
+- operational status with staged-state classes and ordinary-use lease renewal.
+- named message policy outside the capture kernel.
+- a typed version 2 cumulative capture-only handoff and guided `wip capture`
+  command.
 - bounded `wip doctor` inspection, structural capture-receipt validation, and
   exact recoverable state archival.
 - receipt-bound archive records and recovery of a deterministic empty batch
@@ -84,24 +105,29 @@ The owner-controlled repository work is complete. The checkout now contains:
   versions.
 - an exact minimum Go 1.25.12 gate that excludes reachable standard-library
   vulnerabilities found in Go 1.25.0.
+- a source-bound, fail-closed hosted-correction command, schema, negative test
+  matrix, and finalized private receipt for the first corrected candidate.
 
 Two clean six-target rehearsals produced equal directory trees. Every recorded
 archive checksum passed, and the native archive reported the target version.
-This local proof does not satisfy hosted CI, attestation, independent testing,
-public installation, or publication gates.
+The public base includes hosted CI evidence and active controls. This local
+feature candidate lacks hosted evidence. It does not satisfy attestation,
+independent testing, tagged installation, or release gates.
 
 ## Product boundary
 
-The public beta captures exact staged subsets into agent-owned local refs. It
-does not land those refs onto a shared branch.
+The public beta captures exact staged-index or worktree-snapshot sources into
+agent-owned local refs. It does not land those refs onto a shared branch.
 
-`wip init` is the onboarding entry point. It configures a shared lane or a
-linked-worktree lane. It can install the current binary only after explicit
-consent, and it does not overwrite different bytes.
+`wip init` is the onboarding entry point. It recommends one linked worktree per
+task. Shared mode remains available for lanes that require one checkout.
 
-Both modes use path leases, private indexes, bounded hooks, durable intents,
-and an exact ref compare-and-swap. Worktree mode adds worktree ownership. It
-does not use a different publication algorithm.
+The wizard can install the current binary only after explicit consent. It does
+not overwrite different bytes.
+
+Both modes use path leases, private sources, private indexes, bounded hooks,
+durable intents, and an exact ref compare-and-swap. Worktree mode adds worktree
+ownership. It does not use a different publication algorithm.
 
 The portable agent skill must use only public `wip` commands and standard Git
 inspection. It must not require private helpers, private paths, or an internal
@@ -113,8 +139,8 @@ command.
 The public beta must retain these properties:
 
 1. A successful capture leaves the source `HEAD` unchanged.
-2. A successful capture leaves the complete source index unchanged.
-3. An unselected staged path cannot enter an agent commit.
+2. A successful capture leaves the complete caller index unchanged.
+3. An unselected source path cannot enter an agent commit.
 4. A failed group, hook, gate, or ref race publishes none of a split chain.
 5. Reconciliation accepts only the original immutable plan evidence.
 6. Two disjoint shared lanes can capture at the same time.
@@ -131,7 +157,8 @@ The public beta must retain these properties:
 14. Archive apply rechecks every reviewed candidate under lock and preserves
     all lane refs and commits.
 15. A prepared archive can resume or restore by immutable receipt ID.
-16. Commands other than `wip init` cannot claim an uninitialized repository.
+16. Only `wip init` and an exact reviewed migration apply can claim an
+    uninitialized repository.
 17. New lease publication cannot replace an existing lease record. A partial
     release blocks claim, renewal, and capture until release resumes.
 18. Every durable record writer rejects bytes that its corresponding reader
@@ -148,6 +175,16 @@ The public beta must retain these properties:
     symmetric across Unicode case pairs and component boundaries.
 24. Inherited Git variables cannot redirect repository discovery, refs, object
     storage, or prepared hooks away from the selected canonical checkout.
+25. Operational lane and lease reads use the record-replacement registry
+    fence, including the final durable commit receipt.
+26. `wip plan --observe` changes no repository bytes and writes no plan file.
+27. A handoff binds the complete base-to-tip capture chain. It never authorizes
+    landing.
+28. Coordination migration uses one writer fence and never dual-writes both
+    state roots.
+29. The migration manifest binds the regular lease-registry lock. Apply
+    publishes that lock and the review-plan and handoff directories before it
+    publishes imported lane and lease records.
 
 The threat model remains part of the release contract. Cooperating processes
 must honor leases. Hooks and `verify` commands remain trusted repository code.
@@ -182,19 +219,21 @@ records the same approval reference.
 
 ### Phase 3: create the hosted candidate
 
-Follow [PUBLICATION-HANDOFF.md](PUBLICATION-HANDOFF.md), then
-[HOSTED-SETUP.md](HOSTED-SETUP.md), and retain their redacted evidence.
-The exact required CI check names come from the first hosted pull request.
-Do not guess them from workflow job labels.
+The first source publication ran on 2026-08-17. Do not repeat its bootstrap
+steps. See [PUBLICATION-HANDOFF.md](PUBLICATION-HANDOFF.md) for the historical
+boundary and
+[HOSTED-STATUS-2026-08-18.md](HOSTED-STATUS-2026-08-18.md) for the live check.
 
-1. Create the public repository only after the owner authorizes it.
-2. Push `main` without a release tag.
-3. Enable private vulnerability reporting and security notifications.
-4. Enable dependency alerts and secret scanning.
-5. Protect `main` with pull requests, review, and required CI jobs.
-6. Block force pushes and branch deletion.
-7. Run Linux, macOS, and Windows jobs on hosted workers.
-8. Approve a Code of Conduct, assign enforcement responsibility, and configure
+Every new candidate must use the active protected pull-request path. Use the
+required check names from the live ruleset.
+
+1. Open a reviewed candidate pull request without merging it.
+2. Run Linux, macOS, Windows, race, lint, and dependency-review jobs.
+3. Close the verification pull request without merging it.
+4. Use a separately authorized, policy-compliant update for public `main`.
+5. Verify the final public commit, tree, and hosted checks.
+6. Verify the maintainer's personal security-alert notifications.
+7. Approve a Code of Conduct, assign enforcement responsibility, and configure
    a confidential conduct-reporting path before soliciting contributions.
 
 Hosted Windows execution is mandatory. A Windows cross-build does not exercise
@@ -213,7 +252,7 @@ Windows locks, process cleanup, or atomic replacement.
 
 ### Phase 5: publish the beta
 
-1. Create an approved, signed `v0.1.0-beta.1` tag.
+1. Create an approved, signed `v0.2.0-beta.1` tag.
 2. Build release archives from that exact tag.
 3. Publish checksums and provenance attestations with the archives.
 4. Test one archive on each operating system.
@@ -244,8 +283,8 @@ CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 GOTOOLCHAIN=go1.25.12 GOWORK=off go test 
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 GOTOOLCHAIN=go1.25.12 GOWORK=off go test -exec=/usr/bin/true ./...
 CGO_ENABLED=0 GOOS=windows GOARCH=arm64 GOTOOLCHAIN=go1.25.12 GOWORK=off go test -exec=/usr/bin/true ./...
 actionlint
-GOTOOLCHAIN=go1.25.12 GOWORK=off go run ./scripts/release --version v0.1.0-beta.1 --out <new-output-a>
-GOTOOLCHAIN=go1.25.12 GOWORK=off go run ./scripts/release --version v0.1.0-beta.1 --out <new-output-b>
+GOTOOLCHAIN=go1.25.12 GOWORK=off go run ./scripts/release --version v0.2.0-beta.1 --out <new-output-a>
+GOTOOLCHAIN=go1.25.12 GOWORK=off go run ./scripts/release --version v0.2.0-beta.1 --out <new-output-b>
 diff -rq <new-output-a> <new-output-b>
 gitleaks git --redact --exit-code 1 .
 gitleaks dir --redact --exit-code 1 .
@@ -288,8 +327,10 @@ tag, hosted attestation, and verification sequence.
   for project, governance, release, and succession practices.
 - Use the [GitHub Open Source Guides](https://opensource.guide/) for community
   health and maintainer practices.
-- Review the OpenSSF [Concise Guide for Developing More Secure Software](https://github.com/ossf/wg-best-practices-os-developers/blob/main/docs/Concise-Guide-for-Developing-More-Secure-Software.md)
-  and [Concise Guide for Evaluating Open Source Software](https://github.com/ossf/wg-best-practices-os-developers/blob/main/docs/Concise-Guide-for-Evaluating-Open-Source-Software.md).
+- Review the OpenSSF [Concise Guide for Developing More Secure
+  Software][ossf-secure-development].
+- Review the OpenSSF [Concise Guide for Evaluating Open Source
+  Software][ossf-evaluation].
 - Map the secure-development lifecycle to the NIST
   [Secure Software Development Framework](https://csrc.nist.gov/pubs/sp/800/218/final).
 
@@ -326,3 +367,6 @@ data-loss or foreign-staged-content defect can remain.
 
 Landing remains a separate product decision. If the public contract states the
 boundary clearly, capture-only behavior can remain the stable scope.
+
+[ossf-secure-development]: https://github.com/ossf/wg-best-practices-os-developers/blob/main/docs/Concise-Guide-for-Developing-More-Secure-Software.md
+[ossf-evaluation]: https://github.com/ossf/wg-best-practices-os-developers/blob/main/docs/Concise-Guide-for-Evaluating-Open-Source-Software.md

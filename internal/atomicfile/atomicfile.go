@@ -36,7 +36,7 @@ func CreateWithTempDir(path, temporaryDirectory string, body []byte, mode os.Fil
 		_ = file.Close()
 		_ = os.Remove(temporary)
 	}()
-	if err = file.Chmod(mode); err != nil {
+	if err = file.Chmod(createSourceMode(mode)); err != nil {
 		return err
 	}
 	if written, writeErr := file.Write(body); writeErr != nil {
@@ -55,10 +55,13 @@ func CreateWithTempDir(path, temporaryDirectory string, body []byte, mode os.Fil
 	} else if err != nil {
 		return err
 	}
-	if err = syncDirectory(destinationDirectory); err != nil {
+	if err = os.Remove(temporary); err != nil {
 		return err
 	}
-	if err = os.Remove(temporary); err != nil {
+	if err = finalizeCreatedFile(path, mode); err != nil {
+		return err
+	}
+	if err = syncDirectory(destinationDirectory); err != nil {
 		return err
 	}
 	return syncDirectory(temporaryDirectory)

@@ -89,7 +89,7 @@ func main() {
 func run(args []string) error {
 	flags := flag.NewFlagSet("release", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
-	version := flags.String("version", "", "release tag, for example v0.1.0-beta.1")
+	version := flags.String("version", "", "release tag, for example v0.2.0-beta.1")
 	out := flags.String("out", "", "new output directory")
 	var rawTargets targetList
 	flags.Var(&rawTargets, "target", "supported GOOS/GOARCH pair; repeatable")
@@ -121,8 +121,8 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	if *version != "v"+commandVersion {
-		return fmt.Errorf("release tag %q does not match command version %q", *version, "v"+commandVersion)
+	if err := validateReleaseLine(*version, commandVersion); err != nil {
+		return err
 	}
 	commit, err := gitOutput(root, "rev-parse", "HEAD")
 	if err != nil {
@@ -236,7 +236,7 @@ func buildRelease(root, outPath, version, commit string, epoch int64, targets []
 			binaryName += ".exe"
 		}
 		binaryPath := filepath.Join(buildDir, item.OS+"-"+item.Arch+"-"+binaryName)
-		if err := buildBinary(root, binaryPath, strings.TrimPrefix(version, "v"), item); err != nil {
+		if err := buildBinary(root, binaryPath, version, commit, epoch, item); err != nil {
 			return err
 		}
 		entries, err := releaseEntries(root, binaryPath, binaryName)
@@ -292,13 +292,15 @@ func buildRelease(root, outPath, version, commit string, epoch int64, targets []
 	return nil
 }
 
-func buildBinary(root, output, version string, item target) error {
+func buildBinary(root, output, releaseTag, commit string, epoch int64, item target) error {
+	vcsTime := time.Unix(epoch, 0).UTC().Format(time.RFC3339)
+	version := strings.TrimPrefix(releaseTag, "v")
 	args := []string{
 		"build",
 		"-mod=readonly",
 		"-trimpath",
 		"-buildvcs=false",
-		"-ldflags=-s -w -buildid= -X main.version=" + version,
+		"-ldflags=-s -w -buildid= -X main.version=" + version + " -X main.buildReleaseTag=" + releaseTag + " -X main.buildRevision=" + commit + " -X main.buildSourceState=clean -X main.buildVCSTime=" + vcsTime,
 		"-o", output,
 		commandPackage,
 	}
@@ -308,6 +310,19 @@ func buildBinary(root, output, version string, item target) error {
 	outputText, err := command.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("build %s: %w: %s", item, err, strings.TrimSpace(string(outputText)))
+	}
+	return nil
+}
+
+func validateReleaseLine(tag, source string) error {
+	match := semverTagPattern.FindStringSubmatch(tag)
+	if len(match) < 4 {
+		return errors.New("release tag is not valid SemVer")
+	}
+	core := strings.Join(match[1:4], ".")
+	wanted := core + "-dev"
+	if source != wanted {
+		return fmt.Errorf("release tag %q requires source development version %q, found %q", tag, wanted, source)
 	}
 	return nil
 }

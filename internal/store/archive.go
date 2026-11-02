@@ -51,6 +51,11 @@ func (store Store) ArchiveCandidates(before time.Time) ([]ArchiveCandidate, erro
 	if before.IsZero() {
 		return nil, fail.New("INVALID_ARGS", "archive cutoff cannot be zero")
 	}
+	registry, err := store.existingRegistryLock(filelock.DefaultWait)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = registry.Release() }()
 	entries, err := readRecordEntries(filepath.Join(store.Root, "lanes"))
 	if err != nil {
 		return nil, err
@@ -61,7 +66,7 @@ func (store Store) ArchiveCandidates(before time.Time) ([]ArchiveCandidate, erro
 			return nil, fail.New("ARCHIVE_REFUSED", "lane record directory contains an unexpected entry: "+entry.Name())
 		}
 		id := strings.TrimSuffix(entry.Name(), ".json")
-		candidate, eligible, err := store.archiveCandidate(id, before)
+		candidate, eligible, err := store.archiveCandidateLocked(id, before)
 		if err != nil {
 			return nil, err
 		}
@@ -77,8 +82,8 @@ func (store Store) ArchiveCandidates(before time.Time) ([]ArchiveCandidate, erro
 	return candidates, nil
 }
 
-func (store Store) archiveCandidate(id string, before time.Time) (ArchiveCandidate, bool, error) {
-	lane, err := store.Load(id)
+func (store Store) archiveCandidateLocked(id string, before time.Time) (ArchiveCandidate, bool, error) {
+	lane, err := store.loadLane(id)
 	if err != nil {
 		return ArchiveCandidate{}, false, err
 	}
@@ -104,10 +109,13 @@ func (store Store) archiveCandidate(id string, before time.Time) (ArchiveCandida
 // records are compared again while every selected lane and the lease registry
 // are locked.
 func (store Store) Archive(ctx context.Context, before time.Time, expected []ArchiveCandidate) (ArchiveReceipt, error) {
+	if !store.WriterFenced() {
+		return withWriterFence(store, func(fenced Store) (ArchiveReceipt, error) { return fenced.Archive(ctx, before, expected) })
+	}
 	if err := validateArchiveCandidates(expected, before); err != nil {
 		return ArchiveReceipt{}, err
 	}
-	archiveLock, err := filelock.Acquire(filepath.Join(store.Root, "locks", "archive.lock"), 0)
+	archiveLock, err := filelock.Acquire(filepath.Join(store.Root, "locks", "archive.lock"), filelock.DefaultWait)
 	if err != nil {
 		return ArchiveReceipt{}, fail.Wrap("LOCK_TIMEOUT", err)
 	}
@@ -117,10 +125,13 @@ func (store Store) Archive(ctx context.Context, before time.Time, expected []Arc
 
 // ResumeArchive continues only the immutable prepared receipt named by id.
 func (store Store) ResumeArchive(ctx context.Context, id string) (ArchiveReceipt, error) {
+	if !store.WriterFenced() {
+		return withWriterFence(store, func(fenced Store) (ArchiveReceipt, error) { return fenced.ResumeArchive(ctx, id) })
+	}
 	if err := validateID(id, "archive"); err != nil {
 		return ArchiveReceipt{}, err
 	}
-	archiveLock, err := filelock.Acquire(filepath.Join(store.Root, "locks", "archive.lock"), 0)
+	archiveLock, err := filelock.Acquire(filepath.Join(store.Root, "locks", "archive.lock"), filelock.DefaultWait)
 	if err != nil {
 		return ArchiveReceipt{}, fail.Wrap("LOCK_TIMEOUT", err)
 	}
@@ -147,7 +158,7 @@ func (store Store) ResumeArchive(ctx context.Context, id string) (ArchiveReceipt
 func (store Store) archiveLocked(ctx context.Context, receipt ArchiveReceipt, resume bool) (ArchiveReceipt, error) {
 	locks := make([]*filelock.Lock, 0, len(receipt.Candidates))
 	for _, candidate := range receipt.Candidates {
-		lock, err := store.LaneLock(candidate.LaneID, 0)
+		lock, err := store.LaneLock(candidate.LaneID, filelock.DefaultWait)
 		if err != nil {
 			for index := len(locks) - 1; index >= 0; index-- {
 				_ = locks[index].Release()
@@ -161,7 +172,7 @@ func (store Store) archiveLocked(ctx context.Context, receipt ArchiveReceipt, re
 			_ = locks[index].Release()
 		}
 	}()
-	registry, err := store.registryLock(0)
+	registry, err := store.registryLock(filelock.DefaultWait)
 	if err != nil {
 		return ArchiveReceipt{}, err
 	}
@@ -169,7 +180,7 @@ func (store Store) archiveLocked(ctx context.Context, receipt ArchiveReceipt, re
 	if !resume {
 		// Rebuild only the exact reviewed records under every relevant lock.
 		for _, candidate := range receipt.Candidates {
-			fresh, eligible, err := store.archiveCandidate(candidate.LaneID, receipt.Before)
+			fresh, eligible, err := store.archiveCandidateLocked(candidate.LaneID, receipt.Before)
 			if err != nil {
 				return ArchiveReceipt{}, err
 			}
@@ -236,10 +247,13 @@ func sameArchiveCandidate(left, right ArchiveCandidate) bool {
 }
 
 func (store Store) RestoreArchive(ctx context.Context, id string) (ArchiveReceipt, error) {
+	if !store.WriterFenced() {
+		return withWriterFence(store, func(fenced Store) (ArchiveReceipt, error) { return fenced.RestoreArchive(ctx, id) })
+	}
 	if err := validateID(id, "archive"); err != nil {
 		return ArchiveReceipt{}, err
 	}
-	archiveLock, err := filelock.Acquire(filepath.Join(store.Root, "locks", "archive.lock"), 0)
+	archiveLock, err := filelock.Acquire(filepath.Join(store.Root, "locks", "archive.lock"), filelock.DefaultWait)
 	if err != nil {
 		return ArchiveReceipt{}, fail.Wrap("LOCK_TIMEOUT", err)
 	}
@@ -259,7 +273,7 @@ func (store Store) RestoreArchive(ctx context.Context, id string) (ArchiveReceip
 	}
 	locks := make([]*filelock.Lock, 0, len(receipt.Candidates))
 	for _, candidate := range receipt.Candidates {
-		lock, err := store.LaneLock(candidate.LaneID, 0)
+		lock, err := store.LaneLock(candidate.LaneID, filelock.DefaultWait)
 		if err != nil {
 			for index := len(locks) - 1; index >= 0; index-- {
 				_ = locks[index].Release()
@@ -273,7 +287,7 @@ func (store Store) RestoreArchive(ctx context.Context, id string) (ArchiveReceip
 			_ = locks[index].Release()
 		}
 	}()
-	registry, err := store.registryLock(0)
+	registry, err := store.registryLock(filelock.DefaultWait)
 	if err != nil {
 		return ArchiveReceipt{}, err
 	}
@@ -528,6 +542,13 @@ func (store Store) ValidateArchiveFiles(receipt ArchiveReceipt) error {
 	if err := validateArchiveBatchContents(root, receipt); err != nil {
 		return err
 	}
+	historicalSources := map[string]string{}
+	if receipt.State == "restored" {
+		historicalSources, err = store.restoredArchiveSources(root, receipt)
+		if err != nil {
+			return err
+		}
+	}
 	candidates := make(map[string]ArchiveCandidate, len(receipt.Candidates))
 	laneRecords := map[string]bool{}
 	leaseCounts := map[string]int{}
@@ -544,15 +565,28 @@ func (store Store) ValidateArchiveFiles(receipt ArchiveReceipt) error {
 		if err != nil {
 			return err
 		}
-		if live == stored {
-			return fail.New("ARCHIVE_FAILED", "archive receipt file exists on both sides or neither side: "+relative)
-		}
-		if receipt.State == "complete" && !stored || receipt.State == "restored" && !live {
-			return fail.New("ARCHIVE_FAILED", "archive receipt file is on the wrong side for state "+receipt.State+": "+relative)
-		}
 		source := relative
-		if stored {
-			source = archived
+		if receipt.State == "restored" {
+			historical, rearchived := historicalSources[relative]
+			if stored {
+				return fail.New("ARCHIVE_FAILED", "archive receipt file is on the wrong side for state restored: "+relative)
+			}
+			if live == rearchived {
+				return fail.New("ARCHIVE_FAILED", "restored archive receipt file exists live and in a successor archive, or in neither location: "+relative)
+			}
+			if rearchived {
+				source = historical
+			}
+		} else {
+			if live == stored {
+				return fail.New("ARCHIVE_FAILED", "archive receipt file exists on both sides or neither side: "+relative)
+			}
+			if receipt.State == "complete" && !stored {
+				return fail.New("ARCHIVE_FAILED", "archive receipt file is on the wrong side for state "+receipt.State+": "+relative)
+			}
+			if stored {
+				source = archived
+			}
 		}
 		parts := strings.Split(relative, "/")
 		id := strings.TrimSuffix(parts[1], ".json")
@@ -605,6 +639,63 @@ func (store Store) ValidateArchiveFiles(receipt ArchiveReceipt) error {
 		}
 	}
 	return nil
+}
+
+// restoredArchiveSources resolves records that a later validated receipt has
+// archived again. Restored receipts remain durable history, so a missing live
+// record is valid only when exactly one newer non-restored receipt owns it.
+func (store Store) restoredArchiveSources(root *os.Root, receipt ArchiveReceipt) (map[string]string, error) {
+	targets := make(map[string]bool, len(receipt.Files))
+	for _, relative := range receipt.Files {
+		targets[relative] = true
+	}
+	sources := make(map[string]string, len(receipt.Files))
+	entries, err := rootDirectoryEntries(root, "archive", maxRecordEntries)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			return nil, fail.New("ARCHIVE_FAILED", "archive batch is not a regular directory: "+entry.Name())
+		}
+		if entry.Name() == receipt.ID {
+			continue
+		}
+		other, err := loadArchiveReceipt(store.Root, entry.Name())
+		if err != nil {
+			return nil, err
+		}
+		if other.State == "restored" || !other.CreatedAt.After(receipt.UpdatedAt) {
+			continue
+		}
+		intersecting := make([]string, 0)
+		for _, relative := range other.Files {
+			if targets[relative] {
+				intersecting = append(intersecting, relative)
+			}
+		}
+		if len(intersecting) == 0 {
+			continue
+		}
+		if err := store.ValidateArchiveFiles(other); err != nil {
+			return nil, err
+		}
+		for _, relative := range intersecting {
+			archived := filepath.ToSlash(filepath.Join("archive", other.ID, filepath.FromSlash(relative)))
+			stored, err := archiveRegularExists(root, archived)
+			if err != nil {
+				return nil, err
+			}
+			if !stored {
+				continue
+			}
+			if _, duplicate := sources[relative]; duplicate {
+				return nil, fail.New("ARCHIVE_FAILED", "restored archive receipt file has multiple successor owners: "+relative)
+			}
+			sources[relative] = archived
+		}
+	}
+	return sources, nil
 }
 
 func validateArchiveBatchContents(root *os.Root, receipt ArchiveReceipt) error {

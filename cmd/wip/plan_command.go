@@ -2,63 +2,185 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/nstranquist/wip-commit/internal/atomicfile"
+	"github.com/nstranquist/wip-commit/internal/engine"
 	"github.com/nstranquist/wip-commit/internal/fail"
+	"github.com/nstranquist/wip-commit/internal/pathid"
+	"github.com/nstranquist/wip-commit/internal/policy"
 	"github.com/nstranquist/wip-commit/internal/store"
 )
 
 type splitProposal struct {
-	Key             string   `json:"key"`
-	SuggestedScope  string   `json:"suggested_scope"`
-	SuggestedPrefix string   `json:"suggested_prefix"`
-	Rationale       string   `json:"rationale"`
-	Files           []string `json:"files"`
+	Key             string                 `json:"key"`
+	SuggestedScope  string                 `json:"suggested_scope"`
+	SuggestedPrefix string                 `json:"suggested_prefix"`
+	Rationale       string                 `json:"rationale"`
+	Message         string                 `json:"message"`
+	Files           []string               `json:"files"`
+	Verify          []engine.VerifyCommand `json:"verify,omitempty"`
 }
 
 type planProposal struct {
-	SchemaVersion string          `json:"schema_version"`
-	Lane          string          `json:"lane"`
-	StagedPaths   []string        `json:"staged_paths"`
-	Groups        []splitProposal `json:"groups"`
-	Instruction   string          `json:"instruction"`
+	SchemaVersion   string                 `json:"schema_version"`
+	State           string                 `json:"state"`
+	Lane            string                 `json:"lane"`
+	Agent           string                 `json:"agent"`
+	Session         string                 `json:"session"`
+	TargetRef       string                 `json:"target_ref"`
+	LaneTip         string                 `json:"lane_tip"`
+	SourceHead      string                 `json:"source_head"`
+	SourceMode      engine.SourceMode      `json:"source_mode"`
+	UntrackedPolicy engine.UntrackedPolicy `json:"untracked_policy"`
+	SourceDigest    string                 `json:"source_digest"`
+	SourceScopes    []string               `json:"source_scopes"`
+	LeaseDigest     string                 `json:"lease_digest"`
+	MessagePolicy   policy.Receipt         `json:"message_policy"`
+	SourcePaths     []string               `json:"source_paths"`
+	Groups          []splitProposal        `json:"groups"`
+	Instruction     string                 `json:"instruction"`
+}
+
+func planObserveRequested(args []string) bool {
+	return booleanFlagRequested(args, "observe")
 }
 
 func (application app) runPlan(ctx context.Context, laneStore store.Store, args []string) int {
 	set := application.flagSet("plan")
 	var identity identityFlags
 	var paths stringList
+	out := set.String("out", "", "write the draft plan without overwriting an existing file")
+	source := set.String("source", string(engine.SourceStagedIndex), "capture source: staged_index or worktree_snapshot")
+	untracked := set.String("untracked", "", "untracked policy: not_applicable, forbid, or include")
+	observe := set.Bool("observe", false, "create a plan without renewing leases or writing an output file")
 	identity.bind(set)
-	set.Var(&paths, "path", "leased staged scope to include (repeatable; default all leased staged paths)")
+	set.Var(&paths, "path", "leased source scope to include (repeatable; default all leased scopes)")
 	if err := set.Parse(args); err != nil {
 		return application.failure("plan", fail.Wrap("INVALID_ARGS", err), nil, 2)
 	}
 	if err := noArgs(set); err != nil {
 		return application.failure("plan", err, nil, 2)
 	}
+	if *observe && strings.TrimSpace(*out) != "" {
+		return application.failure("plan", fail.New("INVALID_ARGS", "--observe cannot be combined with --out"), nil, 2)
+	}
 	status, err := resolveStatus(laneStore, identity)
 	if err != nil {
 		return application.failure("plan", err, nil, 1)
+	}
+	renewal := renewalStatus{}
+	if !*observe {
+		renewal.Attempted = true
+		if _, err := laneStore.Renew(status.Lane.ID, status.Lane.Agent, status.Lane.Session); err != nil {
+			return application.failure("plan", err, nil, 1)
+		}
+		now := time.Now().UTC()
+		renewal.Succeeded, renewal.RenewedAt = true, &now
+		status, err = laneStore.Status(status.Lane.ID)
+		if err != nil {
+			return application.failure("plan", err, nil, 1)
+		}
 	}
 	allowed, err := laneStore.ActivePaths(status.Lane.ID)
 	if err != nil {
 		return application.failure("plan", err, nil, 1)
 	}
-	selected, err := selectedStaged(ctx, laneStore, status.Lane.CurrentSHA, allowed, paths)
+	mode, untrackedPolicy, err := engine.NormalizeSource(engine.SourceMode(*source), engine.UntrackedPolicy(*untracked))
+	if err != nil {
+		return application.failure("plan", err, nil, 2)
+	}
+	scopes, err := planSourceScopes(laneStore, allowed, paths)
+	if err != nil {
+		return application.failure("plan", err, nil, 1)
+	}
+	snapshot, err := engine.InspectSource(ctx, laneStore.Repo, status.Lane.CurrentSHA, scopes, mode, untrackedPolicy)
+	if err != nil {
+		return application.failure("plan", err, nil, 1)
+	}
+	if len(snapshot.Paths) == 0 {
+		return application.failure("plan", fail.New("EMPTY_SELECTION", "no changed source paths are covered by the selected active leases"), nil, 1)
+	}
+	for _, scope := range scopes {
+		matched := false
+		for _, path := range snapshot.Paths {
+			if pathid.Covered(path, []string{scope}) {
+				matched = true
+				break
+			}
+		}
+		if len(paths) > 0 && !matched {
+			return application.failure("plan", fail.Errorf("EMPTY_SELECTION", "requested scope %q contains no changed source path", scope), nil, 1)
+		}
+	}
+	saved, err := loadProfile(laneStore, status.Lane.ID)
 	if err != nil {
 		return application.failure("plan", err, nil, 1)
 	}
 	proposal := planProposal{
-		SchemaVersion: "1.0.0",
-		Lane:          status.Lane.ID,
-		StagedPaths:   selected,
-		Groups:        proposeSplitGroups(selected),
-		Instruction:   "Review dependency closure, move any cross-cutting file into its best-fit group, then write one distinct Conventional Commit message per group in a commit plan.",
+		SchemaVersion:   reviewPlanSchemaVersion,
+		State:           "draft",
+		Lane:            status.Lane.ID,
+		Agent:           status.Lane.Agent,
+		Session:         status.Lane.Session,
+		TargetRef:       status.Lane.Ref,
+		LaneTip:         status.Lane.CurrentSHA,
+		SourceHead:      status.Lane.BaseSHA,
+		SourceMode:      snapshot.Mode,
+		UntrackedPolicy: snapshot.UntrackedPolicy,
+		SourceDigest:    snapshot.Digest,
+		SourceScopes:    append([]string(nil), scopes...),
+		LeaseDigest:     leaseScopeDigest(status.Leases, time.Now().UTC()),
+		MessagePolicy:   saved.MessagePolicy,
+		SourcePaths:     append([]string(nil), snapshot.Paths...),
+		Groups:          proposeSplitGroups(snapshot.Paths),
+		Instruction:     "Review every path group, add a non-empty message to each group, then change state from draft to reviewed. Capture rejects stale bindings and draft plans.",
 	}
-	return application.success("plan", proposal, formatPlanProposal(proposal))
+	if strings.TrimSpace(*out) != "" {
+		body, marshalErr := json.MarshalIndent(proposal, "", "  ")
+		if marshalErr != nil {
+			return application.failure("plan", fail.Wrap("PLAN_WRITE_FAILED", marshalErr), nil, 1)
+		}
+		path, absoluteErr := filepath.Abs(*out)
+		if absoluteErr != nil {
+			return application.failure("plan", fail.Wrap("PLAN_WRITE_FAILED", absoluteErr), nil, 1)
+		}
+		if writeErr := atomicfile.Create(path, append(body, '\n'), 0o600); writeErr != nil {
+			if errors.Is(writeErr, atomicfile.ErrExists) {
+				writeErr = fail.New("PLAN_EXISTS", "refusing to overwrite existing plan: "+path)
+			} else {
+				writeErr = fail.Wrap("PLAN_WRITE_FAILED", writeErr)
+			}
+			return application.failure("plan", writeErr, nil, 1)
+		}
+	}
+	operational, err := buildOperationalStatus(ctx, laneStore, status, renewal)
+	if err != nil {
+		return application.failure("plan", err, proposal, 1)
+	}
+	return application.successWithContext("plan", proposal, formatPlanProposal(proposal), operational.context())
+}
+
+func planSourceScopes(laneStore store.Store, allowed, requested []string) ([]string, error) {
+	if len(requested) == 0 {
+		return append([]string(nil), allowed...), nil
+	}
+	scopes, err := laneStore.Repo.NormalizePaths(requested)
+	if err != nil {
+		return nil, err
+	}
+	for _, scope := range scopes {
+		if !pathid.Covered(scope, allowed) {
+			return nil, fail.Errorf("LEASE_REQUIRED", "requested scope %q is outside the active lease set", scope)
+		}
+	}
+	return scopes, nil
 }
 
 func proposeSplitGroups(paths []string) []splitProposal {
@@ -125,7 +247,11 @@ func splitGroupKey(path string) string {
 		case "CHANGELOG.md":
 			return "changelog"
 		}
-		return strings.TrimSuffix(name, filepath.Ext(name))
+		key := strings.TrimSuffix(name, filepath.Ext(name))
+		if strings.TrimSpace(key) == "" {
+			return "repository-config"
+		}
+		return key
 	}
 	if parts[0] == ".github" && len(parts) >= 2 {
 		return strings.Join(parts[:2], "/")
@@ -150,6 +276,8 @@ func splitScope(key string) string {
 		return "deps"
 	case "repository-docs", "docs":
 		return "docs"
+	case "repository-config":
+		return "config"
 	case ".github/workflows":
 		return "ci"
 	}
@@ -183,6 +311,8 @@ func splitRationale(key string) string {
 		return "dependency manifests and lockfiles must stay synchronized"
 	case "repository-docs":
 		return "repository-level policy and onboarding documentation"
+	case "repository-config":
+		return "repository-level configuration and tool pins"
 	case "changelog":
 		return "release history remains an explicit concern"
 	case ".github/workflows":

@@ -61,7 +61,7 @@ func TestCollectGitEvidenceRejectsUnexpectedHistoryState(t *testing.T) {
 	})
 	t.Run("tag", func(t *testing.T) {
 		repo, bootstrap := publicationCandidate(t)
-		publicationGit(t, repo.Root, "tag", "v0.1.0-beta.1")
+		publicationGit(t, repo.Root, "tag", "v0.2.0-beta.1")
 		if _, err := collectGitEvidence(context.Background(), repo, bootstrap, []string{"docs/handoff.md"}); err == nil || !strings.Contains(err.Error(), "local tags") {
 			t.Fatalf("tag error = %v", err)
 		}

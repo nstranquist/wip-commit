@@ -76,6 +76,30 @@ func TestConcurrentCreatePublishesOneCompleteWinner(t *testing.T) {
 	}
 }
 
+func TestCreatePreservesReadOnlyModeAfterTemporaryRemoval(t *testing.T) {
+	root := t.TempDir()
+	staging := filepath.Join(root, "staging")
+	target := filepath.Join(root, "state", "plan.json")
+	if err := CreateWithTempDir(target, staging, []byte("immutable plan\n"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o200 != 0 {
+		t.Fatalf("published file remains owner-writable: %v", info.Mode())
+	}
+	body, err := os.ReadFile(target)
+	if err != nil || string(body) != "immutable plan\n" {
+		t.Fatalf("body = %q, err=%v", body, err)
+	}
+	entries, err := os.ReadDir(staging)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("staging entries = %#v, err=%v", entries, err)
+	}
+}
+
 func TestCreateWithExternalTempDirectoryKeepsDestinationCanonical(t *testing.T) {
 	root := t.TempDir()
 	staging := filepath.Join(root, "staging")

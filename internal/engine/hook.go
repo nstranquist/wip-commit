@@ -19,9 +19,12 @@ import (
 )
 
 const (
-	DefaultHookTimeout = 2 * time.Minute
-	MaxHookTimeout     = 24 * time.Hour
-	maxHookBytes       = 4 << 20
+	DefaultHookTimeout  = 2 * time.Minute
+	MaxHookTimeout      = 24 * time.Hour
+	maxHookBytes        = 4 << 20
+	preflightReadOnly   = "NICOS_PREFLIGHT_READ_ONLY"
+	hookPhasePreCommit  = "pre-commit"
+	hookPhasePostCommit = "post-commit"
 )
 
 type hookSnapshot struct {
@@ -159,10 +162,31 @@ func hooksDigest(hooks ...boundHook) string {
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil))
 }
 
-func hookEnvironment(index, target, object string) []string {
-	environment := gitx.Environment([]string{"GIT_INDEX_FILE=" + index, "WIP_TARGET_REF=" + target})
+func hookEnvironment(privateEnvironment []string, phase, target, object string) []string {
+	blocked := map[string]bool{
+		preflightReadOnly:      true,
+		"WIP_CAPTURE":          true,
+		"WIP_COMMIT_OBJECT":    true,
+		"WIP_HOOK_PHASE":       true,
+		"WIP_SOURCE_READ_ONLY": true,
+		"WIP_TARGET_REF":       true,
+	}
+	environment := make([]string, 0, len(privateEnvironment)+6)
+	for _, entry := range privateEnvironment {
+		name, _, _ := strings.Cut(entry, "=")
+		if !blocked[strings.ToUpper(name)] {
+			environment = append(environment, entry)
+		}
+	}
+	environment = append(environment,
+		preflightReadOnly+"=1",
+		"WIP_CAPTURE=1",
+		"WIP_HOOK_PHASE="+phase,
+		"WIP_SOURCE_READ_ONLY=1",
+		"WIP_TARGET_REF="+target,
+	)
 	if strings.TrimSpace(object) != "" {
 		environment = append(environment, "WIP_COMMIT_OBJECT="+object)
 	}
-	return environment
+	return gitx.Environment(environment)
 }

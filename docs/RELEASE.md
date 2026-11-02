@@ -10,8 +10,13 @@ name and capture-only scope is not tag approval.
 The local release command creates files only. It does not create a tag, push a
 ref, create a remote repository, or publish a release.
 
+Committed source keeps `cmd/wip` at the matching `X.Y.Z-dev` identity. The
+release builder accepts only a `vX.Y.Z...` tag on that development line. It
+injects both the artifact SemVer and the exact tag. A binary reports
+`channel: release` only when those injected values match.
+
 The hosted workflow runs only for a tag name that contains a prerelease
-suffix, such as `v0.1.0-beta.1`. It builds six archives:
+suffix, such as `v0.2.0-beta.1`. It builds six archives:
 
 - Linux on AMD64 and ARM64.
 - macOS on AMD64 and ARM64.
@@ -52,7 +57,7 @@ checkout.
 
 ```text
 GOTOOLCHAIN=go1.25.12 GOWORK=off go run ./scripts/release \
-  --version v0.1.0-beta.1 \
+  --version v0.2.0-beta.1 \
   --out dist
 ```
 
@@ -78,18 +83,21 @@ Use [PUBLICATION-HANDOFF.md](PUBLICATION-HANDOFF.md) for the first push and
 [HOSTED-SETUP.md](HOSTED-SETUP.md) for the hosted controls. Require a
 non-author receipt produced with [BETA-EXERCISE.md](BETA-EXERCISE.md) and
 validated against [BETA-EXERCISE.schema.json](BETA-EXERCISE.schema.json).
+If hosted checks require a candidate change, use
+[PUBLICATION-CORRECTION.md](PUBLICATION-CORRECTION.md) from a clean verifier
+checkout before another `main` update.
 
 Before the tag, move the release notes from `Unreleased` to a
-`0.1.0-beta.1` section with the actual tag date. Add the release comparison
+`0.2.0-beta.1` section with the actual tag date. Add the release comparison
 links. Treat that edit as a source change: rerun every local and hosted gate on
 the new commit before tag approval.
 
 Create one signed tag at the approved commit:
 
 ```text
-git tag -s v0.1.0-beta.1 -m "wip-commit v0.1.0-beta.1"
-git tag -v v0.1.0-beta.1
-git push origin refs/tags/v0.1.0-beta.1
+git tag -s v0.2.0-beta.1 -m "wip-commit v0.2.0-beta.1"
+git tag -v v0.2.0-beta.1
+git push origin refs/tags/v0.2.0-beta.1
 ```
 
 The tag push starts `.github/workflows/release-beta.yml`. The workflow repeats
@@ -105,7 +113,7 @@ After the workflow succeeds, download the release files in a clean directory.
 Check `checksums.txt`, then check the attestations:
 
 ```text
-gh attestation verify wip-commit_0.1.0-beta.1_linux_amd64.tar.gz \
+gh attestation verify wip-commit_0.2.0-beta.1_linux_amd64.tar.gz \
   --repo nstranquist/wip-commit
 ```
 

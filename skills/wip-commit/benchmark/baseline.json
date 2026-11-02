@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0.0",
+  "benchmark": "wip-commit-portable-behavior",
+  "benchmark_version": "1.0.0",
+  "review_status": "reviewed",
+  "minimum_score": 1,
+  "required_positive_checks": 8,
+  "required_negative_controls": 8,
+  "zero_ai_required": true,
+  "required_cases": [
+    "setup-shared-linked",
+    "disjoint-parallel-lanes",
+    "reviewed-split-default",
+    "explicit-single-opt-out",
+    "foreign-index-preservation",
+    "dry-run-no-publication",
+    "failed-verification-no-publication",
+    "reconcile-interrupted-publication"
+  ]
+}

@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nstranquist/wip-commit/blob/main/docs/STATUS.schema.json",
+  "title": "wip operational lane status",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "lane",
+    "leases",
+    "message_policy",
+    "active_paths",
+    "leased_but_not_staged",
+    "empty_lease_scopes",
+    "capture_candidates",
+    "captured_but_still_staged",
+    "staged_leased",
+    "foreign_staged",
+    "expired_lease_ids",
+    "lease_expires_at",
+    "lease_remaining_ms",
+    "renewal",
+    "ref_health"
+  ],
+  "properties": {
+    "schema_version": {"const": "2.0.0"},
+    "lane": {"$ref": "#/$defs/lane"},
+    "leases": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {"$ref": "#/$defs/lease"}
+    },
+    "message_policy": {"$ref": "#/$defs/message_policy"},
+    "active_paths": {"$ref": "#/$defs/paths"},
+    "leased_but_not_staged": {"$ref": "#/$defs/paths"},
+    "empty_lease_scopes": {"$ref": "#/$defs/paths"},
+    "capture_candidates": {"$ref": "#/$defs/paths"},
+    "captured_but_still_staged": {"$ref": "#/$defs/paths"},
+    "staged_leased": {"$ref": "#/$defs/paths"},
+    "foreign_staged": {"$ref": "#/$defs/paths"},
+    "expired_lease_ids": {
+      "type": "array",
+      "maxItems": 10000,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^lease-[0-9a-f]{32}$"}
+    },
+    "lease_expires_at": {
+      "oneOf": [
+        {"type": "string", "format": "date-time"},
+        {"type": "null"}
+      ]
+    },
+    "lease_remaining_ms": {"type": "integer", "minimum": 0},
+    "renewal": {"$ref": "#/$defs/renewal"},
+    "ref_health": {"$ref": "#/$defs/ref_health"},
+    "last_intent": {"$ref": "#/$defs/intent_summary"}
+  },
+  "$defs": {
+    "object_id": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
+    "paths": {
+      "type": "array",
+      "maxItems": 10000,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "message_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "digest"],
+      "properties": {
+        "id": {"enum": ["conventional-v1", "safety-only-v1"]},
+        "version": {"const": "1.0.0"},
+        "digest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "lane": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "id",
+        "agent",
+        "session",
+        "mode",
+        "ref",
+        "base_ref",
+        "base_sha",
+        "current_sha",
+        "worktree",
+        "state",
+        "created_at",
+        "updated_at"
+      ],
+      "properties": {
+        "schema_version": {"const": 1},
+        "id": {"$ref": "#/$defs/identifier"},
+        "agent": {"$ref": "#/$defs/identifier"},
+        "session": {"$ref": "#/$defs/identifier"},
+        "mode": {"enum": ["shared", "worktree"]},
+        "ref": {"type": "string", "pattern": "^refs/heads/wip/[^/]+/[^/]+$"},
+        "base_ref": {"type": "string", "minLength": 1},
+        "base_sha": {"$ref": "#/$defs/object_id"},
+        "current_sha": {"$ref": "#/$defs/object_id"},
+        "worktree": {"type": "string", "minLength": 1},
+        "lease_ids": {
+          "type": "array",
+          "maxItems": 10000,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^lease-[0-9a-f]{32}$"}
+        },
+        "state": {"enum": ["active", "released", "aborted"]},
+        "created_at": {"type": "string", "format": "date-time"},
+        "updated_at": {"type": "string", "format": "date-time"},
+        "last_commit": {"$ref": "#/$defs/object_id"}
+      }
+    },
+    "lease": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "id",
+        "lane_id",
+        "agent",
+        "session",
+        "paths",
+        "state",
+        "created_at",
+        "updated_at"
+      ],
+      "properties": {
+        "schema_version": {"const": 1},
+        "id": {"type": "string", "pattern": "^lease-[0-9a-f]{32}$"},
+        "lane_id": {"$ref": "#/$defs/identifier"},
+        "agent": {"$ref": "#/$defs/identifier"},
+        "session": {"$ref": "#/$defs/identifier"},
+        "paths": {"$ref": "#/$defs/paths"},
+        "state": {"enum": ["active", "released"]},
+        "created_at": {"type": "string", "format": "date-time"},
+        "updated_at": {"type": "string", "format": "date-time"},
+        "expires_at": {"type": "string", "format": "date-time"},
+        "released_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "renewal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempted", "succeeded"],
+      "properties": {
+        "attempted": {"type": "boolean"},
+        "succeeded": {"type": "boolean"},
+        "renewed_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "ref_health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["healthy", "expected"],
+      "properties": {
+        "healthy": {"type": "boolean"},
+        "expected": {"$ref": "#/$defs/object_id"},
+        "actual": {"$ref": "#/$defs/object_id"},
+        "issue": {"enum": ["ref_not_found", "ref_tip_mismatch"]}
+      }
+    },
+    "intent_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "plan_id",
+        "plan_digest",
+        "state",
+        "expected_new",
+        "created_at",
+        "updated_at"
+      ],
+      "properties": {
+        "plan_id": {"type": "string", "pattern": "^plan-[0-9a-f]{24}$"},
+        "plan_digest": {"$ref": "#/$defs/digest"},
+        "review_plan_digest": {"$ref": "#/$defs/digest"},
+        "state": {"enum": ["prepared", "applied", "complete"]},
+        "expected_new": {"$ref": "#/$defs/object_id"},
+        "message_policy": {"$ref": "#/$defs/message_policy"},
+        "created_at": {"type": "string", "format": "date-time"},
+        "updated_at": {"type": "string", "format": "date-time"}
+      }
+    }
+  }
+}

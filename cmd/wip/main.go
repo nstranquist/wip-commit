@@ -6,7 +6,9 @@ import (
 	"os"
 )
 
-var version = "0.1.0-beta.1"
+// Source builds are always development builds. The release builder injects a
+// SemVer and its exact v-prefixed tag together.
+var version = "0.2.0-dev"
 
 func main() {
 	os.Exit(run(context.Background(), os.Args[1:], os.Stdin, os.Stdout, os.Stderr))

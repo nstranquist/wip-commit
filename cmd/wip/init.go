@@ -19,13 +19,16 @@ import (
 	"github.com/nstranquist/wip-commit/internal/atomicfile"
 	"github.com/nstranquist/wip-commit/internal/fail"
 	"github.com/nstranquist/wip-commit/internal/gitx"
+	"github.com/nstranquist/wip-commit/internal/policy"
 	"github.com/nstranquist/wip-commit/internal/safeio"
 	"github.com/nstranquist/wip-commit/internal/store"
 )
 
 type initOptions struct {
 	mode, lane, agent, session, baseRef  string
+	messagePolicy                        string
 	createWorktree, installDir, skillDir string
+	resolvedMessagePolicy                policy.Receipt
 	paths                                stringList
 	nonInteractive, yes, dryRun          bool
 	install, noInstall                   bool
@@ -33,32 +36,35 @@ type initOptions struct {
 }
 
 type initResult struct {
-	Version             string       `json:"version"`
-	DryRun              bool         `json:"dry_run"`
-	RepoDir             string       `json:"repo_dir"`
-	BaseSHA             string       `json:"base_sha"`
-	Lane                *store.Lane  `json:"lane,omitempty"`
-	Lease               *store.Lease `json:"lease,omitempty"`
-	ClaimedPaths        []string     `json:"claimed_paths"`
-	ProfilePath         string       `json:"profile_path,omitempty"`
-	Worktree            string       `json:"worktree"`
-	CreatedWorktree     bool         `json:"created_worktree"`
-	InstallPath         string       `json:"install_path,omitempty"`
-	Installed           bool         `json:"installed"`
-	InstallAlreadyValid bool         `json:"install_already_valid"`
-	InstallDirOnPath    bool         `json:"install_dir_on_path"`
-	SkillPath           string       `json:"skill_path,omitempty"`
-	SkillInstalled      bool         `json:"skill_installed"`
-	SkillAlreadyValid   bool         `json:"skill_already_valid"`
-	StagedPaths         []string     `json:"staged_paths"`
-	DiffCheckRun        bool         `json:"diff_check_run"`
-	DiffCheckPassed     bool         `json:"diff_check_passed"`
-	Environment         string       `json:"environment"`
-	IntentID            string       `json:"intent_id,omitempty"`
-	IntentPath          string       `json:"intent_path,omitempty"`
-	IntentState         string       `json:"intent_state,omitempty"`
-	CompletedSteps      []string     `json:"completed_steps,omitempty"`
-	Recovery            []string     `json:"recovery,omitempty"`
+	Version             string         `json:"version"`
+	DryRun              bool           `json:"dry_run"`
+	RepoDir             string         `json:"repo_dir"`
+	BaseSHA             string         `json:"base_sha"`
+	MessagePolicy       policy.Receipt `json:"message_policy"`
+	ModeRecommendation  string         `json:"mode_recommendation"`
+	SharedModeWarning   string         `json:"shared_mode_warning,omitempty"`
+	Lane                *store.Lane    `json:"lane,omitempty"`
+	Lease               *store.Lease   `json:"lease,omitempty"`
+	ClaimedPaths        []string       `json:"claimed_paths"`
+	ProfilePath         string         `json:"profile_path,omitempty"`
+	Worktree            string         `json:"worktree"`
+	CreatedWorktree     bool           `json:"created_worktree"`
+	InstallPath         string         `json:"install_path,omitempty"`
+	Installed           bool           `json:"installed"`
+	InstallAlreadyValid bool           `json:"install_already_valid"`
+	InstallDirOnPath    bool           `json:"install_dir_on_path"`
+	SkillPath           string         `json:"skill_path,omitempty"`
+	SkillInstalled      bool           `json:"skill_installed"`
+	SkillAlreadyValid   bool           `json:"skill_already_valid"`
+	StagedPaths         []string       `json:"staged_paths"`
+	DiffCheckRun        bool           `json:"diff_check_run"`
+	DiffCheckPassed     bool           `json:"diff_check_passed"`
+	Environment         string         `json:"environment"`
+	IntentID            string         `json:"intent_id,omitempty"`
+	IntentPath          string         `json:"intent_path,omitempty"`
+	IntentState         string         `json:"intent_state,omitempty"`
+	CompletedSteps      []string       `json:"completed_steps,omitempty"`
+	Recovery            []string       `json:"recovery,omitempty"`
 }
 
 type prompt struct {
@@ -74,6 +80,7 @@ func (application app) runInit(ctx context.Context, source gitx.Repo, args []str
 	set.StringVar(&options.agent, "agent", envDefault("WIP_AGENT"), "agent id")
 	set.StringVar(&options.session, "session", envDefault("WIP_SESSION"), "session id")
 	set.StringVar(&options.baseRef, "base-ref", "HEAD", "commit from which the lane starts")
+	set.StringVar(&options.messagePolicy, "message-policy", "", "named commit-message policy (default repo policy or conventional-v1)")
 	set.StringVar(&options.createWorktree, "create-worktree", "", "create or reuse this linked worktree")
 	set.Var(&options.paths, "path", "repository-relative path to claim (repeatable)")
 	set.BoolVar(&options.nonInteractive, "non-interactive", false, "do not prompt; require explicit lane and paths")
@@ -122,14 +129,10 @@ func (application app) runInit(ctx context.Context, source gitx.Repo, args []str
 
 func prepareInitOptions(ctx context.Context, source gitx.Repo, options *initOptions, prompter prompt) error {
 	if options.mode == "" {
-		defaultMode := string(store.ModeShared)
-		if source.GitDir != source.CommonDir {
-			defaultMode = string(store.ModeWorktree)
-		}
 		if options.nonInteractive {
-			options.mode = defaultMode
+			return fail.New("INVALID_ARGS", "--mode is required in non-interactive mode")
 		} else {
-			value, err := prompter.ask("Lane mode (shared/worktree)", defaultMode)
+			value, err := prompter.ask("Lane mode (worktree recommended; shared only for co-located lanes)", string(store.ModeWorktree))
 			if err != nil {
 				return err
 			}
@@ -146,11 +149,16 @@ func prepareInitOptions(ctx context.Context, source gitx.Repo, options *initOpti
 		if options.nonInteractive {
 			return fail.New("WORKTREE_REQUIRED", "worktree mode from an anchor checkout requires --create-worktree")
 		}
-		value, err := prompter.ask("New linked worktree path", "")
-		if err != nil {
-			return err
+		for strings.TrimSpace(options.createWorktree) == "" {
+			value, err := prompter.ask("New linked worktree path", "")
+			if err != nil {
+				return err
+			}
+			options.createWorktree = value
+			if strings.TrimSpace(options.createWorktree) == "" {
+				_, _ = fmt.Fprintln(prompter.out, "A linked worktree path is required.")
+			}
 		}
-		options.createWorktree = value
 	}
 	if !options.nonInteractive {
 		value, err := prompter.ask("Base ref", options.baseRef)
@@ -165,6 +173,11 @@ func prepareInitOptions(ctx context.Context, source gitx.Repo, options *initOpti
 	if _, err := source.Text(ctx, nil, "rev-parse", "--verify", options.baseRef+"^{commit}"); err != nil {
 		return fail.Wrap("BASE_NOT_FOUND", err)
 	}
+	resolvedPolicy, err := policy.Load(source.Root, options.messagePolicy)
+	if err != nil {
+		return err
+	}
+	options.resolvedMessagePolicy = resolvedPolicy
 	if options.agent == "" {
 		options.agent = defaultAgent(ctx, source)
 	}
@@ -317,7 +330,19 @@ func prepareInitOptions(ctx context.Context, source gitx.Repo, options *initOpti
 }
 
 func executeInit(ctx context.Context, source gitx.Repo, options initOptions, prompter prompt, output io.Writer) (result initResult, returnErr error) {
-	result = initResult{Version: version, DryRun: options.dryRun, RepoDir: source.Root, Worktree: source.Root, StagedPaths: []string{}}
+	result = initResult{Version: version, DryRun: options.dryRun, RepoDir: source.Root, Worktree: source.Root, StagedPaths: []string{}, MessagePolicy: options.resolvedMessagePolicy, ModeRecommendation: "Use worktree mode for one agent per task."}
+	worktreeSource := source
+	if options.createWorktree != "" {
+		anchor, err := initWorktreeAnchor(ctx, source)
+		if err != nil {
+			return result, err
+		}
+		worktreeSource = anchor
+		result.RepoDir = anchor.Root
+	}
+	if options.mode == string(store.ModeShared) {
+		result.SharedModeWarning = "Shared mode is for lanes that must coexist in one checkout and shared index. Prefer worktree mode otherwise."
+	}
 	defer func() {
 		if returnErr != nil && result.IntentID != "" && result.IntentState == "pending" {
 			result.Recovery = initRecovery(result, options)
@@ -337,7 +362,7 @@ func executeInit(ctx context.Context, source gitx.Repo, options initOptions, pro
 	}
 	result.ClaimedPaths = normalized
 	if !options.yes {
-		_, _ = fmt.Fprintf(output, "\nSetup summary:\n  mode: %s\n  lane: %s\n  agent: %s\n  session: %s\n  base: %s\n  paths: %s\n", options.mode, options.lane, options.agent, options.session, options.baseRef, strings.Join(normalized, ", "))
+		_, _ = fmt.Fprintf(output, "\nSetup summary:\n  mode: %s\n  lane: %s\n  agent: %s\n  session: %s\n  base: %s\n  message policy: %s\n  paths: %s\n", options.mode, options.lane, options.agent, options.session, options.baseRef, options.resolvedMessagePolicy.ID, strings.Join(normalized, ", "))
 		if options.createWorktree != "" {
 			_, _ = fmt.Fprintf(output, "  create worktree: %s\n", options.createWorktree)
 		}
@@ -355,19 +380,19 @@ func executeInit(ctx context.Context, source gitx.Repo, options initOptions, pro
 			return result, fail.New("CANCELLED", "setup was not applied")
 		}
 	}
-	baseSHA, err := source.Text(ctx, nil, "rev-parse", "--verify", options.baseRef+"^{commit}")
+	baseSHA, err := worktreeSource.Text(ctx, nil, "rev-parse", "--verify", options.baseRef+"^{commit}")
 	if err != nil {
 		return result, fail.Wrap("BASE_NOT_FOUND", err)
 	}
 	result.BaseSHA = baseSHA
 	if options.dryRun {
-		if err := store.Check(source); err != nil {
+		if err := store.Check(worktreeSource); err != nil {
 			return result, err
 		}
 		target := source
 		targetExists := true
 		if options.createWorktree != "" {
-			target, targetExists, err = inspectWorktree(ctx, source, options.createWorktree, baseSHA)
+			target, targetExists, err = inspectWorktree(ctx, worktreeSource, options.createWorktree, baseSHA)
 			if err != nil {
 				return result, err
 			}
@@ -386,7 +411,7 @@ func executeInit(ctx context.Context, source gitx.Repo, options initOptions, pro
 				return result, err
 			}
 		}
-		result.Environment = shellEnvironment(profile{SchemaVersion: profileSchemaVersion, Lane: options.lane, Agent: options.agent, Session: options.session, Mode: store.Mode(options.mode), Worktree: result.Worktree})
+		result.Environment = shellEnvironment(profile{SchemaVersion: profileSchemaVersion, Lane: options.lane, Agent: options.agent, Session: options.session, Mode: store.Mode(options.mode), Worktree: result.Worktree, MessagePolicy: options.resolvedMessagePolicy})
 		if options.install {
 			result.InstallPath, _, result.InstallAlreadyValid, err = inspectSelfInstall(options.installDir)
 			if err != nil {
@@ -419,11 +444,16 @@ func executeInit(ctx context.Context, source gitx.Repo, options initOptions, pro
 		plannedWorktree = options.createWorktree
 	}
 	result.Worktree = plannedWorktree
-	coordinationStore, err := store.Open(source)
+	writerFence, err := store.AcquireWriterFence(worktreeSource, store.DefaultWriterFenceWait)
 	if err != nil {
 		return result, err
 	}
-	candidateIntent := initIntent{Lane: options.lane, Agent: options.agent, Session: options.session, Mode: store.Mode(options.mode), BaseSHA: baseSHA, Worktree: plannedWorktree, Paths: normalized}
+	defer func() { _ = writerFence.Release() }()
+	coordinationStore, err := store.OpenWithWriterFence(worktreeSource, writerFence)
+	if err != nil {
+		return result, err
+	}
+	candidateIntent := initIntent{Lane: options.lane, Agent: options.agent, Session: options.session, Mode: store.Mode(options.mode), BaseSHA: baseSHA, Worktree: plannedWorktree, Paths: normalized, MessagePolicy: &options.resolvedMessagePolicy}
 	if options.install {
 		candidateIntent.InstallPath = filepath.Join(options.installDir, binaryName())
 	}
@@ -435,80 +465,109 @@ func executeInit(ctx context.Context, source gitx.Repo, options initOptions, pro
 		return result, err
 	}
 	updateResultIntent(&result, intent, intentPath)
-	markStep := func(step string) error {
-		updated, markErr := markInitStep(intentPath, intent, step)
-		if markErr != nil {
-			return markErr
-		}
-		intent = updated
+	intent, err = runInitTransaction(intentPath, intent, func(transaction *initTransaction) error {
+		intent = transaction.intent
 		updateResultIntent(&result, intent, intentPath)
-		return nil
-	}
-	target := source
-	if options.createWorktree != "" {
-		var created bool
-		target, created, err = ensureWorktree(ctx, source, options.createWorktree, baseSHA)
-		if err != nil {
-			return result, err
+		markStep := func(step string) error {
+			updated, markErr := transaction.mark(step)
+			if markErr != nil {
+				return markErr
+			}
+			intent = updated
+			updateResultIntent(&result, intent, intentPath)
+			return nil
 		}
-		result.CreatedWorktree = created
-	}
-	result.Worktree = target.Root
-	if err := markStep("worktree-ready"); err != nil {
-		return result, err
-	}
-	laneStore, err := store.Open(target)
-	if err != nil {
-		return result, err
-	}
-	lane, err := ensureLane(ctx, laneStore, options, baseSHA)
-	if err != nil {
-		return result, err
-	}
-	result.Lane = &lane
-	if err := markStep("lane-ready"); err != nil {
-		return result, err
-	}
-	lease, err := laneStore.Claim(lane.ID, lane.Agent, lane.Session, normalized)
-	if err != nil {
-		return result, err
-	}
-	result.Lease = &lease
-	if err := markStep("lease-ready"); err != nil {
-		return result, err
-	}
-	result.ProfilePath, err = writeProfile(laneStore, lane)
-	if err != nil {
-		return result, err
-	}
-	if err := markStep("profile-ready"); err != nil {
-		return result, err
-	}
-	saved := profile{SchemaVersion: profileSchemaVersion, Lane: lane.ID, Agent: lane.Agent, Session: lane.Session, Mode: lane.Mode, Worktree: lane.Worktree}
-	result.Environment = shellEnvironment(saved)
-	if err := inspectStagedGit(ctx, target, &result); err != nil {
-		return result, err
-	}
-	if options.install {
-		result.InstallPath, result.Installed, result.InstallAlreadyValid, err = installSelf(options.installDir)
-		if err != nil {
-			return result, err
+		target := source
+		if options.createWorktree != "" {
+			var created bool
+			target, created, err = ensureWorktree(ctx, worktreeSource, options.createWorktree, baseSHA)
+			if err != nil {
+				return err
+			}
+			result.CreatedWorktree = created
 		}
-		result.InstallDirOnPath = directoryOnPath(options.installDir)
-	}
-	if err := markStep("binary-ready"); err != nil {
-		return result, err
-	}
-	if options.installSkill {
-		result.SkillPath, result.SkillInstalled, result.SkillAlreadyValid, err = installPortableSkill(options.skillDir)
-		if err != nil {
-			return result, err
+		result.Worktree = target.Root
+		if err := markStep("worktree-ready"); err != nil {
+			return err
 		}
-	}
-	if err := markStep("skill-ready"); err != nil {
+		laneStore, err := store.OpenWithWriterFence(target, writerFence)
+		if err != nil {
+			return err
+		}
+		lane, err := ensureLane(ctx, laneStore, options, baseSHA)
+		if err != nil {
+			return err
+		}
+		result.Lane = &lane
+		if err := markStep("lane-ready"); err != nil {
+			return err
+		}
+		lease, err := laneStore.Claim(lane.ID, lane.Agent, lane.Session, normalized)
+		if err != nil {
+			return err
+		}
+		result.Lease = &lease
+		if err := markStep("lease-ready"); err != nil {
+			return err
+		}
+		result.ProfilePath, err = writeProfile(laneStore, lane, options.resolvedMessagePolicy)
+		if err != nil {
+			return err
+		}
+		if err := markStep("profile-ready"); err != nil {
+			return err
+		}
+		saved := profile{SchemaVersion: profileSchemaVersion, Lane: lane.ID, Agent: lane.Agent, Session: lane.Session, Mode: lane.Mode, Worktree: lane.Worktree, MessagePolicy: options.resolvedMessagePolicy}
+		result.Environment = shellEnvironment(saved)
+		if err := inspectStagedGit(ctx, target, &result); err != nil {
+			return err
+		}
+		if options.install {
+			result.InstallPath, result.Installed, result.InstallAlreadyValid, err = installSelf(options.installDir)
+			if err != nil {
+				return err
+			}
+			result.InstallDirOnPath = directoryOnPath(options.installDir)
+		}
+		if err := markStep("binary-ready"); err != nil {
+			return err
+		}
+		if options.installSkill {
+			result.SkillPath, result.SkillInstalled, result.SkillAlreadyValid, err = installPortableSkill(options.skillDir)
+			if err != nil {
+				return err
+			}
+		}
+		return markStep("skill-ready")
+	})
+	if err != nil {
 		return result, err
 	}
+	updateResultIntent(&result, intent, intentPath)
 	return result, nil
+}
+
+// initWorktreeAnchor returns the primary checkout for the shared Git directory.
+// A recovery command can run from the linked worktree that it is recovering;
+// worktree creation must still be evaluated from the primary checkout.
+func initWorktreeAnchor(ctx context.Context, source gitx.Repo) (gitx.Repo, error) {
+	if source.GitDir == source.CommonDir {
+		return source, nil
+	}
+	listing, err := source.Raw(ctx, nil, "worktree", "list", "--porcelain", "-z")
+	if err != nil {
+		return gitx.Repo{}, fail.Wrap("WORKTREE_ANCHOR_NOT_FOUND", err)
+	}
+	for _, field := range strings.Split(listing, "\x00") {
+		if !strings.HasPrefix(field, "worktree ") {
+			continue
+		}
+		candidate, discoverErr := gitx.Discover(ctx, strings.TrimPrefix(field, "worktree "))
+		if discoverErr == nil && candidate.CommonDir == source.CommonDir && candidate.GitDir == candidate.CommonDir {
+			return candidate, nil
+		}
+	}
+	return gitx.Repo{}, fail.New("WORKTREE_ANCHOR_NOT_FOUND", "primary checkout for the linked worktree is unavailable")
 }
 
 func ensureLane(ctx context.Context, laneStore store.Store, options initOptions, baseSHA string) (store.Lane, error) {
@@ -774,8 +833,14 @@ func formatInitResult(result initResult) string {
 	if result.Lane != nil {
 		lines = append(lines, fmt.Sprintf("Initialized %s lane %s on %s.", result.Lane.Mode, result.Lane.ID, result.Lane.Ref))
 	}
+	if result.SharedModeWarning != "" {
+		lines = append(lines, result.SharedModeWarning)
+	}
 	if result.CreatedWorktree {
 		lines = append(lines, "Created linked worktree "+result.Worktree+".")
+	}
+	if result.Lane != nil && result.Lane.Mode == store.ModeWorktree && result.Worktree != "" && result.Worktree != result.RepoDir {
+		lines = append(lines, "Continue in linked worktree "+result.Worktree+".")
 	}
 	if result.InstallPath != "" {
 		state := "Installed"
@@ -797,7 +862,7 @@ func formatInitResult(result initResult) string {
 	if result.DiffCheckRun && !result.DiffCheckPassed {
 		lines = append(lines, "The staged diff has whitespace errors. Fix them before capture.")
 	}
-	lines = append(lines, "Use this environment in the agent shell:", result.Environment, "Then run: wip commit")
+	lines = append(lines, "Use this environment in the agent shell:", result.Environment, "Then run: wip plan --out plan.json, review the plan, and use wip capture --plan plan.json")
 	return strings.Join(lines, "\n")
 }
 

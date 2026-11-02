@@ -118,9 +118,9 @@ After a fix, add a regression test and review the same failure class elsewhere.
 Treat Git environment variables as part of the command input. Bind discovery,
 refs, worktrees, object storage, and hooks to the selected repository.
 
-Keep the active source index explicit. Give capture hooks the private candidate
-index. Verify the source `HEAD`, complete index, selected tree, and expected old
-ref at the publication boundary.
+Keep the source mode, untracked policy, source scopes, and source digest
+explicit. Give capture hooks the private candidate index. Verify the source
+`HEAD`, caller index, selected source, and expected old ref at publication.
 
 Do not use stash, reset, clean, force-update, merge, or push as a capture
 recovery action.

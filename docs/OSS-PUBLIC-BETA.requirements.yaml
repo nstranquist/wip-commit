@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "plan_id": "wip-oss-public-beta",
-  "plan_status": "proposed",
-  "target_version": "v0.1.0-beta.1",
-  "last_reviewed": "2026-08-16",
+  "plan_status": "accepted",
+  "target_version": "v0.2.0-beta.1",
+  "last_reviewed": "2026-08-23",
   "status_definitions": {
-    "verified": "Local evidence passed on the recorded source.",
+    "verified": "Recorded local or hosted evidence passed on the exact source.",
     "prepared": "The repository artifact exists, but hosted evidence is absent.",
     "planned": "Owner-controlled implementation work remains.",
     "human-gated": "An owner decision or external mutation is required.",
@@ -119,20 +119,24 @@
       "human_gate": true,
       "acceptance": "The exact candidate passes Linux, macOS, Windows, race, vet, lint, module, and dependency-review jobs.",
       "evidence": [
-        {"kind": "workflow", "value": ".github/workflows/ci.yml", "observed_on": "2026-08-14"}
+        {"kind": "workflow", "value": ".github/workflows/ci.yml", "observed_on": "2026-08-14"},
+        {"kind": "hosted-run", "value": "https://github.com/nstranquist/wip-commit/actions/runs/31996057770 passed Linux, macOS, Windows, race, lint, and dependency review on commit 206fa8b6a1dde1d97081133e4d447c0881849922.", "observed_on": "2026-08-17"},
+        {"kind": "hosted-run", "value": "https://github.com/nstranquist/wip-commit/actions/runs/31996220707 passed every main-push job that applies to commit 206fa8b6a1dde1d97081133e4d447c0881849922.", "observed_on": "2026-08-17"},
+        {"kind": "hosted-run", "value": "Public main CI run 32183872589 passed Linux, macOS, Windows, race, and lint at 4cf003bebbfd9c6281578ea9ef1b679dae67078f.", "observed_on": "2026-08-18"},
+        {"kind": "gap", "value": "The integrated agent-facing candidate still needs its own complete protected pull-request check set, including dependency-review.", "observed_on": "2026-08-18"}
       ]
     },
     {
       "id": "OSS-009",
       "gate": "public-beta",
       "title": "Configure hosted repository protections",
-      "status": "human-gated",
+      "status": "verified",
       "owner": "repository-owner",
-      "human_gate": true,
+      "human_gate": false,
       "acceptance": "main requires pull requests, review, required CI, and blocks force pushes and deletion.",
       "evidence": [
         {"kind": "prepared-runbook", "value": "docs/HOSTED-SETUP.md defines the authority boundary, ruleset sequence, observed-check-name rule, and evidence receipt.", "observed_on": "2026-08-16"},
-        {"kind": "gap", "value": "No remote is configured in the local checkout.", "observed_on": "2026-08-14"}
+        {"kind": "hosted-setting", "value": "https://github.com/nstranquist/wip-commit/rules/20926881 is active on main with no bypass actor, rebase-only pull requests, one approval, last-push approval, six provider-bound checks, linear history, and ref protections.", "observed_on": "2026-08-17"}
       ]
     },
     {
@@ -145,7 +149,9 @@
       "acceptance": "Private vulnerability reporting, dependency alerts, secret scanning, and security notifications are enabled.",
       "evidence": [
         {"kind": "prepared-policy", "value": "SECURITY.md and .github/ISSUE_TEMPLATE/config.yml", "observed_on": "2026-08-14"},
-        {"kind": "prepared-runbook", "value": "docs/HOSTED-SETUP.md defines the current GitHub security-setting sequence and evidence receipt.", "observed_on": "2026-08-16"}
+        {"kind": "prepared-runbook", "value": "docs/HOSTED-SETUP.md defines the current GitHub security-setting sequence and evidence receipt.", "observed_on": "2026-08-16"},
+        {"kind": "hosted-setting", "value": "Dependency graph, Dependabot alerts, Dependabot security updates, secret scanning, push protection, and private vulnerability reporting are enabled. GitHub serves SECURITY.md on the security policy page.", "observed_on": "2026-08-17"},
+        {"kind": "gap", "value": "The maintainer's personal security-alert notification setting remains unverified.", "observed_on": "2026-08-18"}
       ]
     },
     {
@@ -186,7 +192,9 @@
       "human_gate": true,
       "acceptance": "A clean environment installs the tagged command through the public Go module path and runs wip version.",
       "evidence": [
-        {"kind": "gap", "value": "The module path is not public.", "observed_on": "2026-08-14"}
+        {"kind": "command", "value": "A clean GOBIN installed github.com/nstranquist/wip-commit/cmd/wip@4cf003bebbfd9c6281578ea9ef1b679dae67078f through proxy.golang.org and returned wip 0.1.0-beta.1.", "observed_on": "2026-08-18"},
+        {"kind": "public-install", "value": "A clean unauthenticated clone resolved commit 206fa8b6a1dde1d97081133e4d447c0881849922 and tree c0dd6638adcdc231840ad06406dc9f0caa38e45d. go install at that commit resolved the public pseudo-version and returned wip 0.1.0-beta.1.", "observed_on": "2026-08-17"},
+        {"kind": "gap", "value": "No public beta tag exists, so tagged installation remains unproved.", "observed_on": "2026-08-18"}
       ]
     },
     {
@@ -196,9 +204,9 @@
       "status": "human-gated",
       "owner": "repository-owner",
       "human_gate": true,
-      "acceptance": "The owner creates a signed v0.1.0-beta.1 tag only after every public-beta gate passes.",
+      "acceptance": "The owner creates a signed v0.2.0-beta.1 tag only after every public-beta gate passes.",
       "evidence": [
-        {"kind": "gap", "value": "No remote or tag exists.", "observed_on": "2026-08-14"}
+        {"kind": "gap", "value": "The public repository exists, but no tag, GitHub release, or explicit tag approval exists.", "observed_on": "2026-08-18"}
       ]
     },
     {
@@ -208,10 +216,13 @@
       "status": "verified",
       "owner": "maintainer",
       "human_gate": false,
-      "acceptance": "The project documents schema support, upgrade behavior, downgrade behavior, and fail-closed migration errors.",
+      "acceptance": "The project documents schema support, upgrade behavior, downgrade behavior, and fail-closed migration errors. Coordination migration uses a byte-pure preview and one digest-bound plan. It uses one writer fence and a manifest-bound registry lock. It also creates immutable review-plan and handoff directories and a sealed legacy archive. Completed migration status preserves the exact cutover receipt while reporting later live-store movement separately.",
       "evidence": [
         {"kind": "artifact", "value": "docs/STATE-COMPATIBILITY.md and docs/ERRORS.md", "observed_on": "2026-08-14"},
-        {"kind": "test", "value": "TestFutureStateDirectoryFailsBeforeV1Creation, TestUnknownVersionedStateEntryRequiresMigrationBeforeMutation, TestCoordinationDomainMarkerAndForeignDomainFailClosed, TestFutureLaneAndLeaseSchemasRequireMigration, TestFutureIntentSchemaRequiresMigration, TestFutureInitIntentSchemaRequiresMigration, and TestFutureProfileSchemaRequiresMigration", "observed_on": "2026-08-16"}
+        {"kind": "test", "value": "TestFutureStateDirectoryFailsBeforeV1Creation, TestUnknownVersionedStateEntryRequiresMigrationBeforeMutation, TestCoordinationDomainMarkerAndForeignDomainFailClosed, TestFutureLaneAndLeaseSchemasRequireMigration, TestFutureIntentSchemaRequiresMigration, TestFutureInitIntentSchemaRequiresMigration, and TestFutureProfileSchemaRequiresMigration", "observed_on": "2026-08-16"},
+        {"kind": "test", "value": "TestPreviewIsByteForByteReadOnly, TestRegistryLockPublishesBeforeImportedRecords, TestEmptyAndPublicOnlyMigrations, TestIncompatibleTerminalHistoryIsArchiveOnlyAndCanonicalStoreReads, and the complete internal/coordmigration test package", "observed_on": "2026-08-23"},
+        {"kind": "artifact", "value": "docs/OSS-SOURCE-REVIEW-2026-08-27.md", "observed_on": "2026-08-27"},
+        {"kind": "test", "value": "TestCompletedMigrationStatusReportsPostCutoverAdvance, TestCompletedMigrationStatusRejectsUnsafePrivateIndexRoot, TestCompletedMigrationStatusStillRejectsEnvelopeDrift, the complete internal/coordmigration package, and its race suite", "observed_on": "2026-08-27"}
       ]
     },
     {
@@ -283,9 +294,10 @@
       "status": "verified",
       "owner": "maintainer",
       "human_gate": false,
-      "acceptance": "Automation needs a reviewed split plan unless it explicitly selects one commit. The read-only planner proposes deterministic component groups and conservative Conventional Commit prefixes for staged paths that differ from the lane's current commit, without moving HEAD or the index.",
+      "acceptance": "Automation uses one version 3 plan from draft through capture. The plan binds the lane, ref, tip, source HEAD, source mode, and untracked policy. It also binds source scopes, exact source paths, source digest, active lease scope, and named message policy. Capture rejects draft or stale plans before hooks run. Legacy arrays remain available only through the compatibility commit command.",
       "evidence": [
-        {"kind": "test", "value": "TestCommitRequiresSplitPlanUnlessSingleIsExplicit, TestPlanPreviewUsesComponentBoundariesWithoutMutation, and TestPlanPreviewExcludesAlreadyCapturedStagedPaths", "observed_on": "2026-08-16"}
+        {"kind": "test", "value": "TestCommitRequiresSplitPlanUnlessSingleIsExplicit, TestPlanPreviewUsesComponentBoundariesWithoutMutation, TestPlanPreviewExcludesAlreadyCapturedStagedPaths, TestReviewedPlanCaptureProducesBoundPrivateHandoff, and TestCaptureRejectsDraftAndStaleReviewedPlans", "observed_on": "2026-08-18"},
+        {"kind": "test", "value": "TestPlanObserveIsRepositoryByteForByteReadOnly, TestWorktreePlanAndCapturePreserveCallerIndex, TestWorktreePlanRejectsUntrackedUnderForbidPolicy, and TestCaptureRejectsMovedReviewedSource", "observed_on": "2026-08-23"}
       ]
     },
     {
@@ -321,7 +333,8 @@
       "human_gate": true,
       "acceptance": "Before public contributions are solicited, the owner approves a Code of Conduct, names its enforcement responsibility, and configures a confidential conduct-reporting path.",
       "evidence": [
-        {"kind": "gap", "value": "No approved Code of Conduct or confidential conduct-reporting channel exists in this local checkout.", "observed_on": "2026-08-16"}
+        {"kind": "configuration", "value": "GitHub private vulnerability reporting is enabled and supplies the confidential repository channel named in SUPPORT.md and the proposed Code of Conduct.", "observed_on": "2026-08-17"},
+        {"kind": "human-gate", "value": "CODE_OF_CONDUCT.md names the repository owner as moderator and adapts Contributor Covenant 3.0. Owner review and merge remain required before contributions are solicited.", "observed_on": "2026-08-17"}
       ]
     },
     {
@@ -345,7 +358,7 @@
       "human_gate": true,
       "acceptance": "After a beta period, the project reviews issue and pull-request response, maintainer load, unresolved security and safety defects, real concurrent use, and a tested backup-administrator, transfer, or archival path.",
       "evidence": [
-        {"kind": "gap", "value": "A local unpublished project has no honest community-health or succession evidence.", "observed_on": "2026-08-16"}
+        {"kind": "gap", "value": "A new public source candidate has no beta-period community-health or succession evidence.", "observed_on": "2026-08-17"}
       ]
     },
     {
@@ -355,7 +368,7 @@
       "status": "verified",
       "owner": "maintainer",
       "human_gate": false,
-      "acceptance": "Git discovery, capture, and prepared hooks ignore inherited repository-local variables that can redirect or reinterpret the repository, worktree, common directory, configuration, namespace, replacement refs, shallow boundary, or object storage. The caller's active source index remains explicit, and hooks receive the private candidate index.",
+      "acceptance": "Git discovery, private-source capture, and prepared hooks ignore inherited repository-local variables. These variables cannot redirect or reinterpret the repository, worktree, common directory, configuration, namespace, refs, or object storage. The caller index is an explicit input only for staged-index mode. Worktree-source mode uses an isolated temporary source index. Hooks receive only the private candidate index.",
       "evidence": [
         {"kind": "test", "value": "TestDiscoverIgnoresInheritedRepositoryRoutingEnvironment", "observed_on": "2026-08-16"}
       ]
@@ -369,7 +382,7 @@
       "human_gate": false,
       "acceptance": "The repository records authoritative open source, secure-development, evaluation, SSDF, and Git sources with reviewed revisions. A maintainer guide maps those sources to project rules, review triggers, evidence types, and accepted gaps.",
       "evidence": [
-        {"kind": "artifact", "value": "docs/OSS-PRACTICE-GUIDE.md, docs/OSS-SOURCES.json, AGENTS.md, CONTRIBUTING.md, GOVERNANCE.md, and docs/RELEASE.md", "observed_on": "2026-08-16"}
+        {"kind": "artifact", "value": "docs/OSS-PRACTICE-GUIDE.md, docs/OSS-SOURCES.json, docs/SECURITY-REVIEW-2026-08-18.md, AGENTS.md, CONTRIBUTING.md, GOVERNANCE.md, and docs/RELEASE.md", "observed_on": "2026-08-18"}
       ]
     },
     {
@@ -391,7 +404,7 @@
       "status": "verified",
       "owner": "maintainer",
       "human_gate": false,
-      "acceptance": "A candidate verification command does not inherit the host WIP lane, agent, session, target ref, commit object, source index, or stale candidate-tree value. It receives only the current WIP_CANDIDATE_TREE value from wip.",
+      "acceptance": "A candidate verification command does not inherit the host WIP lane, agent, session, target ref, commit object, caller-index selector, or stale candidate-tree value. It receives only the current WIP_CANDIDATE_TREE value from wip.",
       "evidence": [
         {"kind": "test", "value": "TestVerificationEnvironmentDoesNotInheritCaptureIdentity and the self-hosted VERIFY_FAILED isolation receipt in docs/DOGFOOD.md", "observed_on": "2026-08-16"}
       ]
@@ -403,9 +416,10 @@
       "status": "verified",
       "owner": "maintainer",
       "human_gate": false,
-      "acceptance": "The beta remains capture-only. A KEP defines future exact fast-forward landing for unchecked targets, refuses checked-out targets unless a worktree-aware adapter owns them, and requires recovery, privacy, lock, backup-ref, and receipt gates before implementation.",
+      "acceptance": "The beta remains capture-only. The standalone command does not implement landing. A KEP requires a separate landing authority. That authority binds one immutable cumulative handoff, one queue entry, and one exact review digest. It also binds a target lock, a backup ref, and one target compare-and-swap.",
       "evidence": [
-        {"kind": "artifact", "value": "docs/KEP-0001-capture-to-landing-boundary.md", "observed_on": "2026-08-16"}
+        {"kind": "artifact", "value": "docs/KEP-0001-capture-to-landing-boundary.md", "observed_on": "2026-08-16"},
+        {"kind": "artifact", "value": "The 2026-08-23 KEP amendment supersedes standalone landing and retains only the external adapter requirements.", "observed_on": "2026-08-23"}
       ]
     },
     {
@@ -415,10 +429,11 @@
       "status": "verified",
       "owner": "repository-owner",
       "human_gate": false,
-      "acceptance": "A source-current, fail-closed preflight binds a clean final candidate to the reviewed bootstrap, a merge-free linear split-commit range, the complete reviewed path delta, zero remotes and tags, owner approval, public author and committer identities, absent target repository, complete non-replaced history, passing object integrity, and passing history and worktree secret scans. It writes a no-overwrite private receipt outside the checkout. A human-only runbook preserves the exact candidate while obtaining hosted checks without merging a pull request.",
+      "acceptance": "A source-current, fail-closed preflight binds a clean pre-first-push candidate to the reviewed bootstrap, a merge-free linear split-commit range, the complete reviewed path delta, zero remotes and tags, owner approval, public author and committer identities, absent target repository, complete non-replaced history, passing object integrity, and passing history and worktree secret scans. It writes a no-overwrite private receipt outside the checkout. A human-only runbook preserves the exact candidate while obtaining hosted checks without merging a pull request.",
       "evidence": [
         {"kind": "artifact", "value": "scripts/publication-handoff, docs/PUBLICATION-HANDOFF.md, docs/PUBLICATION-HANDOFF.paths, and docs/PUBLICATION-HANDOFF.schema.json", "observed_on": "2026-08-16"},
-        {"kind": "gap", "value": "The project instructions prohibit an agent push. Human execution and hosted evidence remain required.", "observed_on": "2026-08-16"}
+        {"kind": "receipt", "value": "The validated private pre-first-push receipt bound commit ed3f1fadfbc74eb0aa41ef8b90e41f403213d33d, tree 674a65c74d55a08b3f8d560700de1430ade99942, the reviewed bootstrap, and the then-current 17-path manifest before repository creation.", "observed_on": "2026-08-17"},
+        {"kind": "hosted-state", "value": "The first source publication completed without a pull-request merge; the public repository and protected main now exist.", "observed_on": "2026-08-18"}
       ]
     },
     {
@@ -433,6 +448,35 @@
         {"kind": "finding", "value": "Go 1.25.0 reached GO-2026-4602, GO-2026-4864, and GO-2026-4970 in project code paths; all are fixed by Go 1.25.12.", "observed_on": "2026-08-16"},
         {"kind": "artifact", "value": "go.mod requires Go 1.25.12; docs/RELEASE.md and docs/OSS-PRACTICE-GUIDE.md require exact-minimum verification.", "observed_on": "2026-08-16"},
         {"kind": "command", "value": "GOTOOLCHAIN=go1.25.12 GOWORK=off go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...", "observed_on": "2026-08-16"}
+      ]
+    },
+    {
+      "id": "OSS-034",
+      "gate": "public-beta",
+      "title": "Bind hosted candidate corrections",
+      "status": "verified",
+      "owner": "maintainer",
+      "human_gate": false,
+      "acceptance": "A fail-closed Go command binds each post-first-push correction to the old and new candidates, exact verifier source, complete path manifest, local checks, remote candidate and main refs, unmerged pull request, required hosted runs, provider-bound checks, complete no-bypass ruleset controls, and final tree in one immutable private receipt. The pre-main phase verifies the state before main moves. The finalized phase records an observed completed bootstrap sequence without claiming earlier receipt creation.",
+      "evidence": [
+        {"kind": "artifact", "value": "scripts/publication-correction, docs/PUBLICATION-CORRECTION.md, docs/PUBLICATION-CORRECTION.schema.json, and accepted KEP-0002 implement the typed no-overwrite correction contract.", "observed_on": "2026-08-17"},
+        {"kind": "test", "value": "The correction matrix covers both success phases, exact clean verifier provenance, multiple linear commits, manifest drift, merge commits, object corruption, identity drift, remote and pull-request mismatch, run and check failure, each required ruleset control, secret scans, timeouts, unsafe output, no-overwrite behavior, redaction, deterministic encoding, and schema shape.", "observed_on": "2026-08-17"},
+        {"kind": "receipt", "value": "The validated finalized private receipt bound verifier commit 6f36147f24f614cff0c7010533d864f8d9ad7628, candidate correction ed3f1fadfbc74eb0aa41ef8b90e41f403213d33d to 206fa8b6a1dde1d97081133e4d447c0881849922, tree c0dd6638adcdc231840ad06406dc9f0caa38e45d, 20 bootstrap paths, 5 correction paths, 4 hosted runs, 6 required checks, the complete no-bypass ruleset contract, and GitHub Actions integration 15368. Its SHA-256 digest is 77db44ba2bfa6f007186ace931f38444521d8a29cf48bd945e07a801eda36a9a.", "observed_on": "2026-08-17"}
+      ]
+    },
+    {
+      "id": "OSS-035",
+      "gate": "public-beta",
+      "title": "Complete the agent-facing capture workflow",
+      "status": "verified",
+      "owner": "maintainer",
+      "human_gate": false,
+      "acceptance": "Status classifies leased, captured, pending, and foreign staged entries. Worktree snapshots are the default agent source, and staged-index capture is the controlled shared-checkout exception. Plan version 3 binds the complete private source. Plan observe is byte-pure. Guided capture returns a digest-bound, cumulative version 2 handoff that never authorizes landing. Final capture can release only after handoff validation.",
+      "evidence": [
+        {"kind": "artifact", "value": "docs/KEP-0003-agent-facing-capture-workflow.md, docs/PLAN.schema.json, docs/HANDOFF.schema.json, and docs/SECURITY-REVIEW-2026-08-18.md", "observed_on": "2026-08-18"},
+        {"kind": "test", "value": "TestStatusClassifiesCaptureStateAndForeignIndexEntries, TestMessagePolicyIsBoundOutsideCaptureKernel, TestReviewedPlanCaptureProducesBoundPrivateHandoff, TestCaptureRejectsDraftAndStaleReviewedPlans, and TestGuidedCaptureFinalReleasesAfterHandoffValidation", "observed_on": "2026-08-18"},
+        {"kind": "artifact", "value": "The 2026-08-23 KEP-0003 amendment, PLAN.schema.json, HANDOFF.schema.json, ARCHITECTURE.md, and THREAT-MODEL.md define protocol 3 private sources and cumulative handoff version 2.", "observed_on": "2026-08-23"},
+        {"kind": "test", "value": "TestCumulativeHandoffCoversEveryReviewedCaptureFromLaneBaseToTip, TestPlanObserveIsRepositoryByteForByteReadOnly, TestWorktreePlanAndCapturePreserveCallerIndex, and TestCaptureRejectsDraftAndStaleReviewedPlans", "observed_on": "2026-08-23"}
       ]
     }
   ]

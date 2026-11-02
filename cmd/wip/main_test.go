@@ -86,6 +86,150 @@ func TestIdentityEnvironmentDefaultsRemainSupported(t *testing.T) {
 	}
 }
 
+func TestObserveFlagSpellingsSelectReadOnlyMode(t *testing.T) {
+	tests := []struct {
+		args []string
+		want bool
+	}{
+		{args: []string{"--observe"}, want: true},
+		{args: []string{"-observe"}, want: true},
+		{args: []string{"--observe=true"}, want: true},
+		{args: []string{"-observe=1"}, want: true},
+		{args: []string{"--observe=false"}, want: false},
+		{args: []string{"--observe=invalid"}, want: true},
+		{args: []string{"--observe", "--observe=false"}, want: false},
+	}
+	for _, test := range tests {
+		if got := booleanFlagRequested(test.args, "observe"); got != test.want {
+			t.Errorf("booleanFlagRequested(%q) = %v, want %v", test.args, got, test.want)
+		}
+	}
+}
+
+func TestObserveFlagVariantsDoNotRenewLeases(t *testing.T) {
+	directory := cliTestRepo(t)
+	initializeCLI(t, directory, "observe-variants", "core.txt")
+	repo, err := gitx.Discover(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laneStore, initialized, err := store.Inspect(repo)
+	if err != nil || !initialized {
+		t.Fatalf("inspect initialized=%v err=%v", initialized, err)
+	}
+	status, err := laneStore.Status("observe-variants")
+	if err != nil || len(status.Leases) != 1 {
+		t.Fatalf("status=%#v err=%v", status, err)
+	}
+	original := status.Leases[0]
+
+	for _, spelling := range []string{"--observe=true", "-observe"} {
+		result := runCLI(t, []string{"--json", "--repo-dir", directory, "status", "--lane", "observe-variants", spelling}, "")
+		if result.code != 0 || result.envelope.Context == nil || result.envelope.Context.LeaseRenewed {
+			t.Fatalf("status %s = %#v stderr=%s", spelling, result.envelope, result.stderr)
+		}
+		stored, err := laneStore.LoadLease(original.ID)
+		if err != nil || !stored.UpdatedAt.Equal(original.UpdatedAt) || !stored.ExpiresAt.Equal(*original.ExpiresAt) {
+			t.Fatalf("status %s changed lease=%#v err=%v", spelling, stored, err)
+		}
+	}
+	invalid := runCLI(t, []string{"--json", "--repo-dir", directory, "status", "--lane", "observe-variants", "--observe=invalid"}, "")
+	if invalid.code == 0 || invalid.envelope.Error == nil || invalid.envelope.Error.Code != "INVALID_ARGS" {
+		t.Fatalf("invalid observe = %#v stderr=%s", invalid.envelope, invalid.stderr)
+	}
+	stored, err := laneStore.LoadLease(original.ID)
+	if err != nil || !stored.UpdatedAt.Equal(original.UpdatedAt) || !stored.ExpiresAt.Equal(*original.ExpiresAt) {
+		t.Fatalf("invalid observe changed lease=%#v err=%v", stored, err)
+	}
+
+	renewed := runCLI(t, []string{"--json", "--repo-dir", directory, "status", "--lane", "observe-variants", "--observe=false"}, "")
+	if renewed.code != 0 || renewed.envelope.Context == nil || !renewed.envelope.Context.LeaseRenewed {
+		t.Fatalf("renewing status = %#v stderr=%s", renewed.envelope, renewed.stderr)
+	}
+	stored, err = laneStore.LoadLease(original.ID)
+	if err != nil || !stored.UpdatedAt.After(original.UpdatedAt) {
+		t.Fatalf("explicit false did not renew lease=%#v err=%v", stored, err)
+	}
+}
+
+func TestPlanObserveIsRepositoryByteForByteReadOnly(t *testing.T) {
+	directory := cliTestRepo(t)
+	writeCLI(t, directory, "core.txt", "planned without renewal\n")
+	cliGit(t, directory, "add", "core.txt")
+	initializeCLI(t, directory, "plan-observe", "core.txt")
+	common := cliGit(t, directory, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	before := commandTreeDigest(t, common)
+
+	result := runCLI(t, []string{
+		"--json", "--repo-dir", directory, "plan", "--lane", "plan-observe",
+		"--source", "staged_index", "--untracked", "not_applicable", "--observe",
+	}, "")
+	if result.code != 0 || !result.envelope.OK {
+		t.Fatalf("observe plan = %#v stderr=%s", result.envelope, result.stderr)
+	}
+	var proposal planProposal
+	decodeData(t, result.envelope.Data, &proposal)
+	if proposal.SchemaVersion != reviewPlanSchemaVersion || !samePlanStrings(proposal.SourcePaths, []string{"core.txt"}) {
+		t.Fatalf("observe proposal = %#v", proposal)
+	}
+	if after := commandTreeDigest(t, common); after != before {
+		t.Fatalf("plan --observe changed repository state: before=%s after=%s", before, after)
+	}
+}
+
+func TestStatusObserveIsRepositoryByteForByteReadOnly(t *testing.T) {
+	directory := cliTestRepo(t)
+	initializeCLI(t, directory, "status-observe-bytes", "core.txt")
+	common := cliGit(t, directory, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	before := commandTreeDigest(t, common)
+
+	result := runCLI(t, []string{
+		"--json", "--repo-dir", directory, "status", "--lane", "status-observe-bytes", "--observe",
+	}, "")
+	if result.code != 0 || !result.envelope.OK || result.envelope.Context == nil || result.envelope.Context.LeaseRenewed {
+		t.Fatalf("observe status = %#v stderr=%s", result.envelope, result.stderr)
+	}
+	if after := commandTreeDigest(t, common); after != before {
+		t.Fatalf("status --observe changed repository state: before=%s after=%s", before, after)
+	}
+}
+
+func TestEnvRejectsAnotherWorktreeWithoutRenewing(t *testing.T) {
+	anchor := cliTestRepo(t)
+	linked := filepath.Join(t.TempDir(), "bound-worktree")
+	cliGit(t, anchor, "worktree", "add", "--detach", linked, "HEAD")
+	initialized := runCLI(t, []string{"--json", "--repo-dir", linked, "init", "--mode", "worktree", "--lane", "bound-env", "--agent", "agent", "--session", "session", "--path", "core.txt", "--non-interactive", "--no-install", "--no-install-skill"}, "")
+	if initialized.code != 0 {
+		t.Fatalf("init = %#v stderr=%s", initialized.envelope, initialized.stderr)
+	}
+	repo, err := gitx.Discover(context.Background(), linked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laneStore, _, err := store.Inspect(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := laneStore.Status("bound-env")
+	if err != nil || len(status.Leases) != 1 {
+		t.Fatalf("status=%#v err=%v", status, err)
+	}
+	original := status.Leases[0]
+	for _, args := range [][]string{
+		{"--json", "--repo-dir", anchor, "env", "--lane", "bound-env"},
+		{"--json", "--repo-dir", anchor, "env", "--lane", "bound-env", "--observe=true"},
+	} {
+		result := runCLI(t, args, "")
+		if result.code == 0 || result.envelope.Error == nil || result.envelope.Error.Code != "WORKTREE_MISMATCH" {
+			t.Fatalf("wrong-worktree env = %#v stderr=%s", result.envelope, result.stderr)
+		}
+		stored, err := laneStore.LoadLease(original.ID)
+		if err != nil || !stored.UpdatedAt.Equal(original.UpdatedAt) || !stored.ExpiresAt.Equal(*original.ExpiresAt) {
+			t.Fatalf("wrong-worktree env changed lease=%#v err=%v", stored, err)
+		}
+	}
+}
+
 func TestConcurrentSharedLanesCaptureDisjointPaths(t *testing.T) {
 	directory := cliTestRepo(t)
 	writeCLI(t, directory, "core.txt", "new core\n")
@@ -126,7 +270,22 @@ func TestConcurrentSharedLanesCaptureDisjointPaths(t *testing.T) {
 			t.Fatalf("decode %s output %q: %v; stderr=%s", captured.lane, captured.stdout, err, captured.stderr)
 		}
 		if captured.code != 0 || !output.OK {
-			t.Fatalf("%s capture: code=%d output=%#v stderr=%s", captured.lane, captured.code, output, captured.stderr)
+			errorCode, errorMessage := "", ""
+			if output.Error != nil {
+				errorCode, errorMessage = output.Error.Code, output.Error.Message
+			}
+			data, marshalErr := json.Marshal(output.Data)
+			if marshalErr != nil {
+				data = []byte("<could not encode data: " + marshalErr.Error() + ">")
+			}
+			var recovery engine.Result
+			if output.Data != nil {
+				_ = json.Unmarshal(data, &recovery)
+			}
+			t.Fatalf("%s capture: code=%d error_code=%q error_message=%q recovery={ref_updated:%t plan_id:%q plan_digest:%q intent_path:%q intent_state:%q final_commit:%q} data=%s stdout=%q stderr=%q",
+				captured.lane, captured.code, errorCode, errorMessage,
+				recovery.RefUpdated, recovery.PlanID, recovery.PlanDigest, recovery.IntentPath, recovery.IntentState, recovery.FinalCommit,
+				data, captured.stdout, captured.stderr)
 		}
 		var result engine.Result
 		decodeData(t, output.Data, &result)
@@ -222,6 +381,51 @@ func TestPlanPreviewUsesComponentBoundariesWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestPlanForRootDotfileHasGuidanceAndValidatesReviewedDryRun(t *testing.T) {
+	directory := cliTestRepo(t)
+	writeCLI(t, directory, ".staticcheck-version", "v0.8.0-rc.1\n")
+	cliGit(t, directory, "add", ".staticcheck-version")
+	initializeCLI(t, directory, "root-config-plan", ".staticcheck-version")
+	head := cliGit(t, directory, "rev-parse", "HEAD")
+	index := cliGitRaw(t, directory, "ls-files", "-s", "-z")
+
+	planPath := filepath.Join(t.TempDir(), "plan.json")
+	drafted := runCLI(t, []string{"--json", "--repo-dir", directory, "plan", "--lane", "root-config-plan", "--out", planPath}, "")
+	if drafted.code != 0 || !drafted.envelope.OK {
+		t.Fatalf("draft root config plan: %#v stderr=%s", drafted.envelope, drafted.stderr)
+	}
+	var plan planProposal
+	decodeData(t, drafted.envelope.Data, &plan)
+	if len(plan.Groups) != 1 || plan.Groups[0].Key != "repository-config" || plan.Groups[0].SuggestedScope != "config" || plan.Groups[0].Rationale == "" {
+		t.Fatalf("root config guidance = %#v", plan.Groups)
+	}
+	plan.State = "reviewed"
+	plan.Groups[0].Message = "build(config): pin compatible analyzer"
+	body, err := json.MarshalIndent(plan, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(planPath, append(body, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	dryRun := runCLI(t, []string{"--json", "--repo-dir", directory, "commit", "--lane", "root-config-plan", "--dry-run", "--plan", planPath}, "")
+	if dryRun.code != 0 || !dryRun.envelope.OK {
+		t.Fatalf("reviewed root config dry-run: %#v stderr=%s", dryRun.envelope, dryRun.stderr)
+	}
+	var result engine.Result
+	decodeData(t, dryRun.envelope.Data, &result)
+	if result.GateOutcome != "skipped" || result.Execution == nil || result.Execution.Policy != "no-exec" {
+		t.Fatalf("reviewed root config dry-run contract = %#v", result)
+	}
+	if got := cliGit(t, directory, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("dry-run moved HEAD: %s -> %s", head, got)
+	}
+	if got := cliGitRaw(t, directory, "ls-files", "-s", "-z"); got != index {
+		t.Fatal("dry-run changed the source index")
+	}
+}
+
 func TestPlanPreviewExcludesAlreadyCapturedStagedPaths(t *testing.T) {
 	directory := cliTestRepo(t)
 	writeCLI(t, directory, "core.txt", "new core\n")
@@ -249,7 +453,7 @@ func TestPlanPreviewExcludesAlreadyCapturedStagedPaths(t *testing.T) {
 	}
 	var proposal planProposal
 	decodeData(t, preview.envelope.Data, &proposal)
-	if len(proposal.StagedPaths) != 1 || proposal.StagedPaths[0] != "docs.txt" || len(proposal.Groups) != 1 {
+	if len(proposal.SourcePaths) != 1 || proposal.SourcePaths[0] != "docs.txt" || len(proposal.Groups) != 1 {
 		t.Fatalf("incremental proposal = %#v", proposal)
 	}
 }
@@ -331,6 +535,94 @@ func TestInitCanCreateAndCaptureLinkedWorktreeWithoutMovingCheckouts(t *testing.
 		t.Fatal("linked index changed")
 	}
 	assertCLIFileAtCommit(t, directory, capture.FinalCommit, "core.txt", "linked core")
+}
+
+func TestEnvRejectsWrongWorktreeWithoutChangingLeaseOrGitState(t *testing.T) {
+	directory := cliTestRepo(t)
+	linked := filepath.Join(t.TempDir(), "agent-worktree")
+	initialized := runCLI(t, []string{
+		"--json", "--repo-dir", directory, "init", "--mode", "worktree",
+		"--create-worktree", linked, "--lane", "bound-env", "--agent", "agent",
+		"--session", "session", "--path", "core.txt", "--non-interactive", "--no-install",
+	}, "")
+	if initialized.code != 0 || !initialized.envelope.OK {
+		t.Fatalf("worktree init: %#v stderr=%s", initialized.envelope, initialized.stderr)
+	}
+
+	repo, err := gitx.Discover(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	laneStore, err := store.Open(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := laneStore.Status("bound-env")
+	if err != nil || len(before.Leases) != 1 {
+		t.Fatalf("initial status = %#v, err=%v", before, err)
+	}
+	head := cliGit(t, directory, "rev-parse", "HEAD")
+	anchorIndex := cliGitRaw(t, directory, "ls-files", "-s", "-z")
+	linkedIndex := cliGitRaw(t, linked, "ls-files", "-s", "-z")
+
+	wrong := runCLI(t, []string{"--json", "--repo-dir", directory, "env", "--lane", "bound-env"}, "")
+	if wrong.code != 1 || wrong.envelope.OK || wrong.envelope.Error == nil || wrong.envelope.Error.Code != "WORKTREE_MISMATCH" {
+		t.Fatalf("wrong-worktree env = %#v code=%d stderr=%s", wrong.envelope, wrong.code, wrong.stderr)
+	}
+	after, err := laneStore.Status("bound-env")
+	if err != nil || len(after.Leases) != 1 {
+		t.Fatalf("status after refusal = %#v, err=%v", after, err)
+	}
+	expiryChanged := (before.Leases[0].ExpiresAt == nil) != (after.Leases[0].ExpiresAt == nil)
+	if before.Leases[0].ExpiresAt != nil && after.Leases[0].ExpiresAt != nil {
+		expiryChanged = !after.Leases[0].ExpiresAt.Equal(*before.Leases[0].ExpiresAt)
+	}
+	if !after.Leases[0].UpdatedAt.Equal(before.Leases[0].UpdatedAt) || expiryChanged {
+		t.Fatalf("wrong-worktree env changed lease: before=%#v after=%#v", before.Leases[0], after.Leases[0])
+	}
+	if got := cliGit(t, directory, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("wrong-worktree env moved HEAD: %s", got)
+	}
+	if got := cliGitRaw(t, directory, "ls-files", "-s", "-z"); got != anchorIndex {
+		t.Fatal("wrong-worktree env changed anchor index")
+	}
+	if got := cliGitRaw(t, linked, "ls-files", "-s", "-z"); got != linkedIndex {
+		t.Fatal("wrong-worktree env changed linked index")
+	}
+
+	correct := runCLI(t, []string{"--json", "--repo-dir", linked, "env", "--lane", "bound-env"}, "")
+	if correct.code != 0 || !correct.envelope.OK {
+		t.Fatalf("bound-worktree env = %#v code=%d stderr=%s", correct.envelope, correct.code, correct.stderr)
+	}
+}
+
+func TestInitRecoveryCanRunFromItsCreatedLinkedWorktree(t *testing.T) {
+	directory := cliTestRepo(t)
+	linked := filepath.Join(t.TempDir(), "agent-worktree")
+	args := []string{"--json", "--repo-dir", directory, "init", "--mode", "worktree", "--create-worktree", linked, "--lane", "linked-recovery", "--agent", "agent", "--session", "session", "--path", "core.txt", "--non-interactive", "--no-install", "--no-install-skill"}
+	created := runCLI(t, args, "")
+	if created.code != 0 || !created.envelope.OK {
+		t.Fatalf("initial worktree setup: %#v stderr=%s", created.envelope, created.stderr)
+	}
+
+	args[2] = linked
+	recovered := runCLI(t, args, "")
+	if recovered.code != 0 || !recovered.envelope.OK {
+		t.Fatalf("linked-worktree recovery: %#v stderr=%s", recovered.envelope, recovered.stderr)
+	}
+	var result initResult
+	decodeData(t, recovered.envelope.Data, &result)
+	anchorRepo, anchorErr := gitx.Discover(context.Background(), directory)
+	linkedRepo, linkedErr := gitx.Discover(context.Background(), linked)
+	if anchorErr != nil || linkedErr != nil {
+		t.Fatalf("discover recovery roots: anchor=%v linked=%v", anchorErr, linkedErr)
+	}
+	if result.RepoDir != anchorRepo.Root || result.Worktree != linkedRepo.Root || result.CreatedWorktree {
+		t.Fatalf("recovery roots = %#v, want anchor %q and existing worktree %q", result, anchorRepo.Root, linkedRepo.Root)
+	}
+	if len(result.Recovery) != 0 || result.IntentState != "complete" {
+		t.Fatalf("recovery did not complete the immutable init intent: %#v", result)
+	}
 }
 
 func TestInitDryRunAndInstallerAreNonDestructive(t *testing.T) {
@@ -485,6 +777,46 @@ func TestInitSkipsHomeResolutionWhenInstallationIsDisabled(t *testing.T) {
 	}
 	if options.installDir != "" || options.skillDir != "" {
 		t.Fatalf("disabled installation resolved directories: %#v", options)
+	}
+}
+
+func TestInteractiveWorktreeInitRequiresAndReportsDestination(t *testing.T) {
+	directory := cliTestRepo(t)
+	repo, err := gitx.Discover(context.Background(), directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(t.TempDir(), "agent-worktree")
+	options := initOptions{
+		mode: string(store.ModeWorktree), lane: "guided-worktree", agent: "agent", session: "session", baseRef: "HEAD",
+		paths: stringList{"core.txt"}, noInstall: true, noInstallSkill: true,
+	}
+	input := strings.Join([]string{"", destination, "", "", "", ""}, "\n") + "\n"
+	var output bytes.Buffer
+	if err := prepareInitOptions(context.Background(), repo, &options, prompt{reader: bufio.NewReader(strings.NewReader(input)), out: &output}); err != nil {
+		t.Fatal(err)
+	}
+	if options.createWorktree != destination || !strings.Contains(output.String(), "A linked worktree path is required.") {
+		t.Fatalf("worktree=%q output=%q", options.createWorktree, output.String())
+	}
+	human := formatInitResult(initResult{
+		Lane:            &store.Lane{Mode: store.ModeWorktree, ID: "guided-worktree", Ref: store.LaneRef("agent", "guided-worktree")},
+		CreatedWorktree: true,
+		RepoDir:         directory,
+		Worktree:        destination,
+		Environment:     "export WIP_LANE=guided-worktree",
+	})
+	if !strings.Contains(human, "Continue in linked worktree "+destination+".") {
+		t.Fatalf("init result did not report navigation: %q", human)
+	}
+	reused := formatInitResult(initResult{
+		Lane:        &store.Lane{Mode: store.ModeWorktree, ID: "guided-worktree", Ref: store.LaneRef("agent", "guided-worktree")},
+		RepoDir:     directory,
+		Worktree:    destination,
+		Environment: "export WIP_LANE=guided-worktree",
+	})
+	if !strings.Contains(reused, "Continue in linked worktree "+destination+".") || strings.Contains(reused, "Created linked worktree") {
+		t.Fatalf("reused worktree result = %q", reused)
 	}
 }
 
@@ -830,9 +1162,12 @@ func TestDoctorRejectsLeaseOwnerMismatch(t *testing.T) {
 func TestArchiveRequiresExactPreviewAndPreservesRefs(t *testing.T) {
 	directory := cliTestRepo(t)
 	initializeCLI(t, directory, "archive-cli", "core.txt")
-	release := runCLI(t, []string{"--json", "--repo-dir", directory, "release", "--lane", "archive-cli"}, "")
-	if release.code != 0 || !release.envelope.OK {
-		t.Fatalf("release for archive: %#v stderr=%s", release.envelope, release.stderr)
+	initializeCLI(t, directory, "archive-other", "docs.txt")
+	for _, laneID := range []string{"archive-cli", "archive-other"} {
+		release := runCLI(t, []string{"--json", "--repo-dir", directory, "release", "--lane", laneID}, "")
+		if release.code != 0 || !release.envelope.OK {
+			t.Fatalf("release %s for archive: %#v stderr=%s", laneID, release.envelope, release.stderr)
+		}
 	}
 	repo, err := gitx.Discover(context.Background(), directory)
 	if err != nil {
@@ -842,40 +1177,55 @@ func TestArchiveRequiresExactPreviewAndPreservesRefs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lane, err := laneStore.Load("archive-cli")
-	if err != nil {
-		t.Fatal(err)
-	}
-	lane.UpdatedAt = time.Now().UTC().Add(-48 * time.Hour)
-	body, err := json.MarshalIndent(lane, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(laneStore.Root, "lanes", lane.ID+".json"), append(body, '\n'), 0o600); err != nil {
-		t.Fatal(err)
+	var lane store.Lane
+	for _, laneID := range []string{"archive-cli", "archive-other"} {
+		current, err := laneStore.Load(laneID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		current.UpdatedAt = time.Now().UTC().Add(-48 * time.Hour)
+		body, err := json.MarshalIndent(current, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(laneStore.Root, "lanes", current.ID+".json"), append(body, '\n'), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if laneID == "archive-cli" {
+			lane = current
+		}
 	}
 	refBefore := cliGit(t, directory, "rev-parse", lane.Ref)
-	preview := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--older-than", "24h"}, "")
+	preview := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--older-than", "24h", "--lane", lane.ID}, "")
 	if preview.code != 0 || !preview.envelope.OK {
 		t.Fatalf("archive preview: %#v stderr=%s", preview.envelope, preview.stderr)
 	}
 	var plan archiveResult
 	decodeData(t, preview.envelope.Data, &plan)
-	if !plan.DryRun || len(plan.Candidates) != 1 || plan.PlanDigest == "" {
+	if !plan.DryRun || len(plan.Candidates) != 1 || plan.PlanDigest == "" || len(plan.LaneFilters) != 1 || plan.LaneFilters[0] != lane.ID {
 		t.Fatalf("archive plan = %#v", plan)
 	}
 	missing := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--older-than", "24h", "--lane", "not-eligible"}, "")
 	if missing.code == 0 || missing.envelope.Error == nil || missing.envelope.Error.Code != "ARCHIVE_REFUSED" {
 		t.Fatalf("missing archive lane = %#v", missing.envelope)
 	}
-	wrong := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--cutoff", plan.Cutoff.Format(time.RFC3339Nano), "--plan-digest", "sha256:wrong", "--apply", "--yes"}, "")
+	wrong := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--lane", lane.ID, "--cutoff", plan.Cutoff.Format(time.RFC3339Nano), "--plan-digest", "sha256:wrong", "--apply", "--yes"}, "")
 	if wrong.code == 0 || wrong.envelope.Error == nil || wrong.envelope.Error.Code != "ARCHIVE_PLAN_MOVED" {
 		t.Fatalf("wrong archive digest = %#v", wrong.envelope)
 	}
 	if _, err := laneStore.Load(lane.ID); err != nil {
 		t.Fatalf("wrong archive digest moved state: %v", err)
 	}
-	applied := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--cutoff", plan.Cutoff.Format(time.RFC3339Nano), "--plan-digest", plan.PlanDigest, "--apply", "--yes"}, "")
+	omittedFilter := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--cutoff", plan.Cutoff.Format(time.RFC3339Nano), "--plan-digest", plan.PlanDigest, "--apply", "--yes"}, "")
+	if omittedFilter.code == 0 || omittedFilter.envelope.Error == nil || omittedFilter.envelope.Error.Code != "ARCHIVE_PLAN_MOVED" || !strings.Contains(omittedFilter.envelope.Error.Message, "--lane") {
+		t.Fatalf("omitted archive lane filter = %#v", omittedFilter.envelope)
+	}
+	for _, laneID := range []string{lane.ID, "archive-other"} {
+		if _, err := laneStore.Load(laneID); err != nil {
+			t.Fatalf("omitted archive lane filter moved %s: %v", laneID, err)
+		}
+	}
+	applied := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--lane", lane.ID, "--cutoff", plan.Cutoff.Format(time.RFC3339Nano), "--plan-digest", plan.PlanDigest, "--apply", "--yes"}, "")
 	if applied.code != 0 || !applied.envelope.OK {
 		t.Fatalf("archive apply: %#v stderr=%s", applied.envelope, applied.stderr)
 	}
@@ -883,6 +1233,9 @@ func TestArchiveRequiresExactPreviewAndPreservesRefs(t *testing.T) {
 	decodeData(t, applied.envelope.Data, &archived)
 	if archived.Receipt == nil || archived.Receipt.State != "complete" {
 		t.Fatalf("archive receipt = %#v", archived)
+	}
+	if other, err := laneStore.Load("archive-other"); err != nil || other.State != "released" {
+		t.Fatalf("scoped archive moved other lane = %#v err=%v", other, err)
 	}
 	receiptPath := filepath.Join(laneStore.Root, "archive", archived.Receipt.ID, "receipt.json")
 	archived.Receipt.State = "prepared"
@@ -921,6 +1274,36 @@ func TestArchiveRequiresExactPreviewAndPreservesRefs(t *testing.T) {
 	}
 	if got := cliGit(t, directory, "rev-parse", lane.Ref); got != refBefore {
 		t.Fatalf("restore moved ref: %s -> %s", refBefore, got)
+	}
+	secondPreview := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--older-than", "23h", "--lane", lane.ID}, "")
+	if secondPreview.code != 0 || !secondPreview.envelope.OK {
+		t.Fatalf("rearchive preview: %#v stderr=%s", secondPreview.envelope, secondPreview.stderr)
+	}
+	var secondPlan archiveResult
+	decodeData(t, secondPreview.envelope.Data, &secondPlan)
+	secondApply := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--lane", lane.ID, "--cutoff", secondPlan.Cutoff.Format(time.RFC3339Nano), "--plan-digest", secondPlan.PlanDigest, "--apply", "--yes"}, "")
+	if secondApply.code != 0 || !secondApply.envelope.OK {
+		t.Fatalf("rearchive apply: %#v stderr=%s", secondApply.envelope, secondApply.stderr)
+	}
+	var secondArchive archiveResult
+	decodeData(t, secondApply.envelope.Data, &secondArchive)
+	if secondArchive.Receipt == nil || secondArchive.Receipt.State != "complete" || secondArchive.Receipt.ID == archived.Receipt.ID {
+		t.Fatalf("rearchive receipt = %#v; first=%s", secondArchive, archived.Receipt.ID)
+	}
+	doctor = runCLI(t, []string{"--json", "--repo-dir", directory, "doctor"}, "")
+	if doctor.code != 0 || !doctor.envelope.OK {
+		t.Fatalf("doctor after rearchive: %#v stderr=%s", doctor.envelope, doctor.stderr)
+	}
+	decodeData(t, doctor.envelope.Data, &doctorState)
+	if !doctorState.Healthy || len(doctorState.Findings) != 0 || stringContains(doctorState.ArchiveCandidates, lane.ID) {
+		t.Fatalf("doctor after rearchive report = %#v", doctorState)
+	}
+	secondRestored := runCLI(t, []string{"--json", "--repo-dir", directory, "archive", "--restore", secondArchive.Receipt.ID, "--apply", "--yes"}, "")
+	if secondRestored.code != 0 || !secondRestored.envelope.OK {
+		t.Fatalf("rearchive restore: %#v stderr=%s", secondRestored.envelope, secondRestored.stderr)
+	}
+	if got := cliGit(t, directory, "rev-parse", lane.Ref); got != refBefore {
+		t.Fatalf("rearchive lifecycle moved ref: %s -> %s", refBefore, got)
 	}
 }
 
@@ -1266,7 +1649,7 @@ func TestLeaseHeartbeatKeepsLongCaptureFenceActive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	laneStore.LeaseTTL = 3 * time.Second
+	laneStore.LeaseTTL = 9 * time.Second
 	lane, err := laneStore.Create(context.Background(), store.CreateOptions{ID: "heartbeat", Agent: "agent", Session: "session", Mode: store.ModeShared})
 	if err != nil {
 		t.Fatal(err)
@@ -1283,19 +1666,31 @@ func TestLeaseHeartbeatKeepsLongCaptureFenceActive(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = lock.Release() }()
-	_, stop, err := startLeaseHeartbeat(context.Background(), laneStore, lane, []string{"core.txt"})
+	refreshed := make(chan struct{}, 1)
+	_, stop, err := startLeaseHeartbeatWithObserver(context.Background(), laneStore, lane, []string{"core.txt"}, func() {
+		select {
+		case refreshed <- struct{}{}:
+		default:
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(4 * time.Second)
+	defer func() {
+		if err := stop(); err != nil {
+			t.Errorf("stop heartbeat: %v", err)
+		}
+	}()
+	select {
+	case <-refreshed:
+	case <-time.After(12 * time.Second):
+		t.Fatal("heartbeat did not renew the lease")
+	}
 	if active, err := laneStore.ActivePaths(lane.ID); err != nil || len(active) != 1 || active[0] != "core.txt" {
 		t.Fatalf("heartbeat active paths = %v, err=%v", active, err)
 	}
 	if _, err := laneStore.Claim(other.ID, other.Agent, other.Session, []string{"core.txt"}); fail.Code(err) != "PATH_LEASE_CONFLICT" {
 		t.Fatalf("heartbeat did not fence competing claim: %v (%s)", err, fail.Code(err))
-	}
-	if err := stop(); err != nil {
-		t.Fatal(err)
 	}
 }
 

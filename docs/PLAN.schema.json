@@ -1,51 +1,136 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/nstranquist/wip-commit/blob/main/docs/PLAN.schema.json",
-  "title": "wip split commit plan",
-  "type": "array",
-  "minItems": 1,
-  "maxItems": 128,
-  "items": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": ["message", "files"],
-    "properties": {
-      "message": {
-        "type": "string",
-        "minLength": 1
-      },
-      "files": {
-        "type": "array",
-        "minItems": 1,
-        "maxItems": 10000,
-        "uniqueItems": true,
-        "items": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "verify": {
-        "type": "array",
-        "maxItems": 64,
-        "items": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["argv"],
-          "properties": {
-            "argv": {
-              "type": "array",
-              "minItems": 1,
-              "maxItems": 256,
-              "items": {"type": "string"}
-            },
-            "directory": {"type": "string"},
-            "timeout_ms": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 86400000
+  "title": "wip reviewed private-source capture plan v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "state",
+    "lane",
+    "agent",
+    "session",
+    "target_ref",
+    "lane_tip",
+    "source_head",
+    "source_mode",
+    "untracked_policy",
+    "source_digest",
+    "source_scopes",
+    "lease_digest",
+    "message_policy",
+    "source_paths",
+    "groups",
+    "instruction"
+  ],
+  "properties": {
+    "schema_version": {"const": "3.0.0"},
+    "state": {"enum": ["draft", "reviewed"]},
+    "lane": {"$ref": "#/$defs/identifier"},
+    "agent": {"$ref": "#/$defs/identifier"},
+    "session": {"$ref": "#/$defs/identifier"},
+    "target_ref": {"type": "string", "pattern": "^refs/heads/wip/[^/]+/[^/]+$"},
+    "lane_tip": {"$ref": "#/$defs/object_id"},
+    "source_head": {"$ref": "#/$defs/object_id"},
+    "source_mode": {"enum": ["staged_index", "worktree_snapshot"]},
+    "untracked_policy": {"enum": ["not_applicable", "forbid", "include"]},
+    "source_digest": {"$ref": "#/$defs/digest"},
+    "source_scopes": {"$ref": "#/$defs/paths"},
+    "lease_digest": {"$ref": "#/$defs/digest"},
+    "message_policy": {"$ref": "#/$defs/message_policy"},
+    "source_paths": {"$ref": "#/$defs/paths"},
+    "groups": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {"$ref": "#/$defs/group"}
+    },
+    "instruction": {"type": "string", "minLength": 1}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"state": {"const": "reviewed"}}, "required": ["state"]},
+      "then": {
+        "properties": {
+          "groups": {
+            "items": {
+              "allOf": [
+                {"$ref": "#/$defs/group"},
+                {"properties": {"message": {"minLength": 1}}}
+              ]
             }
           }
         }
+      }
+    },
+    {
+      "if": {"properties": {"source_mode": {"const": "staged_index"}}, "required": ["source_mode"]},
+      "then": {"properties": {"untracked_policy": {"const": "not_applicable"}}}
+    },
+    {
+      "if": {"properties": {"source_mode": {"const": "worktree_snapshot"}}, "required": ["source_mode"]},
+      "then": {"properties": {"untracked_policy": {"enum": ["forbid", "include"]}}}
+    }
+  ],
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
+    "object_id": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "paths": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10000,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "message_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "digest"],
+      "properties": {
+        "id": {"enum": ["conventional-v1", "safety-only-v1"]},
+        "version": {"const": "1.0.0"},
+        "digest": {"$ref": "#/$defs/digest"}
+      }
+    },
+    "group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "suggested_scope", "suggested_prefix", "rationale", "message", "files"],
+      "properties": {
+        "key": {"type": "string", "minLength": 1},
+        "suggested_scope": {"type": "string", "minLength": 1},
+        "suggested_prefix": {"type": "string", "minLength": 1},
+        "rationale": {"type": "string", "minLength": 1},
+        "message": {"type": "string"},
+        "files": {"$ref": "#/$defs/paths"},
+        "verify": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {"$ref": "#/$defs/verify"}
+        }
+      }
+    },
+    "verify": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["argv"],
+      "properties": {
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {"type": "string"}
+        },
+        "directory": {"type": "string"},
+        "materialize": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "timeout_ms": {"type": "integer", "minimum": 0, "maximum": 86400000}
       }
     }
   }

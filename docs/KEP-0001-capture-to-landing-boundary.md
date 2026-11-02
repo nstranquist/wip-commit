@@ -1,31 +1,32 @@
 # KEP-0001: Capture-to-landing boundary
 
-Status: Proposed
+Status: Superseded for standalone landing. Retained as adapter requirements.
 
 Decision owner: Repository owner
 
-Last updated: 2026-08-16
+Last updated: 2026-08-23
 
 Target release: Post-beta
 
 ## Summary
 
-Keep `v0.1.0-beta.1` capture-only. The public `wip` command must not update a
+Keep every public `wip` release capture-only. The command must not update a
 normal branch, merge commits, push refs, or resolve conflicts.
 
-Treat landing as a separate transaction. A future landing command must use an
-exact reviewed plan, a target lock, a backup ref, and one target-ref
-compare-and-swap.
+Treat landing as a separate product transaction. A landing authority must use
+one immutable cumulative handoff, one exact review digest, a target lock, a
+backup ref, and one target-ref compare-and-swap.
 
-This KEP defines that future boundary. It does not authorize implementation or
-public release.
+This KEP defines the external adapter boundary. It does not authorize a
+standalone landing command, implementation, or public release.
 
 ## Context
 
 Capture and landing protect different assets.
 
-Capture protects the source checkout, source index, selected paths, lane ref,
-commit chain, and recovery intent. It can run for disjoint lanes in parallel.
+Capture protects the source checkout, caller index, selected source paths, lane
+ref, commit chain, and recovery intent. It can run for disjoint lanes in
+parallel.
 
 Landing protects a shared target branch and its review policy. It must order
 competing sources and stop when the target changes.
@@ -40,12 +41,12 @@ The existing beta therefore publishes only an agent-owned local ref:
 refs/heads/wip/<agent>/<lane>
 ```
 
-## Decision request
+## Decision
 
-Approve these two decisions separately:
+These two decisions apply:
 
 1. Publish the beta with capture-only scope.
-2. Defer a standalone landing command until independent beta evidence exists.
+2. Keep standalone landing outside this product.
 
 The second decision does not block internal landing adapters. An adapter must
 preserve every control in this KEP.
@@ -56,7 +57,7 @@ The beta must:
 
 - capture only to an agent-owned ref.
 - preserve the source `HEAD`, worktree, and complete index.
-- keep the source ref after release or abort.
+- keep the capture ref after release or abort.
 - return typed capture and recovery evidence.
 - state that review and landing are separate operations.
 
@@ -65,44 +66,47 @@ The beta must not:
 - update `main` or another normal branch.
 - merge, rebase, cherry-pick, or resolve conflicts.
 - push a ref or call a hosting API.
-- delete a source or backup ref.
+- delete a capture or backup ref.
 - infer approval from a passing local gate.
 
-## Future landing transaction
+## Separate landing transaction
 
-This section defines a possible post-beta command. The command does not exist.
+This section defines requirements for a separate landing authority. The public
+`wip` command does not implement this transaction.
 
-### Proposed interface
+### Required interface shape
 
-Preview one landing:
+Preview one immutable handoff against one exact target:
 
 ```text
-wip land plan \
-  --source-ref refs/heads/wip/agent/lane \
+landing-authority plan \
+  --handoff capture-handoff.json \
+  --handoff-digest sha256:<exact-handoff-digest> \
   --target-ref refs/heads/main \
-  --expected-source <commit> \
   --expected-target <commit>
 ```
 
 Apply only the reviewed plan:
 
 ```text
-wip land apply \
-  --plan-id <plan-id> \
-  --plan-digest <sha256> \
+landing-authority apply \
+  --queue-id <queue-id> \
+  --review-digest sha256:<exact-review-digest> \
   --yes
 ```
 
-The apply command must not accept free-form source or target overrides.
+The apply command must not accept free-form handoff, source, or target
+overrides.
 
 ### Required evidence
 
 The plan must bind:
 
 - the canonical Git common directory.
-- the source ref and exact source commit.
+- the complete immutable handoff and its exact digest.
+- every handoff segment and exact source commit.
 - the target ref and exact target commit.
-- the source capture plan ID and digest.
+- one queue ID and every reviewed decision.
 - every source commit, parent, tree, and message.
 - the ancestry result.
 - the target worktree state.
@@ -114,16 +118,16 @@ The plan must bind:
 
 The transaction must stop unless all conditions pass:
 
-1. The source ref matches the expected source commit.
-2. The source capture intent is complete and valid.
+1. The stored handoff matches the exact reviewed handoff digest.
+2. Every capture intent and Git object in the handoff is complete and valid.
 3. The target ref matches the expected target commit.
-4. The source commit is a descendant of the target commit.
+4. The handoff tip is a descendant of the target commit.
 5. The target has no pending landing transaction.
-6. Every required gate receipt matches the source commit.
+6. Every required gate receipt matches the handoff tip.
 7. The repository has no unsupported state version.
 8. The target branch is not checked out in any worktree.
 
-The first standalone version must support fast-forward landing only.
+The first adapter version must support fast-forward landing only.
 
 ### Publication
 
@@ -138,16 +142,17 @@ The transaction must use this order:
 7. Record the new target state.
 8. Mark the intent `complete`.
 
-The source ref and backup ref must remain after publication.
+The capture ref and backup ref must remain after publication. Landing must not
+move the capture ref or require it as mutable authority.
 
 ### Checked-out targets
 
-The standalone command must return `TARGET_CHECKED_OUT` when any worktree uses
+The landing authority must return `TARGET_CHECKED_OUT` when any worktree uses
 the target branch. It must not update that ref directly.
 
 A worktree-aware adapter can implement a separate stack transaction. That
-adapter must bind the worktree, source, target, gates, ancestry, backup, intent,
-and exact target compare-and-swap.
+adapter must bind the worktree, immutable handoff, target, gates, ancestry,
+backup, intent, and exact target compare-and-swap.
 
 ### Recovery
 
@@ -157,12 +162,12 @@ The landing intent must support these states:
 prepared -> applied -> complete
 ```
 
-Recovery must use the original plan ID and digest. It must never reconstruct a
-plan from the current worktree.
+Recovery must use the original queue ID and review digest. It must never
+reconstruct a plan from the current worktree, capture ref, or live lease state.
 
 | Intent state | Target state | Required action |
 | --- | --- | --- |
-| `prepared` | old target | Run a new preview from current refs. |
+| `prepared` | old target | Run a new preview from the stored handoff and current target. |
 | `prepared` | exact new target | Reconcile the original intent. |
 | `applied` | exact new target | Reconcile the original intent. |
 | `complete` | exact new target | Return the existing receipt. |
@@ -174,8 +179,8 @@ Landing must not send telemetry or repository data to a network service.
 Receipts must not contain credentials, file contents, remote URLs, usernames,
 or absolute worktree paths.
 
-Hooks and gate commands remain trusted repository code. A landing command must
-not add another hook execution surface.
+Hooks and gate commands remain trusted repository code. The landing authority
+must not add another hook execution surface.
 
 ## Non-goals
 
@@ -206,15 +211,15 @@ Rejected. The target worktree and index can become inconsistent with its ref.
 
 ### Keep landing outside this project forever
 
-Valid for the beta. Revisit this option after independent users report their
-handoff and reconciliation needs.
+Accepted for the standalone product. A separate authority can consume the
+capture-only handoff without adding landing to `wip`.
 
-## Test plan for a future command
+## Test plan for a separate authority
 
 A landing implementation must test:
 
 - exact fast-forward success.
-- moved source and moved target refusal.
+- changed handoff and moved target refusal.
 - non-fast-forward refusal.
 - checked-out target refusal.
 - concurrent plans for one target.
@@ -222,7 +227,7 @@ A landing implementation must test:
 - gate-receipt mismatch.
 - interrupted intent recovery at each state.
 - idempotent reconciliation.
-- source and backup ref preservation.
+- capture and backup ref preservation.
 - inherited Git environment isolation.
 - unusual valid ref names.
 - Linux, macOS, and Windows runtime behavior.
@@ -233,7 +238,7 @@ Do not implement the command before these gates pass:
 
 1. Complete one independent beta exercise for both capture modes.
 2. Record at least three real capture-to-integration handoffs.
-3. Approve the landing policy and JSON receipt contract.
+3. Approve the landing policy, queue schema, and JSON receipt contract.
 4. Complete an independent security review of target locking and recovery.
 5. Define the relationship with worktree-aware stack landing.
 
@@ -243,10 +248,10 @@ Do not implement the command before these gates pass:
 | --- | --- |
 | 2026-08-16 | Recommend capture-only scope for the first public beta. |
 | 2026-08-16 | Require a separate KEP before standalone landing implementation. |
+| 2026-08-23 | Keep standalone `wip` capture-only. Use a separate landing authority. |
+| 2026-08-23 | Bind landing review to the complete cumulative handoff digest. |
 
 ## Open decisions
 
-- Approve the capture-only public beta boundary.
 - Select the owner of the future target-lock namespace.
 - Select the gate receipt types that landing must require.
-- Decide whether standalone landing remains deferred after the beta period.

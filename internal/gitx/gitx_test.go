@@ -90,6 +90,10 @@ func TestDiscoverIgnoresInheritedRepositoryRoutingEnvironment(t *testing.T) {
 	t.Setenv("GIT_COMMON_DIR", second.CommonDir)
 	t.Setenv("GIT_OBJECT_DIRECTORY", filepath.Join(second.CommonDir, "objects"))
 	t.Setenv("GIT_NAMESPACE", "foreign")
+	t.Setenv("GIT_GLOB_PATHSPECS", "1")
+	t.Setenv("GIT_ICASE_PATHSPECS", "1")
+	t.Setenv("GIT_LITERAL_PATHSPECS", "1")
+	t.Setenv("GIT_NOGLOB_PATHSPECS", "1")
 	t.Setenv("GIT_CONFIG_COUNT", "1")
 	t.Setenv("GIT_CONFIG_KEY_0", "core.worktree")
 	t.Setenv("GIT_CONFIG_VALUE_0", second.Root)
@@ -110,6 +114,64 @@ func TestDiscoverIgnoresInheritedRepositoryRoutingEnvironment(t *testing.T) {
 			t.Fatalf("isolated variable survived: %s", strings.SplitN(entry, "=", 2)[0])
 		}
 	}
+}
+
+func TestRepoCommandsUseTrustedPrivateIndexWithoutChangingCallerIndex(t *testing.T) {
+	repo, _ := initializedRepo(t)
+	ctx := context.Background()
+	callerBefore, err := repo.Raw(ctx, nil, "ls-files", "-s", "-z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateIndex := filepath.Join(t.TempDir(), "capture.index")
+	environment := []string{
+		"GIT_INDEX_FILE=" + privateIndex,
+		"GIT_DIR=/tmp/forbidden.git",
+		"WIP_TARGET_REF=refs/heads/wip/test/private-index",
+	}
+	if _, err := repo.Text(ctx, environment, "read-tree", "HEAD"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Text(ctx, environment, "update-index", "--force-remove", "--", "tracked.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(privateIndex); err != nil {
+		t.Fatalf("trusted private index was not created: %v", err)
+	}
+	callerAfter, err := repo.Raw(ctx, nil, "ls-files", "-s", "-z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if callerAfter != callerBefore {
+		t.Fatalf("caller index changed through private-index operation:\nwant %q\n got %q", callerBefore, callerAfter)
+	}
+	privateEntries, err := repo.Raw(ctx, []string{"GIT_INDEX_FILE=" + privateIndex}, "ls-files", "-s", "-z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(privateEntries, "tracked.txt") {
+		t.Fatalf("private index update did not take effect: %q", privateEntries)
+	}
+	commandEnvironment := mergedEnvironment(environment)
+	for _, entry := range commandEnvironment {
+		name := environmentName(entry)
+		if name == "GIT_DIR" {
+			t.Fatalf("untrusted repository override survived: %q", entry)
+		}
+	}
+	if !containsEnvironment(commandEnvironment, "GIT_INDEX_FILE", privateIndex) || !containsEnvironment(commandEnvironment, "WIP_TARGET_REF", "refs/heads/wip/test/private-index") {
+		t.Fatalf("trusted command environment was not preserved: %q", commandEnvironment)
+	}
+}
+
+func containsEnvironment(environment []string, name, value string) bool {
+	wanted := name + "=" + value
+	for _, entry := range environment {
+		if entry == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCommandOutputHelpersPreserveExactGitResults(t *testing.T) {
@@ -167,6 +229,27 @@ func TestCommandOutputHelpersPreserveExactGitResults(t *testing.T) {
 	}
 	if code, err := repo.Exit(ctx, nil, "diff", "--cached", "--quiet", "HEAD", "--"); err != nil || code != 1 {
 		t.Fatalf("dirty Exit() = %d, %v; want 1, nil", code, err)
+	}
+}
+
+func TestTreeEntriesMatchACleanIndex(t *testing.T) {
+	repo, _ := initializedRepo(t)
+	ctx := context.Background()
+	index, err := repo.IndexEntries(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := repo.TreeEntries(ctx, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tree) != len(index) {
+		t.Fatalf("TreeEntries(HEAD) has %d entries, want %d: %#v", len(tree), len(index), tree)
+	}
+	for path, want := range index {
+		if got := tree[path]; got != want {
+			t.Errorf("TreeEntries(HEAD)[%q] = %q, want %q", path, got, want)
+		}
 	}
 }
 

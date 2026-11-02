@@ -1,0 +1,3 @@
+# The portable skill payload is digest-bound. Keep its bytes identical on every
+# platform, including Windows checkouts with core.autocrlf enabled.
+skills/wip-commit/** text eol=lf

@@ -9,12 +9,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/nstranquist/wip-commit/internal/atomicfile"
+	"github.com/nstranquist/wip-commit/internal/contract"
 	"github.com/nstranquist/wip-commit/internal/fail"
 	"github.com/nstranquist/wip-commit/internal/filelock"
 	"github.com/nstranquist/wip-commit/internal/gitx"
@@ -56,6 +58,123 @@ func TestConcurrentSharedClaimsAreExclusive(t *testing.T) {
 	}
 	if successes != 1 || conflicts != 1 {
 		t.Fatalf("successes=%d conflicts=%d errors=%v", successes, conflicts, errorsByLane)
+	}
+}
+
+func TestOperationalRecordsUseTheRegistryFence(t *testing.T) {
+	repo := testRepo(t)
+	laneStore, err := Open(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lane, err := laneStore.Create(context.Background(), CreateOptions{ID: "registry-reads", Agent: "agent", Session: "session", Mode: ModeShared})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := laneStore.Claim(lane.ID, lane.Agent, lane.Session, []string{"base.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "load lane", run: func() error { _, err := laneStore.Load(lane.ID); return err }},
+		{name: "load lease", run: func() error { _, err := laneStore.LoadLease(lease.ID); return err }},
+		{name: "current", run: func() error { _, err := laneStore.Current(lane.Agent, lane.Session, lane.ID); return err }},
+		{name: "status", run: func() error { _, err := laneStore.Status(lane.ID); return err }},
+		{name: "active paths", run: func() error { _, err := laneStore.ActivePaths(lane.ID); return err }},
+		{name: "archive candidates", run: func() error { _, err := laneStore.ArchiveCandidates(time.Now().UTC().Add(time.Hour)); return err }},
+	}
+	for _, read := range reads {
+		t.Run(read.name, func(t *testing.T) {
+			assertWaitsForRegistry(t, laneStore, read.run)
+		})
+	}
+	tree := git(t, repo.Root, "rev-parse", lane.CurrentSHA+"^{tree}")
+	commit := git(t, repo.Root, "commit-tree", tree, "-p", lane.CurrentSHA, "-m", "test: advance lane")
+	git(t, repo.Root, "update-ref", lane.Ref, commit, lane.CurrentSHA)
+	assertWaitsForRegistry(t, laneStore, func() error {
+		return laneStore.RecordCommit(context.Background(), lane.ID, commit)
+	})
+}
+
+func TestOperationalReadsPreserveRegistryLockBytes(t *testing.T) {
+	repo := testRepo(t)
+	laneStore, err := Open(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lane, err := laneStore.Create(context.Background(), CreateOptions{ID: "registry-read-only", Agent: "agent", Session: "session", Mode: ModeShared})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := laneStore.Claim(lane.ID, lane.Agent, lane.Session, []string{"base.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(laneStore.Root, "locks", "leases.lock")
+	reads := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "load lane", run: func() error { _, err := laneStore.Load(lane.ID); return err }},
+		{name: "load lease", run: func() error { _, err := laneStore.LoadLease(lease.ID); return err }},
+		{name: "current", run: func() error { _, err := laneStore.Current(lane.Agent, lane.Session, lane.ID); return err }},
+		{name: "status", run: func() error { _, err := laneStore.Status(lane.ID); return err }},
+		{name: "active paths", run: func() error { _, err := laneStore.ActivePaths(lane.ID); return err }},
+		{name: "validate capture", run: func() error { return laneStore.ValidateCapture(context.Background(), lane, []string{"base.txt"}) }},
+		{name: "archive candidates", run: func() error { _, err := laneStore.ArchiveCandidates(time.Now().UTC().Add(time.Hour)); return err }},
+	}
+	for _, read := range reads {
+		t.Run(read.name, func(t *testing.T) {
+			before, err := os.ReadFile(lockPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := read.run(); err != nil {
+				t.Fatal(err)
+			}
+			after, err := os.ReadFile(lockPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(after) != string(before) {
+				t.Fatalf("read changed registry lock bytes: before=%q after=%q", before, after)
+			}
+		})
+	}
+}
+
+func assertWaitsForRegistry(t *testing.T, laneStore Store, run func() error) {
+	t.Helper()
+	lock, err := laneStore.registryLock(time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		close(started)
+		done <- run()
+	}()
+	<-started
+	select {
+	case err := <-done:
+		_ = lock.Release()
+		t.Fatalf("operation passed the registry fence: %v", err)
+	case <-time.After(75 * time.Millisecond):
+	}
+	if err := lock.Release(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("operation did not continue after the registry fence opened")
 	}
 }
 
@@ -483,7 +602,7 @@ func TestInspectReportsMarkerOnlyDomainWithoutCreatingState(t *testing.T) {
 	if err := os.Mkdir(stateRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	body, err := json.Marshal(domainRecord{SchemaVersion: domainSchemaVersion, Domain: domainID, StateVersion: SchemaVersion})
+	body, err := json.Marshal(currentDomainRecord())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -638,8 +757,59 @@ func TestCoordinationDomainMarkerAndForeignDomainFailClosed(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(body), domainID) || laneStore.Root != filepath.Join(repo.CommonDir, "wip", "v1") {
+		if !strings.Contains(string(body), domainID) || !strings.Contains(string(body), `"minimum_reader_protocol": "`+contract.Protocol+`"`) || laneStore.Root != filepath.Join(repo.CommonDir, "wip", "v1") {
 			t.Fatalf("domain marker/root mismatch: %s root=%s", body, laneStore.Root)
+		}
+		if laneStore.Domain.SchemaVersion != domainSchemaVersion || laneStore.Domain.UpgradeRequired {
+			t.Fatalf("domain metadata = %#v", laneStore.Domain)
+		}
+	})
+
+	t.Run("legacy marker is read-only", func(t *testing.T) {
+		repo := testRepo(t)
+		if _, err := Open(repo); err != nil {
+			t.Fatal(err)
+		}
+		marker := filepath.Join(repo.CommonDir, "wip", "domain.json")
+		legacy, err := json.MarshalIndent(domainRecord{SchemaVersion: legacyDomainSchemaVersion, Domain: domainID, StateVersion: SchemaVersion}, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		legacy = append(legacy, '\n')
+		if err := os.WriteFile(marker, legacy, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		inspected, initialized, err := Inspect(repo)
+		if err != nil || !initialized || !inspected.Domain.UpgradeRequired || inspected.Domain.SchemaVersion != legacyDomainSchemaVersion {
+			t.Fatalf("legacy inspection = %#v initialized=%v err=%v", inspected.Domain, initialized, err)
+		}
+		if _, err := Open(repo); fail.Code(err) != "MIGRATION_REQUIRED" {
+			t.Fatalf("legacy mutation error = %v (%s)", err, fail.Code(err))
+		}
+		body, err := os.ReadFile(marker)
+		if err != nil || string(body) != string(legacy) {
+			t.Fatalf("legacy marker changed after refused mutation: %q err=%v", body, err)
+		}
+	})
+
+	t.Run("unsupported reader capability fails closed", func(t *testing.T) {
+		repo := testRepo(t)
+		if _, err := Open(repo); err != nil {
+			t.Fatal(err)
+		}
+		marker := filepath.Join(repo.CommonDir, "wip", "domain.json")
+		current := currentDomainRecord()
+		current.RequiredCapabilities = append(current.RequiredCapabilities, "state.future.v1")
+		sort.Strings(current.RequiredCapabilities)
+		body, err := json.Marshal(current)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(marker, body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := Inspect(repo); fail.Code(err) != "MIGRATION_REQUIRED" {
+			t.Fatalf("unsupported capability error = %v (%s)", err, fail.Code(err))
 		}
 	})
 
@@ -685,7 +855,7 @@ func TestCoordinationDomainMarkerAndForeignDomainFailClosed(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		body = []byte(strings.Replace(string(body), `"schema_version": 1`, `"schema_version": 2`, 1))
+		body = []byte(strings.Replace(string(body), `"schema_version": 2`, `"schema_version": 3`, 1))
 		if err := os.WriteFile(marker, body, 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -712,7 +882,7 @@ func TestCoordinationLockPreventsDualDomainCreationRace(t *testing.T) {
 		}()
 		go func() {
 			<-start
-			lock, err := filelock.Acquire(filepath.Join(repo.CommonDir, "wip-coordination.lock"), 0)
+			lock, err := filelock.Acquire(filepath.Join(repo.CommonDir, "wip-coordination.lock"), filelock.DefaultWait)
 			if err != nil {
 				results <- "legacy-error:" + err.Error()
 				return
@@ -904,6 +1074,50 @@ func TestArchiveIsRecoverableAndResumesPartialMoves(t *testing.T) {
 	if err != nil || again.State != "restored" {
 		t.Fatalf("idempotent restore = %#v err=%v", again, err)
 	}
+
+	secondCutoff := cutoff.Add(time.Second)
+	secondCandidates, err := laneStore.ArchiveCandidates(secondCutoff)
+	if err != nil || len(secondCandidates) != 1 {
+		t.Fatalf("rearchive candidates = %#v err=%v", secondCandidates, err)
+	}
+	rearchived, err := laneStore.Archive(context.Background(), secondCutoff, secondCandidates)
+	if err != nil || rearchived.State != "complete" || rearchived.ID == receipt.ID {
+		t.Fatalf("rearchive receipt = %#v err=%v; first=%s", rearchived, err, receipt.ID)
+	}
+	if err := laneStore.ValidateArchiveFiles(restored); err != nil {
+		t.Fatalf("restored receipt did not follow rearchived records: %v", err)
+	}
+	if err := laneStore.ValidateArchiveFiles(rearchived); err != nil {
+		t.Fatalf("rearchived receipt placement: %v", err)
+	}
+	if _, err := laneStore.Load(lane.ID); fail.Code(err) != "LANE_NOT_FOUND" {
+		t.Fatalf("rearchive left live lane: %v (%s)", err, fail.Code(err))
+	}
+
+	heldRecord := filepath.Join(laneStore.Root, "locks", "held-rearchived-record")
+	archivedRecord := filepath.Join(laneStore.Root, "archive", rearchived.ID, filepath.FromSlash(rearchived.Files[0]))
+	if err := os.Rename(archivedRecord, heldRecord); err != nil {
+		t.Fatal(err)
+	}
+	if err := laneStore.ValidateArchiveFiles(restored); fail.Code(err) != "ARCHIVE_FAILED" {
+		t.Fatalf("missing successor record error = %v (%s)", err, fail.Code(err))
+	}
+	if err := os.Rename(heldRecord, archivedRecord); err != nil {
+		t.Fatal(err)
+	}
+
+	secondRestore, err := laneStore.RestoreArchive(context.Background(), rearchived.ID)
+	if err != nil || secondRestore.State != "restored" {
+		t.Fatalf("rearchive restore = %#v err=%v", secondRestore, err)
+	}
+	for _, historical := range []ArchiveReceipt{restored, secondRestore} {
+		if err := laneStore.ValidateArchiveFiles(historical); err != nil {
+			t.Fatalf("restored archive history %s: %v", historical.ID, err)
+		}
+	}
+	if got := git(t, repo.Root, "rev-parse", lane.Ref); got != lane.CurrentSHA {
+		t.Fatalf("rearchive lifecycle moved lane ref: %s", got)
+	}
 }
 
 func TestArchiveRejectsCandidateMovementAfterPreview(t *testing.T) {
@@ -983,9 +1197,19 @@ func TestArchiveReceiptRejectsCrossLaneAndExtraRecords(t *testing.T) {
 		leases = append(leases, lease)
 	}
 	cutoff := time.Now().UTC().Add(-24 * time.Hour)
-	candidate, eligible, err := laneStore.archiveCandidate(lanes[0].ID, cutoff)
-	if err != nil || !eligible {
-		t.Fatalf("candidate = %#v eligible=%v err=%v", candidate, eligible, err)
+	candidates, err := laneStore.ArchiveCandidates(cutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var candidate ArchiveCandidate
+	for _, item := range candidates {
+		if item.LaneID == lanes[0].ID {
+			candidate = item
+			break
+		}
+	}
+	if candidate.LaneID == "" {
+		t.Fatalf("candidate for %s not found in %#v", lanes[0].ID, candidates)
 	}
 	receipt, err := laneStore.prepareArchiveReceipt(cutoff, []ArchiveCandidate{candidate})
 	if err != nil {

@@ -142,8 +142,12 @@ func assertOSSVersionReferences(t *testing.T, target string) {
 	if len(match) != 2 {
 		t.Fatal("cmd/wip/main.go has no static version")
 	}
-	if wanted := "v" + string(match[1]); target != wanted {
-		t.Fatalf("plan target %q does not match command version %q", target, wanted)
+	targetMatch := regexp.MustCompile(`^v((?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*))(?:-|$)`).FindStringSubmatch(target)
+	if len(targetMatch) != 2 {
+		t.Fatalf("plan target %q is not a SemVer release line", target)
+	}
+	if wanted := targetMatch[1] + "-dev"; string(match[1]) != wanted {
+		t.Fatalf("plan target %q requires command development version %q, found %q", target, wanted, match[1])
 	}
 	for _, check := range []struct {
 		path string

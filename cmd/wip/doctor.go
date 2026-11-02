@@ -32,7 +32,11 @@ type doctorReport struct {
 	Healthy           bool            `json:"healthy"`
 	StateRoot         string          `json:"state_root"`
 	Domain            string          `json:"domain"`
+	DomainSchema      int             `json:"domain_schema_version"`
 	StateVersion      int             `json:"state_version"`
+	MinimumReader     string          `json:"minimum_reader_protocol,omitempty"`
+	RequiredReaders   []string        `json:"required_reader_capabilities"`
+	UpgradeRequired   bool            `json:"upgrade_required"`
 	Counts            map[string]int  `json:"counts"`
 	ActiveLanes       []string        `json:"active_lanes"`
 	ExpiredLanes      []string        `json:"expired_lease_lanes"`
@@ -57,11 +61,15 @@ func (application app) runDoctor(ctx context.Context, repo gitx.Repo, args []str
 	}
 	report := doctorReport{
 		SchemaVersion: "1.0.0", State: "not-initialized", Healthy: true,
-		StateRoot: laneStore.Root, Domain: "github.com/nstranquist/wip-commit", StateVersion: store.SchemaVersion,
+		StateRoot: laneStore.Root, Domain: laneStore.Domain.Domain, DomainSchema: laneStore.Domain.SchemaVersion, StateVersion: laneStore.Domain.StateVersion,
+		MinimumReader: laneStore.Domain.MinimumReaderProtocol, RequiredReaders: append([]string{}, laneStore.Domain.RequiredCapabilities...), UpgradeRequired: laneStore.Domain.UpgradeRequired,
 		Counts: map[string]int{}, ActiveLanes: []string{}, ExpiredLanes: []string{}, PendingInit: []string{}, PendingCapture: []string{}, PendingArchive: []string{}, ArchiveCandidates: []string{}, Findings: []doctorFinding{},
 	}
 	if initialized {
 		report.State = "initialized"
+		if report.UpgradeRequired {
+			report.Findings = append(report.Findings, doctorFinding{Severity: "recovery", Code: "STATE_UPGRADE_REQUIRED", Path: "domain.json", Message: "the legacy marker remains readable, but mutations require a reviewed wip upgrade --state plan"})
+		}
 		auditDoctor(ctx, laneStore, &report)
 	}
 	sort.Strings(report.ActiveLanes)
