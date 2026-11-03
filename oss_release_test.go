@@ -77,9 +77,9 @@ func TestCIWorkflowPinsTheLintToolchain(t *testing.T) {
 }
 
 func TestGitleaksWorkflowIsDedicatedAndFailClosed(t *testing.T) {
-	body := readOSSTestFile(t, filepath.Join(".github", "workflows", "gitleaks.yml"))
-	ci := readOSSTestFile(t, filepath.Join(".github", "workflows", "ci.yml"))
-	release := readOSSTestFile(t, filepath.Join(".github", "workflows", "release-beta.yml"))
+	body := strings.ReplaceAll(readOSSTestFile(t, filepath.Join(".github", "workflows", "gitleaks.yml")), "\r\n", "\n")
+	ci := strings.ReplaceAll(readOSSTestFile(t, filepath.Join(".github", "workflows", "ci.yml")), "\r\n", "\n")
+	release := strings.ReplaceAll(readOSSTestFile(t, filepath.Join(".github", "workflows", "release-beta.yml")), "\r\n", "\n")
 	if strings.Contains(ci, "gitleaks") || strings.Contains(release, "gitleaks") {
 		t.Fatal("secret scan is folded into another workflow")
 	}
